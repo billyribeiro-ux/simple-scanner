@@ -21,7 +21,7 @@ Complete. Node `24.18.0` is available through NVM and was used for target-runtim
 
 ## Frontend Target Runtime Status
 
-Complete. Exact Corepack commands passed with pnpm `11.5.2`.
+Complete. Exact Corepack commands passed with pnpm `11.9.0`.
 
 ## Operator UI Routes
 
@@ -51,7 +51,7 @@ No backend route or activation-guard changes were required.
 Passed:
 
 - `node --version`: `v24.18.0`
-- `corepack pnpm --version`: `11.5.2`
+- `corepack pnpm --version`: `11.9.0`
 - `make frontend-doctor`
 - `make help`
 - `make doctor`: passed with warnings for Docker unavailable, missing optional `DATABASE_URL`, and missing optional `FMP_API_KEY`

@@ -5,7 +5,7 @@ Status date: 2026-07-01
 ## Pinned Runtime
 
 - Node target: `24.18.0`
-- Package manager: `pnpm@11.5.2` through Corepack
+- Package manager: `pnpm@11.9.0` through Corepack
 - Python target: `3.14.6`
 - Python note: `3.14.6` is documented as the latest stable Python release for this project as of June 30, 2026.
 
@@ -26,7 +26,7 @@ Local audit result:
 ```bash
 source "$HOME/.nvm/nvm.sh"
 nvm use 24.18.0
-COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack prepare pnpm@11.5.2 --activate
+COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack prepare pnpm@11.9.0 --activate
 make frontend-doctor
 make help
 make doctor
@@ -190,7 +190,7 @@ Frontend gates:
 ```bash
 source "$HOME/.nvm/nvm.sh"
 nvm use 24.18.0
-COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack prepare pnpm@11.5.2 --activate
+COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack prepare pnpm@11.9.0 --activate
 COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm install --frozen-lockfile
 COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm check
 COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm build
@@ -199,7 +199,7 @@ COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm lint
 COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm --filter @amd/web test:e2e
 ```
 
-Root package scripts and Playwright's `webServer.command` call `corepack pnpm` internally so nested workspace commands stay on `pnpm@11.5.2`.
+Root package scripts and Playwright's `webServer.command` call `corepack pnpm` internally so nested workspace commands stay on `pnpm@11.9.0`.
 
 Optional live FMP smoke:
 

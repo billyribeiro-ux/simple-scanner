@@ -17,7 +17,7 @@ cp .env.example .env.local
 # edit .env.local and set FMP_API_KEY
 source "$HOME/.nvm/nvm.sh"
 nvm use 24.18.0
-COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack prepare pnpm@11.5.2 --activate
+COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack prepare pnpm@11.9.0 --activate
 make frontend-doctor
 make doctor
 make setup-backend

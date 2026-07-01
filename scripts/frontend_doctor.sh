@@ -14,7 +14,7 @@ missing() {
 }
 
 expected_node="24.18.0"
-expected_pnpm="11.5.2"
+expected_pnpm="11.9.0"
 
 if [ -s "$HOME/.nvm/nvm.sh" ]; then
   # shellcheck disable=SC1091

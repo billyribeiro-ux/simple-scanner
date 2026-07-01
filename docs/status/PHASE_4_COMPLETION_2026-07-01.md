@@ -41,7 +41,7 @@ Several backend modules and existing tests were also normalized by Ruff import/f
 - Dependencies: installed through `make setup-backend`.
 - Backend tool versions: pytest `9.1.1`, ruff `0.15.20`, mypy `2.1.0`, Alembic `1.18.5`, Uvicorn `0.49.0`.
 - Local Node: `25.3.0`, target is `24.18.0`.
-- pnpm through Corepack: `11.5.2`.
+- pnpm through Corepack: `11.9.0`.
 
 ## Docker/Postgres/Redis
 

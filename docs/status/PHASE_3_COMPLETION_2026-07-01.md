@@ -12,7 +12,7 @@ Target-runtime verification is not complete because Python `3.14.6` and the back
 
 - Node target: `24.18.0`.
 - Local Node: `25.3.0`; pnpm commands pass with unsupported-engine warnings.
-- Corepack/pnpm: available; `corepack pnpm --version` reports `11.5.2`.
+- Corepack/pnpm: available; `corepack pnpm --version` reports `11.9.0`.
 - Python target: `3.14.6`.
 - Local Python target status: `python3.14` missing.
 - Backend venv: missing.

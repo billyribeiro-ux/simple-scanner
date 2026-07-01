@@ -53,7 +53,7 @@ if command -v corepack >/dev/null 2>&1; then
   if [ -n "$pnpm_version" ]; then
     ok "corepack pnpm $pnpm_version"
   else
-    warn "corepack pnpm did not report a version within 20s; run corepack prepare pnpm@11.5.2 --activate deliberately"
+    warn "corepack pnpm did not report a version within 20s; run corepack prepare pnpm@11.9.0 --activate deliberately"
   fi
 else
   missing "corepack; install/enable Corepack before pnpm commands"

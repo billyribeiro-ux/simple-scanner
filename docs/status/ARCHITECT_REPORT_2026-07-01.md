@@ -287,7 +287,7 @@ Export files are intended to be written under `services/quant-engine/exports`. T
 | Project tree summary | PASS | Inspected excluding dependency/build/cache/output directories. | No |
 | `node --version` | PASS | Returned `v25.3.0`; repo target is `24.18.0`. | No, but causes warnings |
 | `pnpm --version` | FAIL/HUNG | Bare shim tried recursive bootstrap and was interrupted. | Yes for bare-pnpm workflow |
-| `corepack pnpm --version` | PASS | Returned `11.5.2`. | No |
+| `corepack pnpm --version` | PASS | Returned `11.9.0`. | No |
 | `python --version` | FAIL | `python` command not found. | No |
 | `python3 --version` | PASS | Returned `Python 3.9.6`; backend target is `3.14.6`. | Yes for backend |
 | `python3.14 --version` | FAIL | Command not found. | Yes for backend |

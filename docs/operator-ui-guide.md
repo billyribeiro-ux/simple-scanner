@@ -17,7 +17,7 @@ Frontend:
 ```bash
 source "$HOME/.nvm/nvm.sh"
 nvm use 24.18.0
-COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack prepare pnpm@11.5.2 --activate
+COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack prepare pnpm@11.9.0 --activate
 make web-dev
 ```
 

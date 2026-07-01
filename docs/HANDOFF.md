@@ -4,14 +4,14 @@ Report status date: 2026-07-01
 
 ## Executive State
 
-Phase 12 target frontend runtime and thin operator governance UI are complete in source. Node `24.18.0` is available through NVM and all frontend target-runtime gates pass with pnpm `11.5.2` through Corepack. Python `3.14.6` is installed, `services/quant-engine/.venv` exists on Python `3.14.6`, and the backend SQLite/mocked-provider test gates pass. Docker/Postgres verification is blocked in this run because the local Docker socket is unavailable and Postgres on `localhost:15432` refuses connections.
+Phase 12 target frontend runtime and thin operator governance UI are complete in source. Node `24.18.0` is available through NVM and all frontend target-runtime gates pass with pnpm `11.9.0` through Corepack. Python `3.14.6` is installed, `services/quant-engine/.venv` exists on Python `3.14.6`, and the backend SQLite/mocked-provider test gates pass. Docker/Postgres verification is blocked in this run because the local Docker socket is unavailable and Postgres on `localhost:15432` refuses connections.
 
 This remains a local-first scanner, research, validation, backtest, signal, and export platform only. It is not a broker, auto-trader, order router, self-learning system, or profitability system.
 
 ## Runtime Pins
 
 - Node target: `24.18.0`
-- Package manager: `pnpm@11.5.2` through Corepack
+- Package manager: `pnpm@11.9.0` through Corepack
 - Python target: `3.14.6`, documented as the latest stable Python release for this project as of June 30, 2026
 - Target Node is available through NVM; use `source "$HOME/.nvm/nvm.sh" && nvm use 24.18.0`
 - Homebrew Node `25.3.0` exists but is not used for acceptance
@@ -23,7 +23,7 @@ This remains a local-first scanner, research, validation, backtest, signal, and 
 ```bash
 source "$HOME/.nvm/nvm.sh"
 nvm use 24.18.0
-COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack prepare pnpm@11.5.2 --activate
+COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack prepare pnpm@11.9.0 --activate
 make frontend-doctor
 make help
 make doctor
@@ -132,7 +132,7 @@ Start the backend and frontend:
 make api-dev
 source "$HOME/.nvm/nvm.sh"
 nvm use 24.18.0
-COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack prepare pnpm@11.5.2 --activate
+COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack prepare pnpm@11.9.0 --activate
 make web-dev
 ```
 

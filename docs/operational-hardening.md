@@ -8,12 +8,12 @@ Phase 12 hardens replay-aware model selection operations with a target frontend 
 
 ## Frontend Runtime
 
-Target frontend acceptance requires Node `24.18.0` and pnpm `11.5.2`.
+Target frontend acceptance requires Node `24.18.0` and pnpm `11.9.0`.
 
 ```bash
 source "$HOME/.nvm/nvm.sh"
 nvm use 24.18.0
-COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack prepare pnpm@11.5.2 --activate
+COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack prepare pnpm@11.9.0 --activate
 make frontend-doctor
 COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm check
 COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm build

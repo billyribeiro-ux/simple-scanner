@@ -6,7 +6,7 @@ Date: 2026-07-01
 
 - Node target: `24.18.0`
 - Local Node: `25.3.0`; expected warning remains
-- pnpm: `11.5.2` through Corepack
+- pnpm: `11.9.0` through Corepack
 - Python target: `3.14.6`
 - Local `python3.14`: `3.14.6`
 - Backend venv: `services/quant-engine/.venv`

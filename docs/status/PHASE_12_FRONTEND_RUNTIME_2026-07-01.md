@@ -5,7 +5,7 @@ Status date: 2026-07-01
 ## Target
 
 - Node: `24.18.0`
-- Package manager: `pnpm@11.5.2` through Corepack
+- Package manager: `pnpm@11.9.0` through Corepack
 - SvelteKit: `2.68.0`
 - Svelte: `5.56.4`
 - TypeScript: strict
@@ -17,13 +17,13 @@ Homebrew Node `25.3.0` is not used for acceptance. The target runtime is availab
 ```bash
 source "$HOME/.nvm/nvm.sh"
 nvm use 24.18.0
-COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack prepare pnpm@11.5.2 --activate
+COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack prepare pnpm@11.9.0 --activate
 ```
 
 Verified:
 
 - `node --version`: `v24.18.0`
-- `corepack pnpm --version`: `11.5.2`
+- `corepack pnpm --version`: `11.9.0`
 - `make frontend-doctor`: pass
 
 ## Nested pnpm Fix
@@ -45,4 +45,4 @@ Playwright emitted only the local `NO_COLOR`/`FORCE_COLOR` warning from the envi
 
 ## Result
 
-Frontend target-runtime acceptance is complete on Node `24.18.0` and pnpm `11.5.2`.
+Frontend target-runtime acceptance is complete on Node `24.18.0` and pnpm `11.9.0`.
