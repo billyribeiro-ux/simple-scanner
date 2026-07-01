@@ -15,6 +15,8 @@ The candidate market replay path starts with persisted candidate signals, not la
 
 Phase 7 adds replay provenance, stale gating, sensitivity analysis, and label-vs-replay comparison. These artifacts can inform future model-selection work, but they do not calibrate live confidence scores, prove profitability, or change scanner signals into broker instructions.
 
+Phase 8 adds `replay_aware_baseline`, an explainable replay-outcome evidence model and meta-scorer. When active, the scanner uses persisted replay evidence cells to score generated candidates as `TAKE`, `WATCH`, or `SUPPRESS`, persists score audits, and emits `NO_TRADE` when replay evidence is missing or suppression rules fire. When no active replay-aware model exists, scanner output falls back to the prior baseline with warning `no_replay_aware_model_active`.
+
 Replay suppresses or skips candidates when the next entry bar is missing, the candidate is outside the configured session, signal-time stop/target context is invalid, reward/risk is insufficient, overlap or portfolio limits are reached, cooldown is active, context is insufficient, regime/time filters block the signal, the candidate is duplicated, future bars are unavailable, or data-quality checks fail.
 
 ## Phase 2 Implementation Status
@@ -31,6 +33,7 @@ Implemented:
 Still partial:
 
 - Confidence remains a baseline heuristic, not a calibrated probability.
-- No self-learning loop exists yet.
+- Replay-aware `signal_quality_score` is still not a calibrated probability.
+- No self-learning loop exists.
 - No broker execution exists or should be inferred.
 - Replay is OHLCV-based and conservative; it is not a promise of actual fills, queue position, liquidity, or profitability.

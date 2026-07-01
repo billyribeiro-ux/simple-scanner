@@ -23,6 +23,8 @@ The Phase 2 quant core favors deterministic, testable Python loops over prematur
 - Feature building recomputes all history for a symbol when called by the scanner.
 - Label simulation scans forward bars per candidate.
 - Replay scans forward bars per candidate inside the configured hold window. It avoids per-candidate database queries, but it is still Python-loop based.
+- Replay-aware evidence aggregation is linear in candidate outcome rows times the small fixed hierarchy depth: `O(r * h)`, where `r` is outcome rows and `h = 6`.
+- Replay-aware scoring resolves at most six evidence cells per candidate and blends them in memory: `O(h)`.
 - Walk-forward validation filters trades per window without an interval index.
 - Feature, label, replay, sensitivity, comparison, and validation workflows now persist through repositories. Phase 7 records replay audit hashes/fingerprints, blocks stale replay inputs by default, and respects requested symbol/interval/range scopes, but warmup expansion and multi-day replay invalidation are still conservative.
 - Replay sensitivity multiplies replay cost by the configured scenario grid. The default grid is intentionally compact enough for local research, and smoke tests use a reduced grid.
@@ -35,6 +37,7 @@ The Phase 2 quant core favors deterministic, testable Python loops over prematur
 - FMP calls are not expanded beyond quote, batch quote, intraday bars, and daily bars.
 - Replay loads bars, features, and candidate signals in batches before simulation, then persists simulated trades in bulk.
 - Replay trade queries are paginated by run ID and ordered by signal timestamp, symbol, and setup.
+- Replay-aware model training loads replay runs/trades/features/candidates in batches, persists evidence cells in bulk, and scanner scoring caches evidence cells by active model version.
 
 ## Next Optimizations
 
@@ -42,4 +45,6 @@ The Phase 2 quant core favors deterministic, testable Python loops over prematur
 2. Add replay-specific candidate batching by session date for very large symbol universes.
 3. Use Polars/Pandas grouped transforms once tests lock down leakage and replay behavior.
 4. Promote high-volume `bars` and `simulated_trades` paths to Timescale hypertables when production volume justifies it.
-5. Add Timescale compression/retention policies for old raw bars, replay trades, and sensitivity scenarios after export reproducibility is proven.
+5. Add Postgres indexes for high-volume evidence-cell dimensions and score-audit filters if model history grows beyond local V1 scale.
+6. Add Timescale compression/retention policies for old raw bars, replay trades, score audits, and sensitivity scenarios after export reproducibility is proven.
+7. Move evidence aggregation to Polars/Pandas or a database grouped query when replay outcome row count makes Python aggregation the bottleneck.

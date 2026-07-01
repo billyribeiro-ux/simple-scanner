@@ -28,6 +28,21 @@ from app.exports.service import ExportService
 from app.features.engine import FEATURE_SET_VERSION, FeatureEngine
 from app.labels.engine import LABEL_CONFIG_VERSION, LabelingEngine
 from app.models.engine import ModelEngine
+from app.models.replay_evidence import (
+    REPLAY_AWARE_MODEL_TYPE,
+    REPLAY_AWARE_SCHEMA_VERSION,
+    REPLAY_AWARE_VALIDATION_MODE,
+    REPLAY_AWARE_VALIDATION_PURPOSE,
+    CandidateOutcomeDatasetBuilder,
+    EvidenceCube,
+    EvidenceCubeBuilder,
+    ReplayAwareMetaScorer,
+    default_scoring_config,
+    model_config_hash,
+    score_audit_from_score,
+    summarize_outcome_rows,
+    training_summary,
+)
 from app.regimes.classifier import RegimeClassifier
 from app.schemas.market import Bar, Signal
 from app.signals.candidates import CandidateSignalEngine
@@ -238,6 +253,16 @@ class ValidationWorkflowService:
         minimum_robustness_score: float = 0.0,
         allow_stale_replay_validation: bool = False,
     ) -> dict[str, Any]:
+        if validation_mode == REPLAY_AWARE_VALIDATION_MODE:
+            return self._validate_replay_aware(
+                model_version=model_version,
+                replay_run_id=replay_run_id,
+                replay_filter=replay_filter,
+                allow_latest_replay_fallback=allow_latest_replay_fallback,
+                require_sensitivity=require_sensitivity,
+                minimum_robustness_score=minimum_robustness_score,
+                allow_stale_replay_validation=allow_stale_replay_validation,
+            )
         if validation_mode == SIMULATION_TYPE_REPLAY:
             replay, selection = self._select_replay_run(
                 replay_run_id=replay_run_id,
@@ -429,6 +454,272 @@ class ValidationWorkflowService:
             "gate_results": sensitivity.get("gate_results") or {},
         }
 
+    def _validate_replay_aware(
+        self,
+        *,
+        model_version: str | None,
+        replay_run_id: str | None,
+        replay_filter: dict[str, Any] | None,
+        allow_latest_replay_fallback: bool,
+        require_sensitivity: bool,
+        minimum_robustness_score: float,
+        allow_stale_replay_validation: bool,
+    ) -> dict[str, Any]:
+        if not model_version:
+            return self._save_replay_aware_report(
+                None,
+                {"activation_decision": "rejected", "rejection_reasons": ["model_version_required"]},
+            )
+        model = self.repos.model_runs.get(model_version)
+        if model is None:
+            return self._save_replay_aware_report(
+                model_version,
+                {"activation_decision": "rejected", "rejection_reasons": ["model_not_found"]},
+            )
+        if model.get("model_type") != REPLAY_AWARE_MODEL_TYPE:
+            return self._save_replay_aware_report(
+                model_version,
+                {"activation_decision": "rejected", "rejection_reasons": ["model_is_not_replay_aware"]},
+            )
+        replay_runs = self._validation_replay_runs(model, replay_run_id, replay_filter, allow_latest_replay_fallback)
+        if not replay_runs:
+            return self._save_replay_aware_report(
+                model_version,
+                {"activation_decision": "rejected", "rejection_reasons": ["replay_run_selection_required"]},
+            )
+        replay_ids = [str(run["replay_run_id"]) for run in replay_runs]
+        stale_replays = [run for run in replay_runs if self._replay_stale_status(run)["status"] != "clean"]
+        if stale_replays and not allow_stale_replay_validation:
+            return self._save_replay_aware_report(
+                model_version,
+                {
+                    "activation_decision": "rejected",
+                    "rejection_reasons": ["stale_replay_run"],
+                    "replay_run_ids": replay_ids,
+                    "stale_window_status": [self._replay_stale_status(run) for run in stale_replays],
+                },
+            )
+        sensitivities_by_run = {replay_id: self.repos.replay_sensitivity.list_for_replay(replay_id) for replay_id in replay_ids}
+        if require_sensitivity:
+            missing = [replay_id for replay_id, runs in sensitivities_by_run.items() if not runs]
+            weak = [
+                replay_id
+                for replay_id, runs in sensitivities_by_run.items()
+                if runs and float(runs[0].get("robustness_score") or 0.0) < minimum_robustness_score
+            ]
+            if missing or weak:
+                return self._save_replay_aware_report(
+                    model_version,
+                    {
+                        "activation_decision": "rejected",
+                        "rejection_reasons": [
+                            *(["sensitivity_required"] if missing else []),
+                            *(["sensitivity_robustness_below_threshold"] if weak else []),
+                        ],
+                        "missing_sensitivity_replay_run_ids": missing,
+                        "weak_sensitivity_replay_run_ids": weak,
+                    },
+                )
+        trades_by_run = {replay_id: self.repos.replays.list_trades(replay_id, limit=100_000) for replay_id in replay_ids}
+        all_timestamps = [
+            datetime.fromisoformat(str(trade.get("signal_timestamp_utc")).replace("Z", "+00:00"))
+            for trades in trades_by_run.values()
+            for trade in trades
+            if trade.get("signal_timestamp_utc")
+        ]
+        start = min(all_timestamps) if all_timestamps else None
+        end = max(all_timestamps) if all_timestamps else None
+        features = self.repos.features.query(symbols=model.get("symbols"), intervals=model.get("intervals"), start=start, end=end)
+        candidates = self.repos.candidate_signals.query(symbols=model.get("symbols"), intervals=model.get("intervals"), start=start, end=end)
+        comparisons_by_run = {replay_id: self.repos.backtest_comparisons.list_for_replay(replay_id) for replay_id in replay_ids}
+        rows = CandidateOutcomeDatasetBuilder().build(
+            replay_runs=replay_runs,
+            trades_by_run=trades_by_run,
+            features=features,
+            candidates=candidates,
+            sensitivities_by_run=sensitivities_by_run,
+            comparisons_by_run=comparisons_by_run,
+            training_start=start,
+            training_end=end,
+            allow_stale=allow_stale_replay_validation,
+        )
+        if len(rows) < 3:
+            return self._save_replay_aware_report(
+                model_version,
+                {
+                    "activation_decision": "rejected",
+                    "rejection_reasons": ["insufficient_replay_aware_validation_rows"],
+                    "replay_run_ids": replay_ids,
+                    "summary": {"candidate_rows": len(rows)},
+                },
+            )
+        rows.sort(key=lambda row: row["signal_timestamp_utc"])
+        split_index = max(1, int(len(rows) * 0.6))
+        validation_rows = rows[split_index:]
+        selected_rows: list[dict[str, Any]] = []
+        suppressed_rows: list[dict[str, Any]] = []
+        score_rows: list[dict[str, Any]] = []
+        for row in validation_rows:
+            row_time = datetime.fromisoformat(str(row["signal_timestamp_utc"]).replace("Z", "+00:00"))
+            train_rows = [
+                prior
+                for prior in rows
+                if datetime.fromisoformat(str(prior["signal_timestamp_utc"]).replace("Z", "+00:00")) < row_time
+            ]
+            cube = EvidenceCubeBuilder().build(
+                train_rows,
+                minimum_cell_sample_size=int((model.get("scoring_config") or {}).get("minimum_cell_sample_size") or 5),
+            )
+            score = ReplayAwareMetaScorer(cube, dict(model.get("scoring_config") or {})).score(row, row.get("feature_snapshot") or {}, model_version=model_version)
+            score_rows.append(score | {"used_training_rows": len(train_rows)})
+            if score["action"] == "TAKE" and row.get("observed_outcome"):
+                selected_rows.append(row)
+            else:
+                suppressed_rows.append(row)
+        summary = summarize_outcome_rows(selected_rows, minimum_cell_sample_size=1)
+        criteria = dict(model.get("activation_criteria") or {})
+        rejection_reasons = self._replay_aware_rejection_reasons(
+            summary,
+            selected_rows,
+            leakage_warnings=[],
+            minimum_selected_trades=int(criteria.get("minimum_selected_trades") or criteria.get("minimum_trades") or 5),
+            minimum_profit_factor=float(criteria.get("minimum_profit_factor") or 1.05),
+            maximum_drawdown_r=float(criteria.get("maximum_drawdown_r") or -10.0),
+            maximum_symbol_profit_share=float(criteria.get("maximum_symbol_profit_share") or 0.70),
+            maximum_setup_profit_share=float(criteria.get("maximum_setup_profit_share") or 0.80),
+        )
+        payload = {
+            "model_version": model_version,
+            "validation_mode": REPLAY_AWARE_VALIDATION_MODE,
+            "replay_run_ids": replay_ids,
+            "summary": {
+                **summary,
+                "selected_candidate_count": len(selected_rows),
+                "suppressed_candidate_count": len(suppressed_rows),
+                "scored_candidate_count": len(score_rows),
+            },
+            "windows": [
+                {
+                    "window_id": "replay-aware-wf-001",
+                    "split": {
+                        "train_start": rows[0]["signal_timestamp_utc"],
+                        "train_end": rows[split_index - 1]["signal_timestamp_utc"],
+                        "validation_start": validation_rows[0]["signal_timestamp_utc"] if validation_rows else None,
+                        "validation_end": validation_rows[-1]["signal_timestamp_utc"] if validation_rows else None,
+                        "test_start": validation_rows[0]["signal_timestamp_utc"] if validation_rows else None,
+                        "test_end": validation_rows[-1]["signal_timestamp_utc"] if validation_rows else None,
+                    },
+                    "metrics": {
+                        "selected_candidate_count": len(selected_rows),
+                        "suppressed_candidate_count": len(suppressed_rows),
+                        "no_future_leakage_enforced": True,
+                    },
+                    "accepted": not rejection_reasons,
+                    "rejection_reasons": rejection_reasons,
+                }
+            ],
+            "selected_trades": selected_rows,
+            "suppressed_candidates": suppressed_rows,
+            "score_rows": score_rows,
+            "per_symbol": self._row_breakdown(selected_rows, "symbol"),
+            "per_setup": self._row_breakdown(selected_rows, "setup_type"),
+            "per_regime": self._row_breakdown(selected_rows, "market_regime"),
+            "per_time_bucket": self._row_breakdown(selected_rows, "time_bucket"),
+            "sensitivity_summary": {
+                replay_id: self._sensitivity_summary((sensitivities_by_run.get(replay_id) or [None])[0])
+                for replay_id in replay_ids
+            },
+            "stale_window_status": [self._replay_stale_status(run) for run in replay_runs],
+            "leakage_warnings": [],
+            "activation_decision": "rejected" if rejection_reasons else "accepted",
+            "rejection_reasons": rejection_reasons,
+            "created_at": datetime.now(UTC).isoformat(),
+        }
+        return self.repos.validation_reports.save(payload, model_version=model_version, purpose=REPLAY_AWARE_VALIDATION_PURPOSE)
+
+    def _save_replay_aware_report(self, model_version: str | None, payload: dict[str, Any]) -> dict[str, Any]:
+        report = {
+            "model_version": model_version,
+            "validation_mode": REPLAY_AWARE_VALIDATION_MODE,
+            "summary": payload.get("summary") or self.backtest.summarize_trades([]),
+            "windows": payload.get("windows") or [],
+            "activation_decision": payload.get("activation_decision") or "rejected",
+            "rejection_reasons": payload.get("rejection_reasons") or [],
+            "leakage_warnings": payload.get("leakage_warnings") or [],
+            "created_at": datetime.now(UTC).isoformat(),
+            **payload,
+        }
+        return self.repos.validation_reports.save(report, model_version=model_version, purpose=REPLAY_AWARE_VALIDATION_PURPOSE)
+
+    def _validation_replay_runs(
+        self,
+        model: dict[str, Any],
+        replay_run_id: str | None,
+        replay_filter: dict[str, Any] | None,
+        allow_latest_replay_fallback: bool,
+    ) -> list[dict[str, Any]]:
+        if replay_run_id:
+            run = self.repos.replays.get(replay_run_id)
+            return [run] if run else []
+        if replay_filter:
+            return self.repos.replays.filter(replay_filter)
+        replay_ids = [str(value) for value in model.get("replay_run_ids") or []]
+        if replay_ids:
+            return [run for replay_id in replay_ids if (run := self.repos.replays.get(replay_id)) is not None]
+        if allow_latest_replay_fallback:
+            runs = self.repos.replays.list_runs()
+            return runs[:1]
+        return []
+
+    def _row_breakdown(self, rows: list[dict[str, Any]], field: str) -> dict[str, dict[str, Any]]:
+        output = {}
+        buckets: dict[str, list[dict[str, Any]]] = {}
+        for row in rows:
+            buckets.setdefault(str(row.get(field) or "unknown"), []).append(row)
+        for key, bucket in buckets.items():
+            output[key] = summarize_outcome_rows(bucket, minimum_cell_sample_size=1)
+        return output
+
+    def _replay_aware_rejection_reasons(
+        self,
+        summary: dict[str, Any],
+        selected_rows: list[dict[str, Any]],
+        leakage_warnings: list[str],
+        *,
+        minimum_selected_trades: int,
+        minimum_profit_factor: float,
+        maximum_drawdown_r: float,
+        maximum_symbol_profit_share: float,
+        maximum_setup_profit_share: float,
+    ) -> list[str]:
+        reasons = []
+        if int(summary.get("observed_outcome_count") or 0) < minimum_selected_trades:
+            reasons.append("minimum_selected_candidate_sample_not_met")
+        if float(summary.get("average_r") or 0.0) <= 0:
+            reasons.append("out_of_sample_expectancy_not_positive")
+        if float(summary.get("profit_factor") or 0.0) <= minimum_profit_factor:
+            reasons.append("profit_factor_below_threshold")
+        if float(summary.get("max_drawdown_r") or 0.0) < maximum_drawdown_r:
+            reasons.append("max_drawdown_too_large")
+        if leakage_warnings:
+            reasons.append("critical_leakage_warnings_present")
+        if self._row_profit_concentration(selected_rows, "symbol") > maximum_symbol_profit_share:
+            reasons.append("single_symbol_profit_concentration_too_high")
+        if self._row_profit_concentration(selected_rows, "setup_type") > maximum_setup_profit_share:
+            reasons.append("single_setup_profit_concentration_too_high")
+        return reasons
+
+    def _row_profit_concentration(self, rows: list[dict[str, Any]], field: str) -> float:
+        profits = [max(float(row.get("realized_r") or 0.0), 0.0) for row in rows]
+        gross_profit = sum(profits)
+        if gross_profit <= 0:
+            return 0.0
+        buckets: dict[str, float] = {}
+        for row in rows:
+            key = str(row.get(field) or "unknown")
+            buckets[key] = buckets.get(key, 0.0) + max(float(row.get("realized_r") or 0.0), 0.0)
+        return max(buckets.values()) / gross_profit if buckets else 0.0
+
 
 class ModelTrainingService:
     def __init__(self, repos: RepositoryRegistry) -> None:
@@ -441,7 +732,41 @@ class ModelTrainingService:
         training_start: datetime,
         training_end: datetime,
         min_samples: int = 30,
+        model_type: str = "statistical_evidence_baseline",
+        intervals: list[str] | None = None,
+        setup_types: list[str] | None = None,
+        sides: list[str] | None = None,
+        replay_run_ids: list[str] | None = None,
+        replay_filter: dict[str, Any] | None = None,
+        sensitivity_required: bool = False,
+        minimum_observed_outcomes: int = 5,
+        minimum_cell_sample_size: int = 5,
+        shrinkage_strength: float = 20.0,
+        scoring_config: dict[str, Any] | None = None,
+        activation_criteria: dict[str, Any] | None = None,
+        validation_mode: str = SIMULATION_TYPE_LABEL_DERIVED,
+        allow_stale: bool = False,
     ) -> dict[str, Any]:
+        if model_type == REPLAY_AWARE_MODEL_TYPE:
+            return self._train_replay_aware(
+                symbols=symbols,
+                intervals=intervals,
+                setup_types=setup_types,
+                sides=sides,
+                training_start=training_start,
+                training_end=training_end,
+                min_samples=min_samples,
+                replay_run_ids=replay_run_ids,
+                replay_filter=replay_filter,
+                sensitivity_required=sensitivity_required,
+                minimum_observed_outcomes=minimum_observed_outcomes,
+                minimum_cell_sample_size=minimum_cell_sample_size,
+                shrinkage_strength=shrinkage_strength,
+                scoring_config=scoring_config or {},
+                activation_criteria=activation_criteria or {},
+                validation_mode=validation_mode,
+                allow_stale=allow_stale,
+            )
         selected_symbols = normalize_symbols(symbols or get_settings().symbol_list)
         labels = self.repos.labels.query(symbols=selected_symbols, start=training_start, end=training_end)
         features = self.repos.features.query(symbols=selected_symbols, start=training_start, end=training_end)
@@ -461,6 +786,218 @@ class ModelTrainingService:
         self.repos.model_runs.save(model)
         return model
 
+    def _train_replay_aware(
+        self,
+        *,
+        symbols: list[str] | None,
+        intervals: list[str] | None,
+        setup_types: list[str] | None,
+        sides: list[str] | None,
+        training_start: datetime,
+        training_end: datetime,
+        min_samples: int,
+        replay_run_ids: list[str] | None,
+        replay_filter: dict[str, Any] | None,
+        sensitivity_required: bool,
+        minimum_observed_outcomes: int,
+        minimum_cell_sample_size: int,
+        shrinkage_strength: float,
+        scoring_config: dict[str, Any],
+        activation_criteria: dict[str, Any],
+        validation_mode: str,
+        allow_stale: bool,
+    ) -> dict[str, Any]:
+        selected_symbols = normalize_symbols(symbols or get_settings().symbol_list)
+        selected_intervals = intervals or ["1min"]
+        replay_runs = self._training_replay_runs(replay_run_ids, replay_filter)
+        replay_runs = [
+            run
+            for run in replay_runs
+            if self._replay_matches_training_scope(run, selected_symbols, selected_intervals, training_start, training_end)
+        ]
+        if not replay_runs:
+            return {
+                "trained": False,
+                "reason": "no_eligible_replay_runs",
+                "model_type": REPLAY_AWARE_MODEL_TYPE,
+                "symbols": selected_symbols,
+                "intervals": selected_intervals,
+                "training_start": training_start.isoformat(),
+                "training_end": training_end.isoformat(),
+            }
+        replay_ids = [str(run["replay_run_id"]) for run in replay_runs]
+        trades_by_run = {replay_id: self.repos.replays.list_trades(replay_id, limit=100_000) for replay_id in replay_ids}
+        features = self.repos.features.query(
+            symbols=selected_symbols,
+            intervals=selected_intervals,
+            start=training_start,
+            end=training_end,
+        )
+        candidates = self.repos.candidate_signals.query(
+            symbols=selected_symbols,
+            intervals=selected_intervals,
+            start=training_start,
+            end=training_end,
+            sides=sides,
+            setup_types=setup_types,
+        )
+        sensitivities_by_run = {replay_id: self.repos.replay_sensitivity.list_for_replay(replay_id) for replay_id in replay_ids}
+        comparisons_by_run = {replay_id: self.repos.backtest_comparisons.list_for_replay(replay_id) for replay_id in replay_ids}
+        missing_sensitivity = [replay_id for replay_id, runs in sensitivities_by_run.items() if not runs]
+        if sensitivity_required and missing_sensitivity:
+            return {
+                "trained": False,
+                "reason": "sensitivity_required",
+                "model_type": REPLAY_AWARE_MODEL_TYPE,
+                "missing_sensitivity_replay_run_ids": missing_sensitivity,
+            }
+        try:
+            outcome_rows = CandidateOutcomeDatasetBuilder().build(
+                replay_runs=replay_runs,
+                trades_by_run=trades_by_run,
+                features=features,
+                candidates=candidates,
+                sensitivities_by_run=sensitivities_by_run,
+                comparisons_by_run=comparisons_by_run,
+                training_start=training_start,
+                training_end=training_end,
+                allow_stale=allow_stale,
+            )
+        except ValueError as exc:
+            return {
+                "trained": False,
+                "reason": str(exc),
+                "model_type": REPLAY_AWARE_MODEL_TYPE,
+                "allow_stale": allow_stale,
+            }
+        if setup_types:
+            outcome_rows = [row for row in outcome_rows if str(row.get("setup_type")) in set(setup_types)]
+        if sides:
+            outcome_rows = [row for row in outcome_rows if str(row.get("side")) in set(sides)]
+        observed = [row for row in outcome_rows if row.get("observed_outcome")]
+        if len(observed) < minimum_observed_outcomes:
+            return {
+                "trained": False,
+                "reason": "minimum_observed_outcomes_not_met",
+                "model_type": REPLAY_AWARE_MODEL_TYPE,
+                "observed_outcome_count": len(observed),
+                "minimum_observed_outcomes": minimum_observed_outcomes,
+            }
+        cube = EvidenceCubeBuilder().build(outcome_rows, minimum_cell_sample_size=minimum_cell_sample_size)
+        merged_scoring_config = default_scoring_config(
+            {
+                **scoring_config,
+                "minimum_observed_outcomes": minimum_observed_outcomes,
+                "minimum_cell_sample_size": minimum_cell_sample_size,
+                "shrinkage_strength": shrinkage_strength,
+            }
+        )
+        metrics = training_summary(outcome_rows, list(cube.cells))
+        warnings: list[str] = []
+        if len(outcome_rows) < min_samples:
+            warnings.append("minimum_requested_samples_not_met")
+        if missing_sensitivity:
+            warnings.append("some_training_replay_runs_missing_sensitivity")
+        if allow_stale:
+            warnings.append("allow_stale_training_enabled")
+        rejection_reasons = []
+        if len(observed) < min_samples:
+            rejection_reasons.append("minimum_requested_samples_not_met")
+        model_version = f"amd-replay-aware-{training_end.strftime('%Y%m%d')}-{datetime.now(UTC).strftime('%H%M%S')}"
+        model = {
+            "trained": True,
+            "model_version": model_version,
+            "schema_version": REPLAY_AWARE_SCHEMA_VERSION,
+            "model_type": REPLAY_AWARE_MODEL_TYPE,
+            "feature_set_version": self._feature_set_version(features, replay_runs),
+            "label_config_version": None,
+            "training_window": {"start": training_start.isoformat(), "end": training_end.isoformat()},
+            "training_start": training_start.isoformat(),
+            "training_end": training_end.isoformat(),
+            "symbols": selected_symbols,
+            "intervals": selected_intervals,
+            "setup_types": sorted(set(str(row.get("setup_type")) for row in outcome_rows)),
+            "sides": sorted(set(str(row.get("side")) for row in outcome_rows)),
+            "replay_run_ids": replay_ids,
+            "sensitivity_run_ids": [
+                str(run.get("sensitivity_run_id"))
+                for runs in sensitivities_by_run.values()
+                for run in runs[:1]
+            ],
+            "replay_config_hashes": sorted({str(run.get("config_hash")) for run in replay_runs if run.get("config_hash")}),
+            "input_fingerprints": sorted({str(run.get("input_fingerprint")) for run in replay_runs if run.get("input_fingerprint")}),
+            "candidate_fingerprints": sorted({str(run.get("candidate_fingerprint")) for run in replay_runs if run.get("candidate_fingerprint")}),
+            "candidate_outcome_row_count": len(outcome_rows),
+            "evidence_cell_count": len(cube.cells),
+            "config_hash": model_config_hash(merged_scoring_config),
+            "scoring_config": merged_scoring_config,
+            "activation_criteria": activation_criteria,
+            "validation_mode": validation_mode,
+            "metrics": metrics,
+            "validation_metrics": {"passes_activation_gate": False, "rejection_reasons": ["validation_required"]},
+            "activation_decision": "rejected",
+            "rejection_reasons": rejection_reasons or ["validation_required"],
+            "warnings": warnings,
+            "active": False,
+            "created_at": datetime.now(UTC).isoformat(),
+            "code_version": git_commit(),
+            "notes": "Replay-aware deterministic evidence baseline; not a calibrated probability and not a profitability claim.",
+        }
+        self.repos.model_runs.save(model)
+        self.repos.model_evidence_cells.save_many(model_version, list(cube.cells))
+        return model
+
+    def _training_replay_runs(
+        self,
+        replay_run_ids: list[str] | None,
+        replay_filter: dict[str, Any] | None,
+    ) -> list[dict[str, Any]]:
+        if replay_run_ids:
+            return [run for replay_id in replay_run_ids if (run := self.repos.replays.get(replay_id)) is not None]
+        if replay_filter:
+            return self.repos.replays.filter(replay_filter)
+        return []
+
+    def _replay_matches_training_scope(
+        self,
+        replay: dict[str, Any],
+        symbols: list[str],
+        intervals: list[str],
+        start: datetime,
+        end: datetime,
+    ) -> bool:
+        if replay.get("simulation_type") != SIMULATION_TYPE_REPLAY:
+            return False
+        replay_symbols = {str(symbol).upper() for symbol in replay.get("symbols") or []}
+        if replay_symbols and set(symbols).isdisjoint(replay_symbols):
+            return False
+        replay_intervals = {str(interval) for interval in replay.get("intervals") or []}
+        if replay_intervals and set(intervals).isdisjoint(replay_intervals):
+            return False
+        replay_end = self._parse_optional_datetime(replay.get("end"))
+        replay_start = self._parse_optional_datetime(replay.get("start"))
+        if replay_end and replay_end < start:
+            return False
+        if replay_start and replay_start > end:
+            return False
+        return True
+
+    def _feature_set_version(self, features: list[dict[str, Any]], replay_runs: list[dict[str, Any]]) -> str:
+        for feature in features:
+            if feature.get("feature_set_version"):
+                return str(feature["feature_set_version"])
+        for replay in replay_runs:
+            if replay.get("feature_set_version"):
+                return str(replay["feature_set_version"])
+        return FEATURE_SET_VERSION
+
+    def _parse_optional_datetime(self, value: Any) -> datetime | None:
+        if value is None:
+            return None
+        if isinstance(value, datetime):
+            return value
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+
 
 class ModelActivationService:
     def __init__(self, repos: RepositoryRegistry, settings: Settings | None = None) -> None:
@@ -471,7 +1008,18 @@ class ModelActivationService:
         model = self.repos.model_runs.get(model_version) or ModelEngine().load(model_version)
         if not model or model.get("model_version") == "untrained-baseline":
             return {"activated": False, "reason": "model_not_found", "model_version": model_version}
-        purpose = "replay_validation" if validation_mode == SIMULATION_TYPE_REPLAY else "validation"
+        if model.get("model_type") == REPLAY_AWARE_MODEL_TYPE and validation_mode != REPLAY_AWARE_VALIDATION_MODE:
+            return {
+                "activated": False,
+                "reason": "replay_aware_validation_required",
+                "model_version": model_version,
+                "validation_mode": validation_mode,
+            }
+        purpose = (
+            REPLAY_AWARE_VALIDATION_PURPOSE
+            if validation_mode == REPLAY_AWARE_VALIDATION_MODE
+            else ("replay_validation" if validation_mode == SIMULATION_TYPE_REPLAY else "validation")
+        )
         report = self.repos.validation_reports.latest(model_version=model_version, purpose=purpose)
         if not report:
             return {
@@ -508,6 +1056,86 @@ class ModelActivationService:
             "sensitivity_run_id": report.get("sensitivity_run_id"),
             "sensitivity_summary": report.get("sensitivity_summary"),
             "active_model": active,
+        }
+
+
+class ReplayAwareScoringService:
+    def __init__(self, repos: RepositoryRegistry) -> None:
+        self.repos = repos
+
+    def evidence(self, model_version: str, limit: int = 500, offset: int = 0) -> dict[str, Any]:
+        return {
+            "model_version": model_version,
+            "summary": self.repos.model_evidence_cells.summary(model_version),
+            "limit": limit,
+            "offset": offset,
+            "evidence_cells": self.repos.model_evidence_cells.list(model_version, limit=limit, offset=offset),
+        }
+
+    def score_candidates(
+        self,
+        model_version: str,
+        *,
+        candidate_ids: list[str] | None = None,
+        candidates: list[dict[str, Any]] | None = None,
+        persist_audit: bool = True,
+    ) -> dict[str, Any]:
+        model = self.repos.model_runs.get(model_version)
+        if model is None:
+            return {"status": "not_found", "model_version": model_version, "scores": []}
+        if model.get("model_type") != REPLAY_AWARE_MODEL_TYPE:
+            return {"status": "error", "reason": "model_is_not_replay_aware", "model_version": model_version, "scores": []}
+        cells = self.repos.model_evidence_cells.list(model_version, limit=100_000)
+        cube = EvidenceCube(tuple(cells))
+        scorer = ReplayAwareMetaScorer(cube, dict(model.get("scoring_config") or {}))
+        selected_candidates = list(candidates or [])
+        if candidate_ids:
+            candidate_id_set = set(candidate_ids)
+            selected_candidates.extend(
+                candidate
+                for candidate in self.repos.candidate_signals.list_all()
+                if str(candidate.get("candidate_id")) in candidate_id_set
+            )
+        features_by_key = {
+            (
+                str(feature.get("symbol") or "").upper(),
+                str(feature.get("interval") or "1min"),
+                str(feature.get("timestamp_utc") or feature.get("timestamp")),
+            ): feature
+            for feature in self.repos.features.list_all()
+        }
+        scores = []
+        for candidate in selected_candidates:
+            feature = features_by_key.get(
+                (
+                    str(candidate.get("symbol") or "").upper(),
+                    str(candidate.get("interval") or "1min"),
+                    str(candidate.get("timestamp_utc") or candidate.get("timestamp")),
+                )
+            )
+            score = scorer.score(candidate, feature, model_version=model_version)
+            scores.append(score)
+            if persist_audit:
+                self.repos.candidate_score_audits.save(score_audit_from_score(score))
+        return {"status": "ok", "model_version": model_version, "scores": scores}
+
+    def score_audits(
+        self,
+        model_version: str,
+        limit: int = 500,
+        offset: int = 0,
+        symbol: str | None = None,
+    ) -> dict[str, Any]:
+        return {
+            "model_version": model_version,
+            "limit": limit,
+            "offset": offset,
+            "score_audits": self.repos.candidate_score_audits.list(
+                model_version,
+                limit=limit,
+                offset=offset,
+                symbol=symbol,
+            ),
         }
 
 
@@ -922,6 +1550,85 @@ class ExportWorkflowService:
             self._sensitivity_export_payload(sensitivity, "metrics"),
         )
         return {"status": "ok", "path": str(path), "rows": len(scenarios), "export": record}
+
+    def export_replay_aware_model_summary(self, model_version: str) -> dict[str, Any]:
+        model = self.repos.model_runs.get(model_version)
+        if model is None:
+            return {"status": "not_found", "model_version": model_version}
+        cells = self.repos.model_evidence_cells.list(model_version, limit=100_000)
+        path = self.exporter.export_replay_aware_model_summary_xlsx(model, cells)
+        record = self.repos.exports.record(
+            "replay_aware_model_summary",
+            "xlsx",
+            path,
+            len(cells),
+            model_version,
+            {"model_type": model.get("model_type"), "warnings": model.get("warnings") or []},
+        )
+        return {"status": "ok", "path": str(path), "rows": len(cells), "export": record}
+
+    def export_evidence_cells(self, model_version: str, kind: str) -> dict[str, Any]:
+        model = self.repos.model_runs.get(model_version)
+        if model is None:
+            return {"status": "not_found", "model_version": model_version}
+        cells = self.repos.model_evidence_cells.list(model_version, limit=100_000)
+        if kind == "csv":
+            path = self.exporter.export_evidence_cells_csv(model_version, cells)
+        elif kind == "xlsx":
+            path = self.exporter.export_evidence_cells_xlsx(model_version, cells)
+        else:
+            raise ValueError("evidence export kind must be csv or xlsx")
+        record = self.repos.exports.record(
+            "model_evidence_cells",
+            kind,
+            path,
+            len(cells),
+            model_version,
+            {"model_type": model.get("model_type")},
+        )
+        return {"status": "ok", "kind": kind, "path": str(path), "rows": len(cells), "export": record}
+
+    def export_score_audits(self, model_version: str, kind: str) -> dict[str, Any]:
+        model = self.repos.model_runs.get(model_version)
+        if model is None:
+            return {"status": "not_found", "model_version": model_version}
+        audits = self.repos.candidate_score_audits.list(model_version, limit=100_000)
+        if kind == "csv":
+            path = self.exporter.export_score_audits_csv(model_version, audits)
+        elif kind == "xlsx":
+            path = self.exporter.export_score_audits_xlsx(model_version, audits)
+        else:
+            raise ValueError("score audit export kind must be csv or xlsx")
+        record = self.repos.exports.record(
+            "candidate_score_audits",
+            kind,
+            path,
+            len(audits),
+            model_version,
+            {"model_type": model.get("model_type")},
+        )
+        return {"status": "ok", "kind": kind, "path": str(path), "rows": len(audits), "export": record}
+
+    def export_replay_aware_validation(self, report_id: str | None, model_version: str | None = None) -> dict[str, Any]:
+        report = None
+        for item in self.repos.validation_reports.list_all(purpose=REPLAY_AWARE_VALIDATION_PURPOSE):
+            if (report_id and item.get("report_id") == report_id) or (
+                not report_id and (model_version is None or item.get("model_version") == model_version)
+            ):
+                report = item
+                break
+        if report is None:
+            return {"status": "not_found", "report_id": report_id, "model_version": model_version}
+        path = self.exporter.export_replay_aware_validation_xlsx(report)
+        record = self.repos.exports.record(
+            "replay_aware_validation",
+            "xlsx",
+            path,
+            1,
+            str(report.get("model_version") or model_version or report_id),
+            {"validation_mode": REPLAY_AWARE_VALIDATION_MODE, "report_id": report.get("report_id")},
+        )
+        return {"status": "ok", "path": str(path), "rows": 1, "export": record}
 
     def _sensitivity_export_payload(self, sensitivity: dict[str, Any], export_scope: str) -> dict[str, Any]:
         return {

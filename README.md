@@ -114,6 +114,44 @@ Replay exports are available through `POST /exports/replay-summary.xlsx`, `POST 
 
 Replay sensitivity exports are available through `POST /exports/sensitivity-summary.xlsx`, `POST /exports/sensitivity-scenarios.csv`, `POST /exports/sensitivity-scenarios.xlsx`, and `POST /exports/sensitivity-metrics.json` with `run_id` set to the sensitivity run ID.
 
+## Replay-Aware Baseline Model
+
+Phase 8 adds `model_type = replay_aware_baseline`. Train it from explicit persisted replay runs:
+
+```bash
+curl -s -X POST http://localhost:8000/models/train \
+  -H 'content-type: application/json' \
+  -d '{"model_type":"replay_aware_baseline","symbols":["AAPL"],"intervals":["1min"],"training_start":"2026-06-01T13:30:00+00:00","training_end":"2026-06-01T19:59:00+00:00","replay_run_ids":["{replay_run_id}"],"minimum_observed_outcomes":5,"minimum_cell_sample_size":5}'
+```
+
+Validate and activate through `replay_aware_walk_forward`:
+
+```bash
+curl -s -X POST 'http://localhost:8000/models/validate?model_version={model_version}&validation_mode=replay_aware_walk_forward'
+curl -s -X POST 'http://localhost:8000/models/activate?model_version={model_version}&validation_mode=replay_aware_walk_forward'
+```
+
+Evidence and score audits:
+
+```bash
+curl -s http://localhost:8000/models/{model_version}/evidence
+curl -s -X POST http://localhost:8000/models/{model_version}/score-candidates \
+  -H 'content-type: application/json' \
+  -d '{"candidate_ids":["{candidate_id}"],"persist_audit":true}'
+curl -s http://localhost:8000/models/{model_version}/score-audits
+```
+
+Replay-aware exports:
+
+- `POST /exports/replay-aware-model-summary.xlsx`
+- `POST /exports/evidence-cells.csv`
+- `POST /exports/evidence-cells.xlsx`
+- `POST /exports/score-audits.csv`
+- `POST /exports/score-audits.xlsx`
+- `POST /exports/replay-aware-validation.xlsx`
+
+The replay-aware score is an explainable evidence score, not a calibrated probability or profitability claim.
+
 ## Default Universe
 
 `AMZN, AAPL, TSLA, SPY, QQQ, IWM, NVDA, GOOGL, BABA, SHOP`

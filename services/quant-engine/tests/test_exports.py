@@ -231,3 +231,119 @@ def test_sensitivity_exports_and_repository_metadata(tmp_path, monkeypatch) -> N
     assert "Summary" in record["workbook_sheets"]
     persisted = repo.exports.list_all()[0]
     assert persisted["file_sha256"] == record["file_sha256"]
+
+
+def test_replay_aware_exports_include_required_workbook_sheets(tmp_path, monkeypatch) -> None:
+    service = ExportService()
+    monkeypatch.setattr(service.settings, "exports_dir", tmp_path)
+    model = {
+        "model_version": "replay-aware-export-test",
+        "model_type": "replay_aware_baseline",
+        "metrics": {"candidate_outcome_rows": 10, "observed_outcome_count": 8, "average_r": 0.4},
+        "replay_run_ids": ["replay-export-test"],
+        "candidate_outcome_row_count": 10,
+        "scoring_config": {"minimum_observed_outcomes": 5, "minimum_profit_factor": 1.05},
+        "activation_criteria": {"minimum_selected_trades": 5},
+        "warnings": [],
+        "replay_config_hashes": ["hash"],
+        "input_fingerprints": ["input"],
+        "code_version": "test",
+    }
+    cells = [
+        {
+            "model_version": "replay-aware-export-test",
+            "cell_key": "side_global:side=LONG",
+            "dimensions": {"side": "LONG", "symbol": "AAPL", "setup_type": "VWAP reclaim long", "market_regime": "trend_long", "time_bucket": "opening_drive"},
+            "hierarchy_level": "side_global",
+            "parent_cell_key": None,
+            "sample_size": 8,
+            "observed_outcome_count": 8,
+            "average_r": 0.4,
+            "median_r": 0.4,
+            "profit_factor": 1.6,
+            "max_drawdown_r": -1,
+            "robustness_score": 1.0,
+            "fragility_flags": [],
+            "metrics": {"label_vs_replay_divergence_flags": []},
+            "evidence_quality_grade": "B",
+        }
+    ]
+    audits = [
+        {
+            "score_id": "score-export-test",
+            "model_version": "replay-aware-export-test",
+            "candidate_id": "candidate-export-test",
+            "symbol": "AAPL",
+            "interval": "1min",
+            "timestamp_utc": datetime(2026, 6, 1, 14, 0, tzinfo=UTC).isoformat(),
+            "side": "LONG",
+            "setup_type": "VWAP reclaim long",
+            "signal_quality_score": 76,
+            "grade": "A-",
+            "action": "TAKE",
+            "expected_r_estimate": 0.4,
+            "suppression_reasons": [],
+            "warnings": [],
+        }
+    ]
+    validation = {
+        "report_id": "replay-aware-validation-export-test",
+        "model_version": "replay-aware-export-test",
+        "validation_mode": "replay_aware_walk_forward",
+        "summary": {"selected_candidate_count": 5, "average_r": 0.4},
+        "windows": [],
+        "selected_trades": [],
+        "suppressed_candidates": [],
+        "per_symbol": {},
+        "per_setup": {},
+        "per_regime": {},
+        "per_time_bucket": {},
+        "sensitivity_summary": {},
+        "rejection_reasons": [],
+    }
+
+    model_summary = service.export_replay_aware_model_summary_xlsx(model, cells)
+    evidence_csv = service.export_evidence_cells_csv("replay-aware-export-test", cells)
+    evidence_xlsx = service.export_evidence_cells_xlsx("replay-aware-export-test", cells)
+    audits_csv = service.export_score_audits_csv("replay-aware-export-test", audits)
+    audits_xlsx = service.export_score_audits_xlsx("replay-aware-export-test", audits)
+    validation_xlsx = service.export_replay_aware_validation_xlsx(validation)
+
+    assert {
+        "Summary",
+        "Training Replay Runs",
+        "Evidence Overview",
+        "Top Positive Evidence Cells",
+        "Top Negative Evidence Cells",
+        "Suppression Rules",
+        "Scoring Config",
+        "Activation Criteria",
+        "Warnings",
+        "Provenance",
+    } <= _sheet_names(model_summary)
+    assert evidence_csv.exists()
+    assert {
+        "Evidence Cells",
+        "By Symbol",
+        "By Setup",
+        "By Regime",
+        "By Time Bucket",
+        "Fragility Flags",
+        "Divergence Flags",
+    } <= _sheet_names(evidence_xlsx)
+    assert audits_csv.exists()
+    assert {"Score Audits"} <= _sheet_names(audits_xlsx)
+    assert {
+        "Summary",
+        "Walk Forward Windows",
+        "Selected Trades",
+        "Suppressed Candidates",
+        "Per Symbol",
+        "Per Setup",
+        "Per Regime",
+        "Per Time Bucket",
+        "Sensitivity",
+        "Drawdown",
+        "Rejection Reasons",
+        "Config",
+    } <= _sheet_names(validation_xlsx)

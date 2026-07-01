@@ -223,6 +223,56 @@ def test_repository_core_contract_parity(tmp_path, monkeypatch, backend: str) ->
         "created_at": datetime.now(UTC).isoformat(),
     }
     assert repo.model_runs.save(model)["model_version"] == "parity-model-accepted"
+    evidence_cells = [
+        {
+            "cell_key": "side_global:side=LONG",
+            "dimensions": {"side": "LONG"},
+            "hierarchy_level": "side_global",
+            "parent_cell_key": None,
+            "metrics": {
+                "sample_size": 4,
+                "observed_outcome_count": 4,
+                "average_r": 0.5,
+                "median_r": 0.5,
+                "profit_factor": 2.0,
+                "max_drawdown_r": -1.0,
+                "sensitivity_robustness_score": 1.0,
+                "fragility_flags": [],
+                "evidence_quality_grade": "B",
+            },
+            "sample_size": 4,
+            "observed_outcome_count": 4,
+            "average_r": 0.5,
+            "median_r": 0.5,
+            "profit_factor": 2.0,
+            "max_drawdown_r": -1.0,
+            "robustness_score": 1.0,
+            "fragility_flags": [],
+            "evidence_quality_grade": "B",
+        }
+    ]
+    assert repo.model_evidence_cells.save_many("parity-model-accepted", evidence_cells) == 1
+    score_audit = repo.candidate_score_audits.save(
+        {
+            "score_id": "score-parity",
+            "model_version": "parity-model-accepted",
+            "candidate_id": "candidate-AAPL",
+            "symbol": "AAPL",
+            "interval": "1min",
+            "timestamp_utc": bars[0].timestamp_utc,
+            "side": Side.LONG.value,
+            "setup_type": "VWAP reclaim long",
+            "signal_quality_score": 76.0,
+            "grade": "A-",
+            "action": "TAKE",
+            "expected_r_estimate": 0.4,
+            "score_components": {"evidence_quality_score": 80},
+            "suppression_reasons": [],
+            "evidence_cell_keys_used": ["side_global:side=LONG"],
+            "warnings": [],
+        }
+    )
+    assert score_audit["score_id"] == "score-parity"
     rejected = repo.validation_reports.save(
         {
             "model_version": "parity-model-accepted",
@@ -403,6 +453,8 @@ def test_repository_core_contract_parity(tmp_path, monkeypatch, backend: str) ->
     assert len(reopened.candidate_signals.list_all()) == 4
     assert len(reopened.labels.list_all()) == 4
     assert reopened.model_runs.get("parity-model-accepted")["model_version"] == "parity-model-accepted"
+    assert reopened.model_evidence_cells.count("parity-model-accepted") == 1
+    assert reopened.candidate_score_audits.list("parity-model-accepted")[0]["score_id"] == "score-parity"
     assert reopened.validation_reports.latest(model_version="parity-model-accepted")["activation_decision"] == "accepted"
     assert reopened.active_models.get_active()["model_version"] == "parity-model-accepted"
     assert reopened.scanner_runs.latest()["scanner_run_id"] == scanner_run_id

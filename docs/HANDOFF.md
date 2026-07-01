@@ -4,7 +4,7 @@ Report status date: 2026-07-01
 
 ## Executive State
 
-Phase 7 replay calibration audit and operational hardening is complete in source. Python `3.14.6` is installed through Homebrew, `services/quant-engine/.venv` exists on Python `3.14.6`, Docker Postgres/TimescaleDB plus Redis are the required database runtime, Alembic upgrades the target database to `0004_phase7_audit`, and the persisted FastAPI vertical-slice smoke test covers label-derived backtests, explicit replay validation, replay sensitivity, label-vs-replay comparison, and exports with a mocked provider and no FMP key.
+Phase 8 replay-aware baseline model selection is complete in source. Python `3.14.6` is installed through Homebrew, `services/quant-engine/.venv` exists on Python `3.14.6`, Docker Postgres/TimescaleDB plus Redis are the required database runtime, Alembic upgrades the target database to `0005_phase8_replay_aware_models`, and the persisted FastAPI vertical-slice smoke test covers label-derived backtests, explicit replay validation, replay sensitivity, label-vs-replay comparison, replay-aware training, evidence retrieval, candidate scoring, score audits, replay-aware validation/activation, and exports with a mocked provider and no FMP key.
 
 This remains a local-first scanner, research, validation, backtest, signal, and export platform only. It is not a broker, auto-trader, order router, self-learning system, or profitability system.
 
@@ -66,7 +66,7 @@ The FastAPI repository backend is selected explicitly:
 - failed Postgres init: hard failure by default;
 - `AMD_ALLOW_SQLITE_FALLBACK=true`: explicit SQLite fallback reported as `sqlite-fallback-from-postgres`.
 
-Phase 7 persists replay audit and sensitivity state:
+Phase 7 and Phase 8 persist replay audit, sensitivity, and replay-aware model-selection state:
 
 - `replay_runs`: one row per candidate market replay run with config, filters, simulation type, metrics, warnings, backend, config hash, input fingerprint, candidate fingerprint, and stale-window status.
 - `simulated_trades`: one row per taken or skipped candidate, including execution assumptions, entry/exit prices, realized R, MFE/MAE, skip reason, and ambiguity policy.
@@ -74,6 +74,8 @@ Phase 7 persists replay audit and sensitivity state:
 - `replay_sensitivity_runs`: sensitivity run summaries, robustness scores, fragility flags, worst/median/best cases, and gate results.
 - `replay_sensitivity_scenarios`: scenario-level slippage/spread/intrabar metrics.
 - `backtest_comparisons`: persisted label-derived vs replay comparison reports.
+- `model_evidence_cells`: replay-aware evidence cube cells with hierarchy level, dimensions, observed counts, shrinkage/backoff metrics, fragility flags, stale warnings, and provenance.
+- `candidate_score_audits`: deterministic replay-aware score/audit rows with action, grade, component scores, penalties, evidence keys, warning codes, and suppression reasons.
 
 Safe status fields are exposed through `GET /health`, `GET /config`, and `make doctor`: `persistence_backend`, `runtime_mode`, `database_configured`, `database_reachable`, `fallback_enabled`, and `fallback_reason`. Full database URLs, passwords, and API keys are never returned.
 
@@ -83,10 +85,10 @@ Safe status fields are exposed through `GET /health`, `GET /config`, and `make d
 - Repository-backed API route state instead of route-level `_MEMORY`.
 - SQLite local API persistence and reinitialization survival for bars, features, labels, replay runs/trades, model runs, active model, scanner runs/signals, exports, and daily reviews.
 - Postgres API persistence and reinitialization survival for the same vertical slice after `make db-migrate`.
-- Alembic migration and schema inspection success against local Postgres/TimescaleDB on host port `15432` when the database is at revision `0004_phase7_audit`; `bars` is verified as a Timescale hypertable when the extension is available.
-- SQLite/Postgres repository parity for symbols, bars, features, labels, replay runs/trades, sensitivity runs/scenarios, comparisons, pipeline build windows, models, scanner runs, signals, provider requests, exports, and daily reviews.
-- CSV/XLSX/JSON export generation from persisted signals, replay runs/trades, replay sensitivity runs, and daily reviews, with file hashes and workbook sheets recorded.
-- Activation guard requiring a persisted accepted validation report.
+- Alembic migration and schema inspection success against local Postgres/TimescaleDB on host port `15432` when the database is at revision `0005_phase8_replay_aware_models`; `bars` is verified as a Timescale hypertable when the extension is available.
+- SQLite/Postgres repository parity for symbols, bars, features, labels, replay runs/trades, sensitivity runs/scenarios, comparisons, pipeline build windows, replay-aware evidence cells, candidate score audits, models, scanner runs, signals, provider requests, exports, and daily reviews.
+- CSV/XLSX/JSON export generation from persisted signals, replay runs/trades, replay sensitivity runs, replay-aware model summaries, evidence cells, score audits, replay-aware validation reports, and daily reviews, with file hashes and workbook sheets recorded.
+- Activation guard requiring a persisted accepted validation report; replay-aware models specifically require accepted `replay_aware_walk_forward` validation.
 - Secret redaction behavior and absence of the supplied FMP key from repo files.
 
 ## What Is Not Safe To Trust Yet
@@ -162,6 +164,56 @@ curl -s -X POST http://localhost:8000/exports/sensitivity-summary.xlsx \
 
 ## Exact Next Recommended Phase
 
-Phase 8: replay operations and calibration follow-through.
+Phase 9: counterfactual replay and calibration follow-through.
 
-The next phase should add Timescale compression/retention policies, richer operational dashboards or CLI reports if requested, calibration research against sampled intraday data, and FMP entitlement follow-through. Do not add broker execution, WebSocket scope, options data, self-learning language, or profitability claims in that phase.
+The next phase should add explicit `model_training_counterfactual` replay, Timescale compression/retention policies if needed, richer operational dashboards or CLI reports if requested, calibration research against sampled intraday data, and FMP entitlement follow-through. Do not add broker execution, WebSocket scope, options data, self-learning language, or profitability claims in that phase.
+
+## Phase 8 Replay-Aware Model Selection
+
+Train a replay-aware baseline model from persisted replay runs:
+
+```bash
+curl -s -X POST http://localhost:8000/models/train \
+  -H 'content-type: application/json' \
+  -d '{"model_type":"replay_aware_baseline","symbols":["AAPL"],"intervals":["1min"],"training_start":"2026-06-01T13:30:00+00:00","training_end":"2026-06-01T19:59:00+00:00","replay_run_ids":["{replay_run_id}"],"minimum_observed_outcomes":5,"minimum_cell_sample_size":5}'
+```
+
+Validate and activate:
+
+```bash
+curl -s -X POST 'http://localhost:8000/models/validate?model_version={model_version}&validation_mode=replay_aware_walk_forward'
+curl -s -X POST 'http://localhost:8000/models/activate?model_version={model_version}&validation_mode=replay_aware_walk_forward'
+```
+
+Score candidates and inspect audits:
+
+```bash
+curl -s http://localhost:8000/models/{model_version}/evidence
+curl -s -X POST http://localhost:8000/models/{model_version}/score-candidates \
+  -H 'content-type: application/json' \
+  -d '{"candidate_ids":["{candidate_id}"],"persist_audit":true}'
+curl -s http://localhost:8000/models/{model_version}/score-audits
+```
+
+When an active `replay_aware_baseline` exists, the scanner uses replay-aware scoring and writes score audits. If none is active, it falls back to the prior baseline and adds `no_replay_aware_model_active` to signal warnings.
+
+Replay-aware exports:
+
+```bash
+curl -s -X POST http://localhost:8000/exports/replay-aware-model-summary.xlsx \
+  -H 'content-type: application/json' \
+  -d '{"kind":"replay-aware-model-summary","run_id":"{model_version}"}'
+curl -s -X POST http://localhost:8000/exports/evidence-cells.xlsx \
+  -H 'content-type: application/json' \
+  -d '{"kind":"evidence-cells","run_id":"{model_version}"}'
+curl -s -X POST http://localhost:8000/exports/score-audits.xlsx \
+  -H 'content-type: application/json' \
+  -d '{"kind":"score-audits","run_id":"{model_version}"}'
+curl -s -X POST http://localhost:8000/exports/replay-aware-validation.xlsx \
+  -H 'content-type: application/json' \
+  -d '{"kind":"replay-aware-validation","run_id":"{report_id}"}'
+```
+
+Safe to trust: deterministic replay outcome dataset rules, persisted evidence cells, shrinkage/backoff hierarchy, score audits, replay-aware activation guard, and SQLite/Postgres persistence once migration `0005_phase8_replay_aware_models` is applied.
+
+Not safe to trust: `signal_quality_score` as a calibrated probability, replay as live fill proof, portfolio-overlap skipped candidates as losses, or any output as a profitability claim.

@@ -12,7 +12,7 @@ This is still a scanner, research, validation, backtest, model metadata, signal,
 
 - Local default: `data/local_repo.sqlite3`, ignored by git along with SQLite WAL sidecars.
 - Configured SQLite: `sqlite:///...` paths, including `AMD_SQLITE_PATH` for local test/runtime overrides.
-- PostgreSQL runtime: sync SQLAlchemy/psycopg repository store against Alembic revision `0004_phase7_audit` on local host port `15432`.
+- PostgreSQL runtime: sync SQLAlchemy/psycopg repository store against Alembic revision `0005_phase8_replay_aware_models` on local host port `15432`.
 - Export artifacts: `exports/`, ignored except `.gitkeep`.
 - Model artifacts: `model_artifacts/`, ignored except `.gitkeep`.
 - FMP secrets: `FMP_API_KEY` from environment or ignored env files only.
@@ -30,6 +30,8 @@ It exposes concrete repositories for:
 - `labels`
 - `validation_reports`
 - `model_runs`
+- `model_evidence_cells`
+- `candidate_score_audits`
 - `active_models`
 - `live_signals`
 - `scanner_runs`
@@ -62,7 +64,12 @@ Backend selection is explicit:
 - `/features/build` reads persisted bars and writes persisted features.
 - `/labels/build` reads bars/features and writes candidate signals plus labels.
 - `/models/train` reads persisted labels/features and writes model runs/artifact metadata.
+- `/models/train` with `model_type=replay_aware_baseline` reads persisted replay runs/trades/features/candidates/sensitivity/comparisons and writes model runs plus `model_evidence_cells`.
+- `/models/{model_version}/evidence` reads persisted replay-aware evidence cells.
+- `/models/{model_version}/score-candidates` scores persisted or inline candidates and can write `candidate_score_audits`.
+- `/models/{model_version}/score-audits` reads persisted score audits.
 - `/models/validate` writes validation reports.
+- `/models/validate?validation_mode=replay_aware_walk_forward` writes replay-aware validation reports with purpose `replay_aware_validation`.
 - `/models/activate` requires an accepted persisted validation report before activating.
 - `/backtest/run` reads persisted labels and writes a persisted report with purpose `backtest` and `simulation_type = label_derived`.
 - `/backtest/replay` reads persisted bars, features, and candidate signals; writes a persisted replay run and simulated trades with `simulation_type = candidate_market_replay`.
@@ -111,6 +118,8 @@ The aligned table set is:
 - `validation_reports`
 - `validation_windows`
 - `model_runs`
+- `model_evidence_cells`
+- `candidate_score_audits`
 - `model_artifacts`
 - `active_models`
 - `live_signals`
@@ -135,5 +144,6 @@ The aligned table set is:
 - Postgres is implemented for the repository contract, and `bars` is created as a Timescale hypertable when the extension is available. Compression and retention policies remain future work.
 - SQLite remains the local default for no-configuration development.
 - No live FMP smoke was executed because `FMP_API_KEY` is not loaded in the process environment or ignored env files.
+- Replay-aware meta-scoring is deterministic evidence scoring, not calibrated probability and not profitability proof.
 - Replay is simulated from OHLCV bars and does not prove actual fills, liquidity, or profitability.
 - No broker execution, order routing, WebSocket entitlement path, options, gamma, Greeks, or internals were added.

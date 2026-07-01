@@ -23,6 +23,7 @@ from app.schemas.market import (
     IngestRequest,
     ReplayBacktestRequest,
     ScannerStartRequest,
+    ScoreCandidatesRequest,
     SensitivityRequest,
     TrainRequest,
 )
@@ -35,6 +36,7 @@ from app.services.workflows import (
     LabelBuildService,
     ModelActivationService,
     ModelTrainingService,
+    ReplayAwareScoringService,
     ValidationWorkflowService,
 )
 from app.utils.time import UTC
@@ -167,6 +169,20 @@ async def train_model(request: TrainRequest) -> dict[str, object]:
         request.training_start,
         request.training_end,
         request.min_samples,
+        model_type=request.model_type,
+        intervals=request.intervals,
+        setup_types=request.setup_types,
+        sides=request.sides,
+        replay_run_ids=request.replay_run_ids,
+        replay_filter=request.replay_filter,
+        sensitivity_required=request.sensitivity_required,
+        minimum_observed_outcomes=request.minimum_observed_outcomes,
+        minimum_cell_sample_size=request.minimum_cell_sample_size,
+        shrinkage_strength=request.shrinkage_strength,
+        scoring_config=request.scoring_config,
+        activation_criteria=request.activation_criteria,
+        validation_mode=request.validation_mode,
+        allow_stale=request.allow_stale,
     )
     if request.activate_if_passes and model.get("model_version"):
         ValidationWorkflowService(repository).validate(
@@ -174,8 +190,16 @@ async def train_model(request: TrainRequest) -> dict[str, object]:
             symbols=request.symbols,
             start=request.training_start,
             end=request.training_end,
+            validation_mode=request.validation_mode,
+            replay_run_id=(request.replay_run_ids or [None])[0],
+            replay_filter=request.replay_filter,
+            require_sensitivity=request.sensitivity_required,
+            allow_stale_replay_validation=request.allow_stale,
         )
-        model["activation"] = ModelActivationService(repository).activate(str(model["model_version"]))
+        model["activation"] = ModelActivationService(repository).activate(
+            str(model["model_version"]),
+            validation_mode=request.validation_mode,
+        )
     return model
 
 
@@ -216,6 +240,32 @@ async def models() -> list[dict[str, object]]:
     artifact_models = ModelEngine().list_models()
     versions = {str(model.get("model_version")) for model in repository_models}
     return repository_models + [model for model in artifact_models if str(model.get("model_version")) not in versions]
+
+
+@router.get("/models/{model_version}/evidence")
+async def model_evidence(model_version: str, limit: int = 500, offset: int = 0) -> dict[str, object]:
+    return ReplayAwareScoringService(repos()).evidence(model_version, limit=limit, offset=offset)
+
+
+@router.post("/models/{model_version}/score-candidates")
+async def score_model_candidates(model_version: str, request: ScoreCandidatesRequest | None = None) -> dict[str, object]:
+    request = request or ScoreCandidatesRequest()
+    return ReplayAwareScoringService(repos()).score_candidates(
+        model_version,
+        candidate_ids=request.candidate_ids,
+        candidates=request.candidates,
+        persist_audit=request.persist_audit,
+    )
+
+
+@router.get("/models/{model_version}/score-audits")
+async def model_score_audits(
+    model_version: str,
+    limit: int = 500,
+    offset: int = 0,
+    symbol: str | None = None,
+) -> dict[str, object]:
+    return ReplayAwareScoringService(repos()).score_audits(model_version, limit=limit, offset=offset, symbol=symbol)
 
 
 @router.get("/models/{model_version}")
@@ -418,6 +468,46 @@ async def export_sensitivity_metrics_json(request: ExportRequest) -> dict[str, o
     if not request.run_id:
         return {"status": "error", "reason": "run_id_required"}
     return ExportWorkflowService(repos()).export_sensitivity_metrics(request.run_id)
+
+
+@router.post("/exports/replay-aware-model-summary.xlsx")
+async def export_replay_aware_model_summary_xlsx(request: ExportRequest) -> dict[str, object]:
+    if not request.run_id:
+        return {"status": "error", "reason": "run_id_required"}
+    return ExportWorkflowService(repos()).export_replay_aware_model_summary(request.run_id)
+
+
+@router.post("/exports/evidence-cells.csv")
+async def export_evidence_cells_csv(request: ExportRequest) -> dict[str, object]:
+    if not request.run_id:
+        return {"status": "error", "reason": "run_id_required"}
+    return ExportWorkflowService(repos()).export_evidence_cells(request.run_id, "csv")
+
+
+@router.post("/exports/evidence-cells.xlsx")
+async def export_evidence_cells_xlsx(request: ExportRequest) -> dict[str, object]:
+    if not request.run_id:
+        return {"status": "error", "reason": "run_id_required"}
+    return ExportWorkflowService(repos()).export_evidence_cells(request.run_id, "xlsx")
+
+
+@router.post("/exports/score-audits.csv")
+async def export_score_audits_csv(request: ExportRequest) -> dict[str, object]:
+    if not request.run_id:
+        return {"status": "error", "reason": "run_id_required"}
+    return ExportWorkflowService(repos()).export_score_audits(request.run_id, "csv")
+
+
+@router.post("/exports/score-audits.xlsx")
+async def export_score_audits_xlsx(request: ExportRequest) -> dict[str, object]:
+    if not request.run_id:
+        return {"status": "error", "reason": "run_id_required"}
+    return ExportWorkflowService(repos()).export_score_audits(request.run_id, "xlsx")
+
+
+@router.post("/exports/replay-aware-validation.xlsx")
+async def export_replay_aware_validation_xlsx(request: ExportRequest) -> dict[str, object]:
+    return ExportWorkflowService(repos()).export_replay_aware_validation(request.run_id)
 
 
 @router.get("/exports/{export_id}")

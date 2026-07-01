@@ -5,6 +5,7 @@ import math
 import os
 import re
 import sqlite3
+from collections import Counter
 from collections.abc import Iterable
 from dataclasses import asdict, is_dataclass
 from datetime import date, datetime
@@ -36,6 +37,7 @@ EXPECTED_TABLES = {
     "bars",
     "backtest_comparisons",
     "candidate_signals",
+    "candidate_score_audits",
     "closed_signals",
     "daily_reviews",
     "exports",
@@ -43,6 +45,7 @@ EXPECTED_TABLES = {
     "labels",
     "live_signals",
     "model_artifacts",
+    "model_evidence_cells",
     "model_runs",
     "pipeline_build_windows",
     "provider_requests",
@@ -55,7 +58,7 @@ EXPECTED_TABLES = {
     "validation_reports",
     "validation_windows",
 }
-EXPECTED_ALEMBIC_REVISION = "0004_phase7_audit"
+EXPECTED_ALEMBIC_REVISION = "0005_phase8_replay_aware_models"
 
 
 def _now_iso() -> str:
@@ -461,6 +464,58 @@ class SQLiteStore:
                         created_at TEXT NOT NULL,
                         FOREIGN KEY(model_version) REFERENCES model_runs(model_version) ON DELETE CASCADE
                     );
+
+                    CREATE TABLE IF NOT EXISTS model_evidence_cells (
+                        id TEXT PRIMARY KEY,
+                        model_version TEXT NOT NULL,
+                        cell_key TEXT NOT NULL,
+                        dimensions_json TEXT DEFAULT '{}',
+                        hierarchy_level TEXT NOT NULL,
+                        parent_cell_key TEXT,
+                        metrics_json TEXT DEFAULT '{}',
+                        sample_size INTEGER NOT NULL DEFAULT 0,
+                        observed_outcome_count INTEGER NOT NULL DEFAULT 0,
+                        average_r REAL NOT NULL DEFAULT 0,
+                        median_r REAL NOT NULL DEFAULT 0,
+                        profit_factor REAL NOT NULL DEFAULT 0,
+                        max_drawdown_r REAL NOT NULL DEFAULT 0,
+                        robustness_score REAL,
+                        fragility_flags_json TEXT DEFAULT '[]',
+                        evidence_quality_grade TEXT NOT NULL,
+                        created_at TEXT NOT NULL,
+                        UNIQUE(model_version, cell_key)
+                    );
+
+                    CREATE INDEX IF NOT EXISTS ix_model_evidence_cells_model_level
+                        ON model_evidence_cells(model_version, hierarchy_level);
+
+                    CREATE TABLE IF NOT EXISTS candidate_score_audits (
+                        id TEXT PRIMARY KEY,
+                        score_id TEXT NOT NULL UNIQUE,
+                        model_version TEXT NOT NULL,
+                        candidate_id TEXT,
+                        symbol TEXT NOT NULL,
+                        interval TEXT NOT NULL,
+                        timestamp_utc TEXT NOT NULL,
+                        side TEXT NOT NULL,
+                        setup_type TEXT NOT NULL,
+                        signal_quality_score REAL NOT NULL DEFAULT 0,
+                        grade TEXT NOT NULL,
+                        action TEXT NOT NULL,
+                        expected_r_estimate REAL NOT NULL DEFAULT 0,
+                        score_components_json TEXT DEFAULT '{}',
+                        suppression_reasons_json TEXT DEFAULT '[]',
+                        evidence_cell_keys_used_json TEXT DEFAULT '[]',
+                        warnings_json TEXT DEFAULT '[]',
+                        payload_json TEXT NOT NULL,
+                        created_at TEXT NOT NULL
+                    );
+
+                    CREATE INDEX IF NOT EXISTS ix_score_audits_model_created
+                        ON candidate_score_audits(model_version, created_at);
+
+                    CREATE INDEX IF NOT EXISTS ix_score_audits_symbol_ts
+                        ON candidate_score_audits(symbol, timestamp_utc);
 
                     CREATE TABLE IF NOT EXISTS active_models (
                         active_model_id TEXT PRIMARY KEY,
@@ -1613,6 +1668,214 @@ class ModelRunRepository:
                     connection.close()
 
 
+class ModelEvidenceCellRepository:
+    def __init__(self, store: SQLiteStore) -> None:
+        self.store = store
+
+    def save_many(self, model_version: str, cells: Iterable[dict[str, Any]]) -> int:
+        rows = []
+        for cell in cells:
+            payload = _payload(cell)
+            cell_key = str(payload["cell_key"])
+            created_at = str(payload.get("created_at") or _now_iso())
+            metrics = dict(payload.get("metrics") or {})
+            rows.append(
+                (
+                    str(payload.get("id") or _stable_id("evidence_cell", model_version, cell_key)),
+                    model_version,
+                    cell_key,
+                    _json_dumps(payload.get("dimensions") or {}),
+                    str(payload.get("hierarchy_level") or "unknown"),
+                    payload.get("parent_cell_key"),
+                    _json_dumps(metrics),
+                    int(payload.get("sample_size") or metrics.get("sample_size") or 0),
+                    int(payload.get("observed_outcome_count") or metrics.get("observed_outcome_count") or 0),
+                    float(payload.get("average_r") or metrics.get("average_r") or 0.0),
+                    float(payload.get("median_r") or metrics.get("median_r") or 0.0),
+                    float(payload.get("profit_factor") or metrics.get("profit_factor") or 0.0),
+                    float(payload.get("max_drawdown_r") or metrics.get("max_drawdown_r") or 0.0),
+                    payload.get("robustness_score") if payload.get("robustness_score") is not None else metrics.get("sensitivity_robustness_score"),
+                    _json_dumps(payload.get("fragility_flags") or metrics.get("fragility_flags") or []),
+                    str(payload.get("evidence_quality_grade") or metrics.get("evidence_quality_grade") or "UNKNOWN"),
+                    created_at,
+                )
+            )
+        with self.store._lock:
+            connection = self.store.connect()
+            try:
+                connection.execute("DELETE FROM model_evidence_cells WHERE model_version = ?", (model_version,))
+                connection.executemany(
+                    """
+                    INSERT INTO model_evidence_cells(
+                        id, model_version, cell_key, dimensions_json, hierarchy_level, parent_cell_key,
+                        metrics_json, sample_size, observed_outcome_count, average_r, median_r, profit_factor,
+                        max_drawdown_r, robustness_score, fragility_flags_json, evidence_quality_grade, created_at
+                    )
+                    VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(model_version, cell_key) DO UPDATE SET
+                        dimensions_json=excluded.dimensions_json,
+                        hierarchy_level=excluded.hierarchy_level,
+                        parent_cell_key=excluded.parent_cell_key,
+                        metrics_json=excluded.metrics_json,
+                        sample_size=excluded.sample_size,
+                        observed_outcome_count=excluded.observed_outcome_count,
+                        average_r=excluded.average_r,
+                        median_r=excluded.median_r,
+                        profit_factor=excluded.profit_factor,
+                        max_drawdown_r=excluded.max_drawdown_r,
+                        robustness_score=excluded.robustness_score,
+                        fragility_flags_json=excluded.fragility_flags_json,
+                        evidence_quality_grade=excluded.evidence_quality_grade
+                    """,
+                    rows,
+                )
+                connection.commit()
+            finally:
+                if str(self.store.path) != ":memory:":
+                    connection.close()
+        return len(rows)
+
+    def list(self, model_version: str, limit: int = 500, offset: int = 0) -> list[dict[str, Any]]:
+        connection = self.store.connect()
+        try:
+            rows = connection.execute(
+                """
+                SELECT * FROM model_evidence_cells
+                WHERE model_version = ?
+                ORDER BY hierarchy_level, observed_outcome_count DESC, average_r DESC, cell_key
+                LIMIT ? OFFSET ?
+                """,
+                (model_version, limit, offset),
+            ).fetchall()
+            return [self._row(row) for row in rows]
+        finally:
+            if str(self.store.path) != ":memory:":
+                connection.close()
+
+    def count(self, model_version: str) -> int:
+        connection = self.store.connect()
+        try:
+            row = connection.execute(
+                "SELECT COUNT(*) AS count FROM model_evidence_cells WHERE model_version = ?",
+                (model_version,),
+            ).fetchone()
+            return int(row["count"] if row else 0)
+        finally:
+            if str(self.store.path) != ":memory:":
+                connection.close()
+
+    def summary(self, model_version: str) -> dict[str, Any]:
+        cells = self.list(model_version, limit=100_000)
+        return {
+            "model_version": model_version,
+            "cell_count": len(cells),
+            "observed_outcome_count": sum(int(cell.get("observed_outcome_count") or 0) for cell in cells),
+            "grades": dict(Counter(str(cell.get("evidence_quality_grade") or "UNKNOWN") for cell in cells)),
+            "hierarchy_levels": dict(Counter(str(cell.get("hierarchy_level") or "unknown") for cell in cells)),
+        }
+
+    def _row(self, row: Any) -> dict[str, Any]:
+        data = dict(row)
+        data["dimensions"] = _json_loads(data.pop("dimensions_json"))
+        data["metrics"] = _json_loads(data.pop("metrics_json"))
+        data["fragility_flags"] = _json_loads(data.pop("fragility_flags_json"))
+        return data
+
+
+class CandidateScoreAuditRepository:
+    def __init__(self, store: SQLiteStore) -> None:
+        self.store = store
+
+    def save(self, audit: dict[str, Any]) -> dict[str, Any]:
+        payload = _payload(audit)
+        created_at = str(payload.get("created_at") or _now_iso())
+        score_id = str(payload.get("score_id") or _stable_id("score", payload.get("model_version"), created_at))
+        row_id = str(payload.get("id") or _stable_id("score_audit", score_id))
+        row_payload = payload | {"id": row_id, "score_id": score_id, "created_at": created_at}
+        with self.store._lock:
+            connection = self.store.connect()
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO candidate_score_audits(
+                        id, score_id, model_version, candidate_id, symbol, interval, timestamp_utc, side,
+                        setup_type, signal_quality_score, grade, action, expected_r_estimate,
+                        score_components_json, suppression_reasons_json, evidence_cell_keys_used_json,
+                        warnings_json, payload_json, created_at
+                    )
+                    VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(score_id) DO UPDATE SET
+                        signal_quality_score=excluded.signal_quality_score,
+                        grade=excluded.grade,
+                        action=excluded.action,
+                        expected_r_estimate=excluded.expected_r_estimate,
+                        score_components_json=excluded.score_components_json,
+                        suppression_reasons_json=excluded.suppression_reasons_json,
+                        evidence_cell_keys_used_json=excluded.evidence_cell_keys_used_json,
+                        warnings_json=excluded.warnings_json,
+                        payload_json=excluded.payload_json
+                    """,
+                    (
+                        row_id,
+                        score_id,
+                        str(row_payload["model_version"]),
+                        row_payload.get("candidate_id"),
+                        normalize_symbol(str(row_payload["symbol"])),
+                        str(row_payload.get("interval") or "1min"),
+                        _maybe_datetime(row_payload.get("timestamp_utc")).isoformat() if row_payload.get("timestamp_utc") else _now_iso(),
+                        str(row_payload.get("side") or "NO_TRADE"),
+                        str(row_payload.get("setup_type") or "unknown"),
+                        float(row_payload.get("signal_quality_score") or 0.0),
+                        str(row_payload.get("grade") or "NO_TRADE"),
+                        str(row_payload.get("action") or "SUPPRESS"),
+                        float(row_payload.get("expected_r_estimate") or 0.0),
+                        _json_dumps(row_payload.get("score_components") or {}),
+                        _json_dumps(row_payload.get("suppression_reasons") or []),
+                        _json_dumps(row_payload.get("evidence_cell_keys_used") or []),
+                        _json_dumps(row_payload.get("warnings") or row_payload.get("warning_codes") or []),
+                        _json_dumps(row_payload),
+                        created_at,
+                    ),
+                )
+                connection.commit()
+            finally:
+                if str(self.store.path) != ":memory:":
+                    connection.close()
+        return row_payload
+
+    def list(
+        self,
+        model_version: str,
+        limit: int = 500,
+        offset: int = 0,
+        symbol: str | None = None,
+    ) -> list[dict[str, Any]]:
+        clauses = ["model_version = ?"]
+        params: list[Any] = [model_version]
+        if symbol:
+            clauses.append("symbol = ?")
+            params.append(normalize_symbol(symbol))
+        sql = "SELECT * FROM candidate_score_audits WHERE " + " AND ".join(clauses)  # noqa: S608 - fixed clauses with bound parameters.
+        sql += " ORDER BY created_at DESC, score_id LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
+        connection = self.store.connect()
+        try:
+            rows = connection.execute(sql, params).fetchall()
+            return [self._row(row) for row in rows]
+        finally:
+            if str(self.store.path) != ":memory:":
+                connection.close()
+
+    def _row(self, row: Any) -> dict[str, Any]:
+        data = dict(row)
+        data["score_components"] = _json_loads(data.pop("score_components_json"))
+        data["suppression_reasons"] = _json_loads(data.pop("suppression_reasons_json"))
+        data["evidence_cell_keys_used"] = _json_loads(data.pop("evidence_cell_keys_used_json"))
+        data["warnings"] = _json_loads(data.pop("warnings_json"))
+        data["payload"] = _json_loads(data.pop("payload_json"))
+        return data
+
+
 class ActiveModelRepository:
     def __init__(self, store: SQLiteStore, model_runs: ModelRunRepository) -> None:
         self.store = store
@@ -2054,6 +2317,12 @@ class ReplayRepository:
             reverse=True,
         )[0]
 
+    def filter(self, replay_filter: dict[str, Any]) -> list[dict[str, Any]]:
+        return sorted(
+            [run for run in self.list_runs() if self._matches_filter(run, replay_filter)],
+            key=lambda run: (str(run.get("created_at") or ""), str(run.get("replay_run_id") or "")),
+        )
+
     def _matches_filter(self, replay_run: dict[str, Any], replay_filter: dict[str, Any]) -> bool:
         if str(replay_run.get("simulation_type")) != "candidate_market_replay":
             return False
@@ -2282,6 +2551,22 @@ class BacktestComparisonRepository:
                 (comparison_id,),
             ).fetchone()
             return _json_loads(row["payload_json"]) if row else None
+        finally:
+            if str(self.store.path) != ":memory:":
+                connection.close()
+
+    def list_for_replay(self, replay_run_id: str) -> list[dict[str, Any]]:
+        connection = self.store.connect()
+        try:
+            rows = connection.execute(
+                """
+                SELECT payload_json FROM backtest_comparisons
+                WHERE replay_run_id = ?
+                ORDER BY created_at DESC
+                """,
+                (replay_run_id,),
+            ).fetchall()
+            return [_json_loads(row["payload_json"]) for row in rows]
         finally:
             if str(self.store.path) != ":memory:":
                 connection.close()
@@ -2620,6 +2905,8 @@ class RepositoryRegistry:
         self.labels = LabelRepository(self.store)
         self.validation_reports = ValidationReportRepository(self.store)
         self.model_runs = ModelRunRepository(self.store, self.settings)
+        self.model_evidence_cells = ModelEvidenceCellRepository(self.store)
+        self.candidate_score_audits = CandidateScoreAuditRepository(self.store)
         self.active_models = ActiveModelRepository(self.store, self.model_runs)
         self.live_signals = LiveSignalRepository(self.store)
         self.scanner_runs = ScannerRunRepository(self.store)

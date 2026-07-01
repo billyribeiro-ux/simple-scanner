@@ -10,6 +10,7 @@ EXPECTED_TABLES = {
     "alembic_version",
     "backtest_comparisons",
     "bars",
+    "candidate_score_audits",
     "candidate_signals",
     "closed_signals",
     "daily_reviews",
@@ -18,6 +19,7 @@ EXPECTED_TABLES = {
     "labels",
     "live_signals",
     "model_artifacts",
+    "model_evidence_cells",
     "model_runs",
     "pipeline_build_windows",
     "provider_requests",
@@ -32,7 +34,7 @@ EXPECTED_TABLES = {
 }
 
 DEFAULT_URL = "postgresql+psycopg://amd:amd@localhost:15432/adaptive_market_decoder"
-EXPECTED_REVISION = "0004_phase7_audit"
+EXPECTED_REVISION = "0005_phase8_replay_aware_models"
 EXPECTED_INDEXES = {
     "ix_backtest_comparisons_replay_created",
     "ix_candidate_signals_replay_lookup",
@@ -43,6 +45,8 @@ EXPECTED_INDEXES = {
     "ix_live_signals_latest",
     "ix_live_signals_symbol_ts_status_model",
     "ix_live_signals_ticker_ts_status",
+    "ix_model_evidence_cells_cell_key",
+    "ix_model_evidence_cells_model_level",
     "ix_pipeline_windows_lookup",
     "ix_replay_runs_created_type",
     "ix_replay_runs_config_hash",
@@ -51,6 +55,9 @@ EXPECTED_INDEXES = {
     "ix_sensitivity_scenarios_run_cost",
     "ix_validation_reports_model_purpose_created",
     "ix_scanner_runs_started",
+    "ix_score_audits_model_created",
+    "ix_score_audits_score_id",
+    "ix_score_audits_symbol_ts",
     "ix_simulated_trades_run_status",
     "ix_simulated_trades_run_symbol_setup_side",
     "ix_simulated_trades_signal_ts",
@@ -61,6 +68,7 @@ EXPECTED_UNIQUE_CONSTRAINTS = {
     "uq_candidate_signal_key",
     "uq_features_symbol_interval_ts_version",
     "uq_label_key",
+    "uq_model_evidence_cell_key",
     "uq_pipeline_window",
 }
 EXPECTED_COLUMNS = {
@@ -69,6 +77,8 @@ EXPECTED_COLUMNS = {
     "labels": {"symbol", "timestamp_utc", "setup_type", "side", "outcome", "payload_json"},
     "live_signals": {"ticker", "timestamp_utc", "status", "payload_json"},
     "model_runs": {"model_version", "active", "payload_json"},
+    "model_evidence_cells": {"model_version", "cell_key", "dimensions_json", "metrics_json"},
+    "candidate_score_audits": {"score_id", "model_version", "payload_json"},
     "pipeline_build_windows": {"artifact_type", "symbol", "interval", "session_date", "dirty", "payload_json"},
     "replay_runs": {
         "replay_run_id",
@@ -97,6 +107,14 @@ EXPECTED_JSON_COLUMNS = {
     ("labels", "payload_json"),
     ("validation_reports", "payload_json"),
     ("model_runs", "payload_json"),
+    ("model_evidence_cells", "dimensions_json"),
+    ("model_evidence_cells", "metrics_json"),
+    ("model_evidence_cells", "fragility_flags_json"),
+    ("candidate_score_audits", "score_components_json"),
+    ("candidate_score_audits", "suppression_reasons_json"),
+    ("candidate_score_audits", "evidence_cell_keys_used_json"),
+    ("candidate_score_audits", "warnings_json"),
+    ("candidate_score_audits", "payload_json"),
     ("active_models", "payload_json"),
     ("live_signals", "payload_json"),
     ("pipeline_build_windows", "payload_json"),

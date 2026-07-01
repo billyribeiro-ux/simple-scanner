@@ -166,11 +166,25 @@ class IngestRequest(BaseModel):
 
 
 class TrainRequest(BaseModel):
+    model_type: str = "statistical_evidence_baseline"
     symbols: list[str] | None = None
     training_start: datetime
     training_end: datetime
     min_samples: int = 30
     activate_if_passes: bool = False
+    intervals: list[Literal["1min", "5min", "15min"]] | None = None
+    setup_types: list[str] | None = None
+    sides: list[str] | None = None
+    replay_run_ids: list[str] | None = None
+    replay_filter: dict[str, Any] | None = None
+    sensitivity_required: bool = False
+    minimum_observed_outcomes: int = 5
+    minimum_cell_sample_size: int = 5
+    shrinkage_strength: float = 20.0
+    scoring_config: dict[str, Any] = Field(default_factory=dict)
+    activation_criteria: dict[str, Any] = Field(default_factory=dict)
+    validation_mode: str = "label_derived"
+    allow_stale: bool = False
 
 
 class BacktestRequest(BaseModel):
@@ -231,6 +245,12 @@ class BacktestComparisonRequest(BaseModel):
     replay_run_id: str
     label_run_id: str | None = None
     symbols: list[str] | None = None
+
+
+class ScoreCandidatesRequest(BaseModel):
+    candidate_ids: list[str] | None = None
+    candidates: list[dict[str, Any]] | None = None
+    persist_audit: bool = True
 
 
 class ExportRequest(BaseModel):

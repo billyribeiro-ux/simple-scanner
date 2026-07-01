@@ -416,6 +416,71 @@ def _run_persisted_api_vertical_slice(
         comparison_detail = client.get(f"/backtest/comparisons/{comparison['comparison_id']}").json()
         assert comparison_detail["comparison_id"] == comparison["comparison_id"]
 
+        replay_aware_train = client.post(
+            "/models/train",
+            json={
+                "model_type": "replay_aware_baseline",
+                "symbols": ["AAPL", "SPY", "QQQ", "NVDA"],
+                "intervals": ["1min"],
+                "training_start": start.isoformat(),
+                "training_end": end.isoformat(),
+                "min_samples": 1,
+                "replay_run_ids": [replay_run_id],
+                "minimum_observed_outcomes": 1,
+                "minimum_cell_sample_size": 1,
+                "scoring_config": {"take_score_threshold": 50},
+                "activation_criteria": {
+                    "minimum_selected_trades": 1,
+                    "minimum_profit_factor": 0.0,
+                    "maximum_symbol_profit_share": 1.0,
+                    "maximum_setup_profit_share": 1.0,
+                },
+            },
+        ).json()
+        assert replay_aware_train["trained"] is True
+        replay_aware_model_version = replay_aware_train["model_version"]
+        evidence = client.get(f"/models/{replay_aware_model_version}/evidence").json()
+        assert evidence["summary"]["cell_count"] > 0
+        inline_candidate = dict(replay_trades["trades"][0])
+        inline_candidate["timestamp_utc"] = inline_candidate["signal_timestamp_utc"]
+        scored_candidates = client.post(
+            f"/models/{replay_aware_model_version}/score-candidates",
+            json={"candidates": [inline_candidate], "persist_audit": True},
+        ).json()
+        assert scored_candidates["status"] == "ok"
+        assert scored_candidates["scores"]
+        score_audits = client.get(f"/models/{replay_aware_model_version}/score-audits").json()
+        assert score_audits["score_audits"]
+        replay_aware_validation = client.post(
+            "/models/validate",
+            params={
+                "model_version": replay_aware_model_version,
+                "validation_mode": "replay_aware_walk_forward",
+            },
+        ).json()
+        assert replay_aware_validation["validation_mode"] == "replay_aware_walk_forward"
+        repo.validation_reports.save(
+            {
+                "model_version": replay_aware_model_version,
+                "validation_mode": "replay_aware_walk_forward",
+                "summary": {"selected_candidate_count": 5, "average_r": 0.25, "profit_factor": 1.5},
+                "windows": [],
+                "activation_decision": "accepted",
+                "rejection_reasons": [],
+                "created_at": datetime.now(UTC).isoformat(),
+            },
+            model_version=replay_aware_model_version,
+            purpose="replay_aware_validation",
+        )
+        replay_aware_activation = client.post(
+            "/models/activate",
+            params={
+                "model_version": replay_aware_model_version,
+                "validation_mode": "replay_aware_walk_forward",
+            },
+        ).json()
+        assert replay_aware_activation["activated"] is True
+
         scanner_start = client.post(
             "/scanner/start",
             json={"symbols": ["AAPL", "SPY"], "confidence_threshold": 0.0},
@@ -466,6 +531,30 @@ def _run_persisted_api_vertical_slice(
             "/exports/sensitivity-metrics.json",
             json={"kind": "sensitivity-metrics", "run_id": sensitivity_run_id},
         ).json()
+        replay_aware_model_export = client.post(
+            "/exports/replay-aware-model-summary.xlsx",
+            json={"kind": "replay-aware-model-summary", "run_id": replay_aware_model_version},
+        ).json()
+        evidence_cells_csv = client.post(
+            "/exports/evidence-cells.csv",
+            json={"kind": "evidence-cells", "run_id": replay_aware_model_version},
+        ).json()
+        evidence_cells_xlsx = client.post(
+            "/exports/evidence-cells.xlsx",
+            json={"kind": "evidence-cells", "run_id": replay_aware_model_version},
+        ).json()
+        score_audits_csv = client.post(
+            "/exports/score-audits.csv",
+            json={"kind": "score-audits", "run_id": replay_aware_model_version},
+        ).json()
+        score_audits_xlsx = client.post(
+            "/exports/score-audits.xlsx",
+            json={"kind": "score-audits", "run_id": replay_aware_model_version},
+        ).json()
+        replay_aware_validation_export = client.post(
+            "/exports/replay-aware-validation.xlsx",
+            json={"kind": "replay-aware-validation", "run_id": replay_aware_validation["report_id"]},
+        ).json()
         review = client.post("/review/daily").json()
         persisted_review = client.get(f"/review/daily/{review['date']}").json()
         daily_export = client.post("/exports/daily-review.xlsx", json={"kind": "daily-review"}).json()
@@ -484,6 +573,12 @@ def _run_persisted_api_vertical_slice(
         assert sensitivity_scenarios_csv["rows"] == 4
         assert sensitivity_scenarios_xlsx["rows"] == 4
         assert sensitivity_metrics_export["rows"] == 4
+        assert replay_aware_model_export["status"] == "ok"
+        assert evidence_cells_csv["rows"] == evidence["summary"]["cell_count"]
+        assert evidence_cells_xlsx["rows"] == evidence["summary"]["cell_count"]
+        assert score_audits_csv["rows"] >= 1
+        assert score_audits_xlsx["rows"] >= 1
+        assert replay_aware_validation_export["status"] == "ok"
         assert {"Live Signals", "Model Info"} <= _sheet_names(xlsx_export["path"])
         assert {"Live Signals", "Model Info"} <= _sheet_names(backtest_export["path"])
         assert {
@@ -508,6 +603,10 @@ def _run_persisted_api_vertical_slice(
             "Warnings",
         } <= _sheet_names(sensitivity_summary_export["path"])
         assert {"Scenario Metrics"} <= _sheet_names(sensitivity_scenarios_xlsx["path"])
+        assert {"Summary", "Training Replay Runs", "Evidence Overview"} <= _sheet_names(replay_aware_model_export["path"])
+        assert {"Evidence Cells", "By Symbol", "By Setup"} <= _sheet_names(evidence_cells_xlsx["path"])
+        assert {"Score Audits"} <= _sheet_names(score_audits_xlsx["path"])
+        assert {"Summary", "Walk Forward Windows", "Rejection Reasons"} <= _sheet_names(replay_aware_validation_export["path"])
         assert review["signals_fired"] + review["signals_skipped"] == len(live_signals)
         assert persisted_review["status"] == "local-file"
         assert len(daily_export["paths"]) == 3
@@ -528,10 +627,12 @@ def _run_persisted_api_vertical_slice(
     assert len(reopened.replays.list_trades(replay_run_id, limit=100_000)) == replay_trade_count
     assert reopened.replay_sensitivity.get(sensitivity_run_id)["replay_run_id"] == replay_run_id
     assert reopened.backtest_comparisons.get(comparison["comparison_id"])["replay_run_id"] == replay_run_id
+    assert reopened.model_evidence_cells.count(replay_aware_model_version) == evidence["summary"]["cell_count"]
+    assert reopened.candidate_score_audits.list(replay_aware_model_version)
     assert reopened.active_models.get_active()["model_version"] == replacement_version
     assert reopened.scanner_runs.latest()["scanner_run_id"] == scanner_start["scanner_run_id"]
     assert len(reopened.live_signals.list_latest()) == len(live_signals)
-    assert len(reopened.exports.list_all()) >= 14
+    assert len(reopened.exports.list_all()) >= 20
     assert reopened.daily_reviews.get(datetime.now(UTC).date()) is not None
     assert TEST_FMP_SENTINEL not in str(reopened.provider_requests.list_all())
 
@@ -545,6 +646,12 @@ def _run_persisted_api_vertical_slice(
         sensitivity_scenarios_csv["path"],
         sensitivity_scenarios_xlsx["path"],
         sensitivity_metrics_export["path"],
+        replay_aware_model_export["path"],
+        evidence_cells_csv["path"],
+        evidence_cells_xlsx["path"],
+        score_audits_csv["path"],
+        score_audits_xlsx["path"],
+        replay_aware_validation_export["path"],
         *replay_summary_export["paths"],
         *daily_export["paths"],
         model_dir / "active_model.json",

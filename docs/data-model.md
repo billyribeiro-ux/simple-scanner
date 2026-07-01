@@ -1,6 +1,6 @@
 # Data Model
 
-Core storage is designed around PostgreSQL with TimescaleDB when available. If the Timescale extension is not available, the same tables function as plain PostgreSQL tables. Phase 7 verifies Alembic revision `0004_phase7_audit`, 23 tables, replay audit fields, replay sensitivity tables, comparison tables, incremental build-window metadata, critical indexes, unique constraints, JSON columns, `timescaledb`, and `bars` as a hypertable against the local compose database. The API repository runtime supports both SQLite local storage and PostgreSQL.
+Core storage is designed around PostgreSQL with TimescaleDB when available. If the Timescale extension is not available, the same tables function as plain PostgreSQL tables. Phase 8 advances Alembic to revision `0005_phase8_replay_aware_models`, adding replay-aware evidence and score-audit persistence on top of Phase 7 replay audit fields, replay sensitivity tables, comparison tables, incremental build-window metadata, critical indexes, unique constraints, JSON columns, `timescaledb`, and `bars` as a hypertable against the local compose database. The API repository runtime supports both SQLite local storage and PostgreSQL.
 
 ## Tables
 
@@ -13,6 +13,8 @@ Core storage is designed around PostgreSQL with TimescaleDB when available. If t
 - `validation_windows`: walk-forward or chronological validation windows tied to a validation report.
 - `model_runs`: model versions, training windows, feature set, label config, activation state.
 - `model_artifacts`: model artifact metadata and local path tracking.
+- `model_evidence_cells`: replay-aware evidence cells by model version, hierarchy level, dimensions, sample metrics, robustness, fragility, and evidence grade.
+- `candidate_score_audits`: persisted replay-aware meta-scorer audits with score components, suppression reasons, evidence keys used, and warnings.
 - `active_models`: the current active model pointer by model type and strategy scope.
 - `live_signals`: current signal/trade-plan rows with all required live output fields.
 - `closed_signals`: completed signal outcomes and realized R.
@@ -35,4 +37,4 @@ Signals include timestamp, ticker, side, entry/stop/targets, R metrics, confiden
 
 `make db-inspect` verifies the migration revision plus critical lookup indexes on bars, features, candidate signals, labels, simulated trades, replay runs, replay sensitivity, comparisons, live signals, validation reports, scanner runs, and pipeline build windows. It also verifies the unique constraints that preserve idempotent upserts for bars, features, candidate signals, labels, pipeline build windows, and active model scope.
 
-`simulated_trades` stores skipped candidates in the same table as taken trades with `status = SKIPPED` and a populated `skip_reason`. Metrics are computed from taken simulated trades; candidate counts and skip rates include both taken and skipped rows.
+`simulated_trades` stores skipped candidates in the same table as taken trades with `status = SKIPPED` and a populated `skip_reason`. Metrics are computed from taken simulated trades; candidate counts and skip rates include both taken and skipped rows. Phase 8 replay-aware training preserves skipped rows but treats overlap, portfolio limit, cooldown, duplicate, missing future bars, and stale-data skips as unobserved outcomes rather than losses.

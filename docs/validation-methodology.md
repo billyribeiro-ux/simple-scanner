@@ -19,6 +19,7 @@ V1 now keeps two modes explicit:
 
 - `label_derived`: default validation and activation path. It uses leakage-safe labels for fast evidence and model training.
 - `candidate_market_replay`: optional replay validation path. It uses explicitly selected persisted replay metrics from raw-bar candidate replay and stores validation reports with purpose `replay_validation`.
+- `replay_aware_walk_forward`: replay-aware model-selection path. It scores candidates chronologically using only replay outcome rows available before each validation candidate timestamp and stores reports with purpose `replay_aware_validation`.
 
 Model activation responses include the `validation_mode` used. If replay validation is requested without `replay_run_id`, `replay_filter`, or `allow_latest_replay_fallback=true`, the report is rejected with `replay_run_selection_required`. Replay validation does not remove the default label-derived guard; it is an explicit additional gate.
 
@@ -49,4 +50,5 @@ Implemented in code:
 Still partial:
 
 - Replay validation is only as trustworthy as the selected replay window and assumptions; review `config_hash`, `input_fingerprint`, and sensitivity flags before using it for model activation decisions.
+- Replay-aware validation is deterministic and no-leakage, but V1 uses persisted replay outcome rows instead of a separate counterfactual replay mode for every skipped portfolio-overlap candidate.
 - Calibration/Brier scoring is not real until a probability model exists.

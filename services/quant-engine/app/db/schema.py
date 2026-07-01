@@ -170,6 +170,53 @@ model_artifacts = sa.Table(
     sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
 )
 
+model_evidence_cells = sa.Table(
+    "model_evidence_cells",
+    metadata,
+    sa.Column("id", sa.String(96), primary_key=True),
+    sa.Column("model_version", sa.String(128), nullable=False, index=True),
+    sa.Column("cell_key", sa.String(512), nullable=False, index=True),
+    sa.Column("dimensions_json", sa.JSON, nullable=False, server_default=sa.text("'{}'::jsonb")),
+    sa.Column("hierarchy_level", sa.String(64), nullable=False, index=True),
+    sa.Column("parent_cell_key", sa.String(512)),
+    sa.Column("metrics_json", sa.JSON, nullable=False, server_default=sa.text("'{}'::jsonb")),
+    sa.Column("sample_size", sa.Integer, nullable=False, server_default="0"),
+    sa.Column("observed_outcome_count", sa.Integer, nullable=False, server_default="0"),
+    sa.Column("average_r", sa.Numeric(18, 6), nullable=False, server_default="0"),
+    sa.Column("median_r", sa.Numeric(18, 6), nullable=False, server_default="0"),
+    sa.Column("profit_factor", sa.Numeric(18, 6), nullable=False, server_default="0"),
+    sa.Column("max_drawdown_r", sa.Numeric(18, 6), nullable=False, server_default="0"),
+    sa.Column("robustness_score", sa.Numeric(18, 6)),
+    sa.Column("fragility_flags_json", sa.JSON, nullable=False, server_default=sa.text("'[]'::jsonb")),
+    sa.Column("evidence_quality_grade", sa.String(32), nullable=False),
+    sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+    sa.UniqueConstraint("model_version", "cell_key", name="uq_model_evidence_cell_key"),
+)
+
+candidate_score_audits = sa.Table(
+    "candidate_score_audits",
+    metadata,
+    sa.Column("id", sa.String(96), primary_key=True),
+    sa.Column("score_id", sa.String(96), nullable=False, unique=True, index=True),
+    sa.Column("model_version", sa.String(128), nullable=False, index=True),
+    sa.Column("candidate_id", sa.String(96), index=True),
+    sa.Column("symbol", sa.String(16), nullable=False, index=True),
+    sa.Column("interval", sa.String(8), nullable=False),
+    sa.Column("timestamp_utc", sa.DateTime(timezone=True), nullable=False, index=True),
+    sa.Column("side", sa.String(16), nullable=False),
+    sa.Column("setup_type", sa.String(128), nullable=False, index=True),
+    sa.Column("signal_quality_score", sa.Numeric(18, 6), nullable=False, server_default="0"),
+    sa.Column("grade", sa.String(16), nullable=False),
+    sa.Column("action", sa.String(16), nullable=False),
+    sa.Column("expected_r_estimate", sa.Numeric(18, 6), nullable=False, server_default="0"),
+    sa.Column("score_components_json", sa.JSON, nullable=False, server_default=sa.text("'{}'::jsonb")),
+    sa.Column("suppression_reasons_json", sa.JSON, nullable=False, server_default=sa.text("'[]'::jsonb")),
+    sa.Column("evidence_cell_keys_used_json", sa.JSON, nullable=False, server_default=sa.text("'[]'::jsonb")),
+    sa.Column("warnings_json", sa.JSON, nullable=False, server_default=sa.text("'[]'::jsonb")),
+    sa.Column("payload_json", sa.JSON, nullable=False),
+    sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+)
+
 active_models = sa.Table(
     "active_models",
     metadata,

@@ -106,6 +106,14 @@ Phase 7 replay runs also persist audit fields:
 
 Replay sensitivity persists to `replay_sensitivity_runs` and `replay_sensitivity_scenarios`. The sensitivity summary workbook includes `Summary`, `Scenario Metrics`, `Worst Case`, `Median Case`, `Best Case`, `Fragility Flags`, `Gate Results`, `Config`, and `Warnings`.
 
+## Replay-Aware Model Selection
+
+Phase 8 consumes persisted replay runs for `replay_aware_baseline` training. It preserves skipped candidates but does not treat unobserved overlap, portfolio-limit, cooldown, duplicate, no-future-bars, missing-entry, or stale-data skips as losing trades. Invalid risk, insufficient context, insufficient reward/risk, regime filter, outside-session, and data-quality skips can contribute to suppression rules.
+
+Evidence cells aggregate taken replay outcomes by symbol, side, setup, market regime, and time bucket with hierarchy/backoff to broader cells. The meta-scorer uses replay expectancy lower bound, profit factor, sample size, sensitivity robustness, fragility flags, stale status, label-vs-replay divergence, ambiguity, and risk quality to produce `TAKE`, `WATCH`, or `SUPPRESS`.
+
+Counterfactual per-candidate replay is documented as future work. Phase 8 does not relabel portfolio-overlap skips as losses and does not present replay-aware validation as executable portfolio P/L.
+
 ## Known Limits
 
 - OHLCV bars cannot prove actual intrabar path unless the policy is configured as an assumption.

@@ -64,3 +64,15 @@ The engine records worst/median/best scenarios, robustness score, fragility flag
 ## Label Vs Replay Comparison
 
 `POST /backtest/compare-label-vs-replay` persists a comparison between leakage-safe label-derived metrics and candidate replay metrics. It reports deltas and material disagreement flags for trade count, average R, win rate, and related summary fields.
+
+## Phase 8 Consumption
+
+`replay_aware_baseline` consumes Phase 7 audit outputs:
+
+- replay provenance hashes and input fingerprints are stored in the model payload;
+- stale replay runs block training and replay-aware validation unless explicitly allowed;
+- sensitivity robustness and fragility flags become evidence and scoring inputs;
+- label-vs-replay material disagreement flags penalize or suppress candidates;
+- score audits and exports must remain secret-free.
+
+The replay-aware model is deterministic evidence selection. It does not convert replay into execution-grade fills, live tradability, or profitability claims.

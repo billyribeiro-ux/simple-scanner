@@ -4,23 +4,22 @@ Status date: 2026-07-01
 
 ## Scope
 
-Phase 7 hardens replay operations without adding broker execution, order routing, options data, market internals, WebSockets, calibrated ML, self-learning behavior, or profitability claims.
+Phase 8 hardens replay-aware model selection without adding broker execution, order routing, options data, market internals, WebSockets, calibrated ML, self-learning behavior, or profitability claims.
 
 ## Database Revision
 
 Postgres/Timescale targets Alembic revision:
 
 ```text
-0004_phase7_audit
+0005_phase8_replay_aware_models
 ```
 
-`make db-inspect` expects 23 tables, the Phase 7 replay sensitivity/comparison indexes, JSON columns, and `bars` as a Timescale hypertable when the extension is available.
+`make db-inspect` expects the Phase 8 table set, replay sensitivity/comparison indexes, replay-aware evidence/score-audit indexes, JSON columns, and `bars` as a Timescale hypertable when the extension is available.
 
-The local verified result:
+Expected verified result after migration:
 
 ```text
-alembic_version=0004_phase7_audit
-tables=23
+alembic_version=0005_phase8_replay_aware_models
 missing_tables=none
 missing_indexes=none
 missing_constraints=none
@@ -35,6 +34,8 @@ timescale_hypertables=bars
 - `replay_sensitivity_runs`
 - `replay_sensitivity_scenarios`
 - `backtest_comparisons`
+- `model_evidence_cells`
+- `candidate_score_audits`
 
 The existing `replay_runs` table also stores audit fields such as `config_hash`, `input_fingerprint`, `candidate_fingerprint`, and `stale_window_status_json`.
 
@@ -68,6 +69,17 @@ Replay sensitivity exports:
 - `POST /exports/sensitivity-metrics.json`
 
 The sensitivity summary workbook includes `Summary`, `Scenario Metrics`, `Worst Case`, `Median Case`, `Best Case`, `Fragility Flags`, `Gate Results`, `Config`, and `Warnings`.
+
+Replay-aware exports:
+
+- `POST /exports/replay-aware-model-summary.xlsx`
+- `POST /exports/evidence-cells.csv`
+- `POST /exports/evidence-cells.xlsx`
+- `POST /exports/score-audits.csv`
+- `POST /exports/score-audits.xlsx`
+- `POST /exports/replay-aware-validation.xlsx`
+
+Model evidence cells, score audits, and exports must contain no FMP keys, database passwords, or raw secret-bearing environment values.
 
 ## Remaining Operational Limits
 

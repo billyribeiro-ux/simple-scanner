@@ -105,6 +105,38 @@ SENSITIVITY_SCENARIO_COLUMNS = [
     "skip_rate",
 ]
 
+EVIDENCE_CELL_COLUMNS = [
+    "model_version",
+    "cell_key",
+    "hierarchy_level",
+    "parent_cell_key",
+    "sample_size",
+    "observed_outcome_count",
+    "average_r",
+    "median_r",
+    "profit_factor",
+    "max_drawdown_r",
+    "robustness_score",
+    "evidence_quality_grade",
+]
+
+SCORE_AUDIT_COLUMNS = [
+    "score_id",
+    "model_version",
+    "candidate_id",
+    "symbol",
+    "interval",
+    "timestamp_utc",
+    "side",
+    "setup_type",
+    "signal_quality_score",
+    "grade",
+    "action",
+    "expected_r_estimate",
+    "suppression_reasons",
+    "warnings",
+]
+
 
 class ExportService:
     def __init__(self) -> None:
@@ -325,6 +357,99 @@ class ExportService:
         path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
         return path
 
+    def export_replay_aware_model_summary_xlsx(
+        self,
+        model: dict[str, object],
+        evidence_cells: Iterable[dict[str, object]],
+    ) -> Path:
+        model_version = str(model["model_version"])
+        path = self.settings.exports_dir / f"replay_aware_model_summary_{model_version}.xlsx"
+        cells = list(evidence_cells)
+        sheets = {
+            "Summary": [["metric", "value"], *[[key, self._cell_value(value)] for key, value in dict(model.get("metrics") or {}).items()]],
+            "Training Replay Runs": [["replay_run_id"], *[[run_id] for run_id in list(model.get("replay_run_ids") or [])]],
+            "Evidence Overview": [["metric", "value"], ["evidence_cell_count", len(cells)], ["candidate_outcome_row_count", model.get("candidate_outcome_row_count")]],
+            "Top Positive Evidence Cells": self._evidence_rows(sorted(cells, key=lambda cell: float(cell.get("average_r") or 0.0), reverse=True)[:100]),
+            "Top Negative Evidence Cells": self._evidence_rows(sorted(cells, key=lambda cell: float(cell.get("average_r") or 0.0))[:100]),
+            "Suppression Rules": [["key", "value"], *[[key, self._cell_value(value)] for key, value in dict(model.get("scoring_config") or {}).items() if str(key).startswith(("minimum", "maximum", "block", "suppress"))]],
+            "Scoring Config": [["key", "value"], *[[key, self._cell_value(value)] for key, value in dict(model.get("scoring_config") or {}).items()]],
+            "Activation Criteria": [["key", "value"], *[[key, self._cell_value(value)] for key, value in dict(model.get("activation_criteria") or {}).items()]],
+            "Warnings": [["warning"], *[[warning] for warning in list(model.get("warnings") or [])]],
+            "Provenance": [
+                ["key", "value"],
+                ["model_version", model_version],
+                ["model_type", model.get("model_type")],
+                ["replay_config_hashes", self._cell_value(model.get("replay_config_hashes") or [])],
+                ["input_fingerprints", self._cell_value(model.get("input_fingerprints") or [])],
+                ["code_version", model.get("code_version")],
+            ],
+        }
+        self._write_workbook(path, sheets)
+        return path
+
+    def export_evidence_cells_csv(self, model_version: str, evidence_cells: Iterable[dict[str, object]]) -> Path:
+        path = self.settings.exports_dir / f"evidence_cells_{model_version}.csv"
+        rows = [self._evidence_row(cell) for cell in evidence_cells]
+        with path.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=EVIDENCE_CELL_COLUMNS)
+            writer.writeheader()
+            writer.writerows(rows)
+        return path
+
+    def export_evidence_cells_xlsx(self, model_version: str, evidence_cells: Iterable[dict[str, object]]) -> Path:
+        path = self.settings.exports_dir / f"evidence_cells_{model_version}.xlsx"
+        cells = list(evidence_cells)
+        sheets = {
+            "Evidence Cells": self._evidence_rows(cells),
+            "By Symbol": self._evidence_dimension_sheet(cells, "symbol"),
+            "By Setup": self._evidence_dimension_sheet(cells, "setup_type"),
+            "By Regime": self._evidence_dimension_sheet(cells, "market_regime"),
+            "By Time Bucket": self._evidence_dimension_sheet(cells, "time_bucket"),
+            "Fragility Flags": self._flag_sheet(cells, "fragility_flags"),
+            "Divergence Flags": self._metric_flag_sheet(cells, "label_vs_replay_divergence_flags"),
+        }
+        self._write_workbook(path, sheets)
+        return path
+
+    def export_score_audits_csv(self, model_version: str, audits: Iterable[dict[str, object]]) -> Path:
+        path = self.settings.exports_dir / f"score_audits_{model_version}.csv"
+        rows = [self._score_audit_row(audit) for audit in audits]
+        with path.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=SCORE_AUDIT_COLUMNS)
+            writer.writeheader()
+            writer.writerows(rows)
+        return path
+
+    def export_score_audits_xlsx(self, model_version: str, audits: Iterable[dict[str, object]]) -> Path:
+        path = self.settings.exports_dir / f"score_audits_{model_version}.xlsx"
+        rows = [self._score_audit_row(audit) for audit in audits]
+        self._write_workbook(
+            path,
+            {"Score Audits": [SCORE_AUDIT_COLUMNS, *[[row.get(column) for column in SCORE_AUDIT_COLUMNS] for row in rows]]},
+        )
+        return path
+
+    def export_replay_aware_validation_xlsx(self, report: dict[str, object]) -> Path:
+        report_id = str(report.get("report_id") or "latest")
+        path = self.settings.exports_dir / f"replay_aware_validation_{report_id}.xlsx"
+        summary = dict(report.get("summary") or {})
+        sheets = {
+            "Summary": [["metric", "value"], *[[key, self._cell_value(value)] for key, value in summary.items() if not isinstance(value, (dict, list))]],
+            "Walk Forward Windows": self._series_sheet(report.get("windows")),
+            "Selected Trades": self._series_sheet(report.get("selected_trades")),
+            "Suppressed Candidates": self._series_sheet(report.get("suppressed_candidates")),
+            "Per Symbol": self._metric_sheet(report.get("per_symbol")),
+            "Per Setup": self._metric_sheet(report.get("per_setup")),
+            "Per Regime": self._metric_sheet(report.get("per_regime")),
+            "Per Time Bucket": self._metric_sheet(report.get("per_time_bucket")),
+            "Sensitivity": self._metric_sheet(report.get("sensitivity_summary")),
+            "Drawdown": self._series_sheet(summary.get("drawdown_series")),
+            "Rejection Reasons": [["reason"], *[[reason] for reason in list(report.get("rejection_reasons") or [])]],
+            "Config": [["key", "value"], ["validation_mode", report.get("validation_mode")], ["model_version", report.get("model_version")]],
+        }
+        self._write_workbook(path, sheets)
+        return path
+
     def _signal_row(self, signal: Signal) -> dict[str, object]:
         payload = signal.model_dump(mode="json")
         payload["side"] = signal.side.value
@@ -353,6 +478,58 @@ class ExportService:
             "max_drawdown_r": metrics.get("max_drawdown_r"),
             "total_r": metrics.get("total_r"),
             "skip_rate": metrics.get("skip_rate"),
+        }
+
+    def _evidence_row(self, cell: dict[str, object]) -> dict[str, object]:
+        return {column: cell.get(column) for column in EVIDENCE_CELL_COLUMNS}
+
+    def _evidence_rows(self, cells: list[dict[str, object]]) -> list[list[object]]:
+        return [EVIDENCE_CELL_COLUMNS, *[[self._evidence_row(cell).get(column) for column in EVIDENCE_CELL_COLUMNS] for cell in cells]]
+
+    def _evidence_dimension_sheet(self, cells: list[dict[str, object]], dimension: str) -> list[list[object]]:
+        rows: list[list[object]] = [["dimension", "cell_count", "observed_outcome_count", "average_r"]]
+        buckets: dict[str, list[dict[str, object]]] = {}
+        for cell in cells:
+            dims = dict(cell.get("dimensions") or {})
+            value = str(dims.get(dimension) or "unknown")
+            buckets.setdefault(value, []).append(cell)
+        for value, bucket in sorted(buckets.items()):
+            observed = sum(int(cell.get("observed_outcome_count") or 0) for cell in bucket)
+            weighted_r = sum(float(cell.get("average_r") or 0.0) * int(cell.get("observed_outcome_count") or 0) for cell in bucket)
+            rows.append([value, len(bucket), observed, weighted_r / observed if observed else 0.0])
+        return rows
+
+    def _flag_sheet(self, cells: list[dict[str, object]], field: str) -> list[list[object]]:
+        rows: list[list[object]] = [["flag", "cell_key"]]
+        for cell in cells:
+            for flag in list(cell.get(field) or []):
+                rows.append([flag, cell.get("cell_key")])
+        return rows
+
+    def _metric_flag_sheet(self, cells: list[dict[str, object]], field: str) -> list[list[object]]:
+        rows: list[list[object]] = [["flag", "cell_key"]]
+        for cell in cells:
+            metrics = dict(cell.get("metrics") or {})
+            for flag in list(metrics.get(field) or []):
+                rows.append([flag, cell.get("cell_key")])
+        return rows
+
+    def _score_audit_row(self, audit: dict[str, object]) -> dict[str, object]:
+        return {
+            "score_id": audit.get("score_id"),
+            "model_version": audit.get("model_version"),
+            "candidate_id": audit.get("candidate_id"),
+            "symbol": audit.get("symbol"),
+            "interval": audit.get("interval"),
+            "timestamp_utc": audit.get("timestamp_utc"),
+            "side": audit.get("side"),
+            "setup_type": audit.get("setup_type"),
+            "signal_quality_score": audit.get("signal_quality_score"),
+            "grade": audit.get("grade"),
+            "action": audit.get("action"),
+            "expected_r_estimate": audit.get("expected_r_estimate"),
+            "suppression_reasons": " | ".join(str(value) for value in list(audit.get("suppression_reasons") or [])),
+            "warnings": " | ".join(str(value) for value in list(audit.get("warnings") or [])),
         }
 
     def _replay_workbook_sheets(
@@ -426,6 +603,12 @@ class ExportService:
     def _cell_value(self, value: object) -> object:
         if isinstance(value, float) and (value != value or value in (float("inf"), float("-inf"))):
             return None
+        if isinstance(value, datetime):
+            if value.tzinfo is not None:
+                value = value.astimezone(UTC).replace(tzinfo=None)
+            return value.isoformat()
+        if isinstance(value, date):
+            return value.isoformat()
         if isinstance(value, (dict, list, tuple, set)):
             return json.dumps(value, default=str)
         return value
@@ -453,6 +636,18 @@ class ExportService:
         sheet.append(columns)
         for row in rows:
             sheet.append([self._cell_value(row.get(column)) for column in columns])
+
+    def _write_workbook(self, path: Path, sheets: dict[str, list[list[object]]]) -> None:
+        if Workbook is None:
+            self._write_minimal_xlsx(path, sheets)
+            return
+        workbook = Workbook()
+        for index, (sheet_name, rows) in enumerate(sheets.items()):
+            sheet = workbook.active if index == 0 else workbook.create_sheet(sheet_name)
+            sheet.title = sheet_name
+            for row in rows:
+                sheet.append([self._cell_value(value) for value in row])
+        workbook.save(path)
 
     def _write_minimal_xlsx(self, path: Path, sheets: dict[str, list[list[object]]]) -> None:
         with ZipFile(path, "w", ZIP_DEFLATED) as archive:
