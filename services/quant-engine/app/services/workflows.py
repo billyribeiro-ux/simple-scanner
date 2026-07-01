@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import builtins
 import json
+from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta
+from statistics import mean, median
 from typing import Any
 
 from app.backtesting.audit import (
@@ -12,6 +14,7 @@ from app.backtesting.audit import (
     git_commit,
     replay_config_hash,
     replay_input_fingerprint,
+    stable_hash,
 )
 from app.backtesting.engine import BacktestEngine
 from app.backtesting.replay import (
@@ -30,6 +33,7 @@ from app.exports.service import ExportService
 from app.features.engine import FEATURE_SET_VERSION, FeatureEngine
 from app.labels.engine import LABEL_CONFIG_VERSION, LabelingEngine
 from app.models.calibration_audit import ScoreCalibrationAuditEngine
+from app.models.calibration_drift import CalibrationDriftEngine
 from app.models.engine import ModelEngine
 from app.models.replay_evidence import (
     REPLAY_AWARE_MODEL_TYPE,
@@ -46,6 +50,7 @@ from app.models.replay_evidence import (
     summarize_outcome_rows,
     training_summary,
 )
+from app.orchestration.windowing import generate_replay_windows
 from app.regimes.classifier import RegimeClassifier
 from app.schemas.market import Bar, Signal
 from app.signals.candidates import CandidateSignalEngine
@@ -2010,6 +2015,601 @@ class BacktestService:
         return hotspots
 
 
+class DataQualityService:
+    def __init__(self, repos: RepositoryRegistry) -> None:
+        self.repos = repos
+
+    def report(
+        self,
+        *,
+        symbols: list[str] | None = None,
+        intervals: list[str] | None = None,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        session: str = "rth",
+    ) -> dict[str, Any]:
+        selected_symbols = normalize_symbols(symbols or [])
+        bars = self.repos.bars.query(
+            symbols=selected_symbols or None,
+            intervals=intervals,
+            start=start,
+            end=end,
+        )
+        duplicates = self._duplicates(bars)
+        invalid_rows = self._invalid_rows(bars)
+        missing_windows = self._missing_windows(bars)
+        dirty_windows = self.repos.pipeline_windows.list_dirty(symbols=selected_symbols or None, intervals=intervals)
+        provider_requests = self.repos.provider_requests.list_all()
+        provider_errors = [
+            row
+            for row in provider_requests
+            if str(row.get("status") or "").lower() not in {"ok", "success", "cached"}
+        ]
+        return {
+            "status": "ok",
+            "generated_at": datetime.now(UTC).isoformat(),
+            "symbols": selected_symbols or sorted({bar.symbol for bar in bars}),
+            "intervals": intervals or sorted({bar.interval for bar in bars}),
+            "start": start.isoformat() if start else None,
+            "end": end.isoformat() if end else None,
+            "session": session,
+            "summary": {
+                "bar_count": len(bars),
+                "duplicate_timestamp_count": len(duplicates),
+                "invalid_price_or_volume_count": len(invalid_rows),
+                "missing_bar_window_count": len(missing_windows),
+                "dirty_pipeline_window_count": len(dirty_windows),
+                "provider_error_count": len(provider_errors),
+            },
+            "duplicates": duplicates,
+            "invalid_rows": invalid_rows,
+            "missing_bar_windows": missing_windows,
+            "dirty_pipeline_windows": dirty_windows,
+            "provider_errors": provider_errors[:100],
+            "warnings": self._quality_warnings(duplicates, invalid_rows, missing_windows, dirty_windows, provider_errors),
+        }
+
+    def _duplicates(self, bars: list[Bar]) -> list[dict[str, Any]]:
+        counts = Counter((bar.symbol, bar.interval, bar.timestamp_utc.isoformat()) for bar in bars)
+        return [
+            {"symbol": symbol, "interval": interval, "timestamp_utc": timestamp, "count": count}
+            for (symbol, interval, timestamp), count in sorted(counts.items())
+            if count > 1
+        ]
+
+    def _invalid_rows(self, bars: list[Bar]) -> list[dict[str, Any]]:
+        invalid = []
+        for bar in bars:
+            reasons = []
+            if min(bar.open, bar.high, bar.low, bar.close) <= 0:
+                reasons.append("non_positive_ohlc")
+            if bar.high < bar.low:
+                reasons.append("high_below_low")
+            if bar.close > bar.high or bar.close < bar.low:
+                reasons.append("close_outside_high_low")
+            if bar.volume < 0:
+                reasons.append("negative_volume")
+            if reasons:
+                invalid.append(
+                    {
+                        "symbol": bar.symbol,
+                        "interval": bar.interval,
+                        "timestamp_utc": bar.timestamp_utc.isoformat(),
+                        "reasons": reasons,
+                    }
+                )
+        return invalid
+
+    def _missing_windows(self, bars: list[Bar]) -> list[dict[str, Any]]:
+        by_key: dict[tuple[str, str], list[Bar]] = defaultdict(list)
+        for bar in bars:
+            by_key[(bar.symbol, bar.interval)].append(bar)
+        output = []
+        for (symbol, interval), rows in sorted(by_key.items()):
+            expected_minutes = self._interval_minutes(interval)
+            if expected_minutes <= 0:
+                continue
+            ordered = sorted(rows, key=lambda row: row.timestamp_utc)
+            for previous, current in zip(ordered, ordered[1:], strict=False):
+                gap_minutes = (current.timestamp_utc - previous.timestamp_utc).total_seconds() / 60.0
+                if gap_minutes > expected_minutes * 1.5:
+                    output.append(
+                        {
+                            "symbol": symbol,
+                            "interval": interval,
+                            "gap_start": previous.timestamp_utc.isoformat(),
+                            "gap_end": current.timestamp_utc.isoformat(),
+                            "expected_interval_minutes": expected_minutes,
+                            "observed_gap_minutes": gap_minutes,
+                        }
+                    )
+        return output
+
+    def _interval_minutes(self, interval: str) -> int:
+        if interval.endswith("min"):
+            return int(interval.removesuffix("min"))
+        return 0
+
+    def _quality_warnings(
+        self,
+        duplicates: list[dict[str, Any]],
+        invalid_rows: list[dict[str, Any]],
+        missing_windows: list[dict[str, Any]],
+        dirty_windows: list[dict[str, Any]],
+        provider_errors: list[dict[str, Any]],
+    ) -> list[str]:
+        warnings = []
+        if duplicates:
+            warnings.append("duplicate_bars_detected")
+        if invalid_rows:
+            warnings.append("invalid_price_or_volume_detected")
+        if missing_windows:
+            warnings.append("missing_bar_windows_detected")
+        if dirty_windows:
+            warnings.append("dirty_pipeline_windows_detected")
+        if provider_errors:
+            warnings.append("provider_request_errors_detected")
+        return warnings
+
+
+class ReplayWindowOrchestrationService:
+    def __init__(self, repos: RepositoryRegistry) -> None:
+        self.repos = repos
+
+    def create(self, payload: dict[str, Any]) -> dict[str, Any]:
+        windows, warnings = generate_replay_windows(payload)
+        max_windows = int(payload.get("max_windows") or 50)
+        allow_large = bool(payload.get("allow_large_window_count", False))
+        status = "created"
+        if len(windows) > max_windows and not allow_large:
+            status = "rejected"
+            warnings.append("window_count_exceeds_limit")
+        enriched_windows = [self._annotate_window(window, payload) for window in windows]
+        selected_symbols = normalize_symbols(payload.get("symbols") or (payload.get("replay_config") or {}).get("symbols") or [])
+        selected_intervals = [str(value) for value in payload.get("intervals") or (payload.get("replay_config") or {}).get("intervals") or ["1min"]]
+        created_at = datetime.now(UTC).isoformat()
+        window_set = {
+            "name": payload.get("name") or f"replay-window-set-{created_at[:10]}",
+            "description": payload.get("description"),
+            "symbols": selected_symbols,
+            "intervals": selected_intervals,
+            "setup_types": payload.get("setup_types") or payload.get("candidate_setup_types") or [],
+            "start": payload.get("start"),
+            "end": payload.get("end"),
+            "window_mode": payload.get("window_mode") or payload.get("mode") or "custom",
+            "window_size_days": payload.get("window_size_days"),
+            "step_days": payload.get("step_days"),
+            "embargo_minutes": payload.get("embargo_minutes") or 0,
+            "session": payload.get("session") or "rth",
+            "generated_windows": enriched_windows,
+            "replay_config": payload.get("replay_config") or {},
+            "sensitivity_config": payload.get("sensitivity_config") or {},
+            "validation_config": payload.get("validation_config") or {},
+            "model_version": payload.get("model_version"),
+            "status": status,
+            "warnings": sorted(set(warnings)),
+            "summary": self._summary([], window_count=len(enriched_windows), status=status),
+            "config_hash": stable_hash(payload),
+            "created_at": created_at,
+        }
+        saved = self.repos.replay_windows.save_set(window_set)
+        if status == "created" and payload.get("run_immediately"):
+            run_result = self.run(str(saved["window_set_id"]), payload)
+            return saved | {"run": run_result, "summary": run_result.get("summary", saved.get("summary"))}
+        return {"status": status, **saved}
+
+    def list(self, limit: int = 100, offset: int = 0) -> dict[str, Any]:
+        return {"window_sets": self.repos.replay_windows.list_sets(limit=limit, offset=offset), "limit": limit, "offset": offset}
+
+    def get(self, window_set_id: str) -> dict[str, Any]:
+        return self.repos.replay_windows.get_set(window_set_id) or {"status": "not_found", "window_set_id": window_set_id}
+
+    def results(self, window_set_id: str, limit: int = 500, offset: int = 0) -> dict[str, Any]:
+        return {
+            "window_set_id": window_set_id,
+            "results": self.repos.replay_windows.list_results(window_set_id, limit=limit, offset=offset),
+            "limit": limit,
+            "offset": offset,
+        }
+
+    def run(self, window_set_id: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        window_set = self.repos.replay_windows.get_set(window_set_id)
+        if window_set is None:
+            return {"status": "not_found", "window_set_id": window_set_id}
+        payload = payload or {}
+        existing = {
+            int(result.get("window_index") or 0): result
+            for result in self.repos.replay_windows.list_results(window_set_id, limit=100_000)
+        }
+        rerun = bool(payload.get("rerun", False))
+        results = []
+        for window in window_set.get("generated_windows") or []:
+            index = int(window.get("window_index") or 0)
+            if existing.get(index) and not rerun:
+                results.append(existing[index] | {"status": existing[index].get("status") or "completed"})
+                continue
+            results.append(self._run_window(window_set, window, payload))
+        summary = self._summary(results, window_count=len(window_set.get("generated_windows") or []), status="completed")
+        updated = self.repos.replay_windows.save_set(
+            window_set
+            | {
+                "status": "completed",
+                "summary": summary,
+                "completed_at": datetime.now(UTC).isoformat(),
+            }
+        )
+        return {"status": "ok", "window_set_id": window_set_id, "summary": summary, "results": results, "window_set": updated}
+
+    def export(self, window_set_id: str) -> dict[str, Any]:
+        return ExportWorkflowService(self.repos).export_replay_window_set(window_set_id)
+
+    def _annotate_window(self, window: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
+        start = self._parse_dt(window.get("replay_start"))
+        end = self._parse_dt(window.get("replay_end"))
+        symbols = normalize_symbols(payload.get("symbols") or (payload.get("replay_config") or {}).get("symbols") or [])
+        intervals = [str(value) for value in payload.get("intervals") or (payload.get("replay_config") or {}).get("intervals") or ["1min"]]
+        bars = self.repos.bars.query(symbols=symbols or None, intervals=intervals, start=start, end=end, limit=1)
+        warnings = list(window.get("warnings") or [])
+        if not bars:
+            warnings.append("insufficient_data_no_bars")
+        return window | {"warnings": sorted(set(warnings))}
+
+    def _run_window(self, window_set: dict[str, Any], window: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
+        warnings = list(window.get("warnings") or [])
+        replay_config = dict(window_set.get("replay_config") or {})
+        symbols = window_set.get("symbols") or replay_config.get("symbols") or []
+        intervals = window_set.get("intervals") or replay_config.get("intervals") or ["1min"]
+        base = replay_config | {
+            "symbols": symbols,
+            "intervals": intervals,
+            "start": window.get("replay_start"),
+            "end": window.get("replay_end"),
+            "session": window_set.get("session") or replay_config.get("session") or "rth",
+            "candidate_setup_types": window_set.get("setup_types") or replay_config.get("candidate_setup_types") or [],
+            "allow_stale": bool(replay_config.get("allow_stale", True)),
+        }
+        replay_run_ids: list[str] = []
+        counterfactual = {}
+        portfolio = {}
+        if payload.get("run_replay", True):
+            counterfactual = BacktestService(self.repos).run_replay(
+                base
+                | {
+                    "replay_purpose": "model_training_counterfactual",
+                    "simulation_type": SIMULATION_TYPE_COUNTERFACTUAL,
+                    "allow_overlapping_trades": True,
+                    "enforce_portfolio_constraints": False,
+                    "enforce_symbol_overlap": False,
+                    "counterfactual_include_invalid_candidates": True,
+                }
+            )
+            portfolio = BacktestService(self.repos).run_replay(
+                base
+                | {
+                    "replay_purpose": "portfolio_execution",
+                    "simulation_type": SIMULATION_TYPE_REPLAY,
+                    "enforce_portfolio_constraints": True,
+                    "enforce_symbol_overlap": True,
+                }
+            )
+            for run in (counterfactual, portfolio):
+                if run.get("replay_run_id"):
+                    replay_run_ids.append(str(run["replay_run_id"]))
+                if run.get("status") == "error" or run.get("reason"):
+                    warnings.append(str(run.get("reason") or "replay_run_error"))
+                warnings.extend(str(item) for item in run.get("warnings") or [])
+        comparison_ids = []
+        if counterfactual.get("replay_run_id") and portfolio.get("replay_run_id"):
+            comparison = BacktestService(self.repos).compare_counterfactual_vs_portfolio(
+                {
+                    "counterfactual_replay_run_id": counterfactual["replay_run_id"],
+                    "portfolio_replay_run_id": portfolio["replay_run_id"],
+                    "symbols": symbols,
+                    "setups": window_set.get("setup_types") or [],
+                }
+            )
+            if comparison.get("comparison_id"):
+                comparison_ids.append(str(comparison["comparison_id"]))
+        calibration_ids = []
+        model_versions = [str(window_set["model_version"])] if window_set.get("model_version") else []
+        if model_versions and payload.get("run_calibration"):
+            calibration = CalibrationAuditService(self.repos).create(
+                model_versions[0],
+                {
+                    "replay_run_ids": [counterfactual.get("replay_run_id") or portfolio.get("replay_run_id")],
+                    "outcome_source": "counterfactual_preferred",
+                },
+            )
+            if calibration.get("calibration_audit_id"):
+                calibration_ids.append(str(calibration["calibration_audit_id"]))
+            elif calibration.get("status") == "not_found":
+                warnings.append("model_not_found_for_window_calibration")
+        metrics = self._window_metrics(counterfactual, portfolio)
+        result = {
+            "window_set_id": window_set["window_set_id"],
+            "window_index": window.get("window_index"),
+            "window_id": window.get("window_id"),
+            "train_start": window.get("train_start"),
+            "train_end": window.get("train_end"),
+            "validation_start": window.get("validation_start"),
+            "validation_end": window.get("validation_end"),
+            "test_start": window.get("test_start"),
+            "test_end": window.get("test_end"),
+            "replay_start": window.get("replay_start"),
+            "replay_end": window.get("replay_end"),
+            "replay_run_ids": replay_run_ids,
+            "counterfactual_replay_run_id": counterfactual.get("replay_run_id"),
+            "portfolio_replay_run_id": portfolio.get("replay_run_id"),
+            "sensitivity_run_ids": [],
+            "calibration_audit_ids": calibration_ids,
+            "comparison_ids": comparison_ids,
+            "model_versions": model_versions,
+            "metrics": metrics,
+            "status": "completed",
+            "warnings": sorted(set(warnings)),
+            "created_at": datetime.now(UTC).isoformat(),
+            "completed_at": datetime.now(UTC).isoformat(),
+        }
+        return self.repos.replay_windows.save_result(result)
+
+    def _window_metrics(self, counterfactual: dict[str, Any], portfolio: dict[str, Any]) -> dict[str, Any]:
+        cf_metrics = dict(counterfactual.get("summary_metrics") or counterfactual.get("metrics") or {})
+        pf_metrics = dict(portfolio.get("summary_metrics") or portfolio.get("metrics") or {})
+        return {
+            "counterfactual_total_trades": int(cf_metrics.get("total_trades") or 0),
+            "portfolio_total_trades": int(pf_metrics.get("total_trades") or 0),
+            "counterfactual_average_r": float(cf_metrics.get("average_r") or 0.0),
+            "portfolio_average_r": float(pf_metrics.get("average_r") or 0.0),
+            "average_r": float(pf_metrics.get("average_r") or cf_metrics.get("average_r") or 0.0),
+            "profit_factor": float(pf_metrics.get("profit_factor") or cf_metrics.get("profit_factor") or 0.0),
+            "max_drawdown_r": float(pf_metrics.get("max_drawdown_r") or cf_metrics.get("max_drawdown_r") or 0.0),
+            "total_trades": int(pf_metrics.get("total_trades") or cf_metrics.get("total_trades") or 0),
+            "constraint_drag": float(cf_metrics.get("average_r") or 0.0) - float(pf_metrics.get("average_r") or 0.0),
+        }
+
+    def _summary(self, results: builtins.list[dict[str, Any]], *, window_count: int, status: str) -> dict[str, Any]:
+        completed = [row for row in results if str(row.get("status")) == "completed"]
+        failed = [row for row in results if str(row.get("status")) == "failed"]
+        averages = [float((row.get("metrics") or {}).get("average_r") or 0.0) for row in completed]
+        return {
+            "status": status,
+            "window_count": window_count,
+            "completed_window_count": len(completed),
+            "failed_window_count": len(failed),
+            "warning_count": sum(len(row.get("warnings") or []) for row in results),
+            "average_window_expectancy_r": mean(averages) if averages else 0.0,
+            "median_window_expectancy_r": median(averages) if averages else 0.0,
+            "worst_window_expectancy_r": min(averages) if averages else 0.0,
+            "best_window_expectancy_r": max(averages) if averages else 0.0,
+            "total_trades": sum(int((row.get("metrics") or {}).get("total_trades") or 0) for row in completed),
+            "diagnostic_only": True,
+        }
+
+    def _parse_dt(self, value: Any) -> datetime | None:
+        if value is None:
+            return None
+        if isinstance(value, datetime):
+            return value
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+
+
+class CalibrationDriftService:
+    def __init__(self, repos: RepositoryRegistry) -> None:
+        self.repos = repos
+        self.engine = CalibrationDriftEngine()
+
+    def create(self, model_version: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        payload = payload or {}
+        model = self.repos.model_runs.get(model_version)
+        if model is None:
+            return {"status": "not_found", "model_version": model_version}
+        audits = self._calibration_audits(model_version, payload)
+        window_results = self._window_results(payload)
+        replay_runs = self._replay_runs(payload, audits, window_results)
+        report = self.engine.run(
+            model_version=model_version,
+            calibration_audits=audits,
+            window_results=window_results,
+            replay_runs=replay_runs,
+            config=payload,
+        )
+        saved = self.repos.model_calibration_drift.save(report)
+        return {"status": "ok", **saved}
+
+    def list(self, model_version: str, limit: int = 100, offset: int = 0) -> dict[str, Any]:
+        return {
+            "model_version": model_version,
+            "drift_reports": self.repos.model_calibration_drift.list(model_version, limit=limit, offset=offset),
+            "limit": limit,
+            "offset": offset,
+        }
+
+    def get(self, drift_report_id: str) -> dict[str, Any]:
+        return self.repos.model_calibration_drift.get(drift_report_id) or {"status": "not_found", "drift_report_id": drift_report_id}
+
+    def windows(self, drift_report_id: str, limit: int = 500, offset: int = 0) -> dict[str, Any]:
+        return {
+            "drift_report_id": drift_report_id,
+            "windows": self.repos.model_calibration_drift.list_windows(drift_report_id, limit=limit, offset=offset),
+            "limit": limit,
+            "offset": offset,
+        }
+
+    def _calibration_audits(self, model_version: str, payload: dict[str, Any]) -> builtins.list[dict[str, Any]]:
+        ids = [str(value) for value in payload.get("calibration_audit_ids") or []]
+        if ids:
+            return [audit for audit_id in ids if (audit := self.repos.model_calibration_audits.get(audit_id)) is not None]
+        return builtins.list(reversed(self.repos.model_calibration_audits.list(model_version, limit=int(payload.get("limit") or 20))))
+
+    def _window_results(self, payload: dict[str, Any]) -> builtins.list[dict[str, Any]]:
+        if payload.get("window_set_id"):
+            return self.repos.replay_windows.list_results(str(payload["window_set_id"]), limit=100_000)
+        ids = {str(value) for value in payload.get("window_result_ids") or []}
+        if not ids:
+            return []
+        return [
+            result
+            for window_set in self.repos.replay_windows.list_sets(limit=100_000)
+            for result in self.repos.replay_windows.list_results(str(window_set["window_set_id"]), limit=100_000)
+            if str(result.get("window_result_id")) in ids
+        ]
+
+    def _replay_runs(
+        self,
+        payload: dict[str, Any],
+        audits: builtins.list[dict[str, Any]],
+        window_results: builtins.list[dict[str, Any]],
+    ) -> builtins.list[dict[str, Any]]:
+        replay_ids = {
+            str(value)
+            for value in payload.get("replay_run_ids") or []
+            if value
+        }
+        for audit in audits:
+            replay_ids.update(str(value) for value in builtins.list(audit.get("replay_run_ids") or []) if value)
+        for result in window_results:
+            replay_ids.update(str(value) for value in builtins.list(result.get("replay_run_ids") or []) if value)
+        return [run for replay_id in replay_ids if (run := self.repos.replays.get(replay_id)) is not None]
+
+
+class ModelReviewReportService:
+    def __init__(self, repos: RepositoryRegistry) -> None:
+        self.repos = repos
+
+    def create(self, model_version: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        payload = payload or {}
+        model = self.repos.model_runs.get(model_version)
+        if model is None:
+            return {"status": "not_found", "model_version": model_version}
+        validation_reports = self._validation_reports(model_version, payload)
+        calibrations = self._calibrations(model_version, payload)
+        drift_reports = self._drift_reports(model_version, payload)
+        window_set = self.repos.replay_windows.get_set(str(payload.get("window_set_id"))) if payload.get("window_set_id") else None
+        readiness_status, readiness_reasons, unresolved_warnings = self._readiness(
+            model,
+            validation_reports,
+            calibrations,
+            drift_reports,
+            window_set,
+            payload,
+        )
+        report = {
+            "model_version": model_version,
+            "window_set_id": payload.get("window_set_id"),
+            "validation_report_ids": [str(row.get("report_id")) for row in validation_reports if row.get("report_id")],
+            "calibration_audit_ids": [str(row.get("calibration_audit_id")) for row in calibrations if row.get("calibration_audit_id")],
+            "drift_report_ids": [str(row.get("drift_report_id")) for row in drift_reports if row.get("drift_report_id")],
+            "sensitivity_run_ids": [str(value) for value in payload.get("sensitivity_run_ids") or []],
+            "comparison_ids": [str(value) for value in payload.get("comparison_ids") or []],
+            "model_summary": {
+                "model_type": model.get("model_type"),
+                "activation_decision": model.get("activation_decision"),
+                "active": bool(model.get("active")),
+                "metrics": model.get("metrics") or {},
+            },
+            "validation_reports": validation_reports,
+            "calibration_audits": calibrations,
+            "drift_reports": drift_reports,
+            "window_set_summary": window_set.get("summary") if window_set else None,
+            "readiness_status": readiness_status,
+            "readiness_reasons": readiness_reasons,
+            "unresolved_warnings": sorted(set(unresolved_warnings)),
+            "summary": {
+                "validation_report_count": len(validation_reports),
+                "calibration_audit_count": len(calibrations),
+                "drift_report_count": len(drift_reports),
+                "readiness_status": readiness_status,
+                "model_activation_unchanged": True,
+                "diagnostic_only": True,
+            },
+            "warnings": ["Model review reports are advisory and do not activate or route orders."],
+            "created_at": datetime.now(UTC).isoformat(),
+        }
+        saved = self.repos.model_review_reports.save(report)
+        return {"status": "ok", **saved}
+
+    def list(self, model_version: str, limit: int = 100, offset: int = 0) -> dict[str, Any]:
+        return {
+            "model_version": model_version,
+            "review_reports": self.repos.model_review_reports.list(model_version, limit=limit, offset=offset),
+            "limit": limit,
+            "offset": offset,
+        }
+
+    def get(self, review_report_id: str) -> dict[str, Any]:
+        return self.repos.model_review_reports.get(review_report_id) or {"status": "not_found", "review_report_id": review_report_id}
+
+    def _validation_reports(self, model_version: str, payload: dict[str, Any]) -> builtins.list[dict[str, Any]]:
+        ids = {str(value) for value in payload.get("validation_report_ids") or []}
+        reports = self.repos.validation_reports.list_all()
+        if ids:
+            return [row for row in reports if str(row.get("report_id")) in ids]
+        return [row for row in reports if str(row.get("model_version")) == model_version]
+
+    def _calibrations(self, model_version: str, payload: dict[str, Any]) -> builtins.list[dict[str, Any]]:
+        ids = [str(value) for value in payload.get("calibration_audit_ids") or []]
+        if ids:
+            return [audit for audit_id in ids if (audit := self.repos.model_calibration_audits.get(audit_id)) is not None]
+        latest = self.repos.model_calibration_audits.latest(model_version)
+        return [latest] if latest else []
+
+    def _drift_reports(self, model_version: str, payload: dict[str, Any]) -> builtins.list[dict[str, Any]]:
+        ids = {str(value) for value in payload.get("drift_report_ids") or []}
+        reports = self.repos.model_calibration_drift.list(model_version, limit=100)
+        if ids:
+            return [row for row in reports if str(row.get("drift_report_id")) in ids]
+        return reports[:1]
+
+    def _readiness(
+        self,
+        model: dict[str, Any],
+        validation_reports: builtins.list[dict[str, Any]],
+        calibrations: builtins.list[dict[str, Any]],
+        drift_reports: builtins.list[dict[str, Any]],
+        window_set: dict[str, Any] | None,
+        payload: dict[str, Any],
+    ) -> tuple[str, builtins.list[str], builtins.list[str]]:
+        reasons: builtins.list[str] = []
+        unresolved_warnings: builtins.list[str] = []
+        status = "PASS"
+        if not validation_reports:
+            reasons.append("missing_validation_report")
+            status = "REVIEW"
+        if any(str(row.get("activation_decision")) == "rejected" for row in validation_reports):
+            reasons.append("validation_rejected")
+            status = "BLOCK"
+        if not calibrations:
+            reasons.append("missing_calibration_audit")
+            status = "BLOCK" if payload.get("calibration_required") else self._max_status(status, "REVIEW")
+        for audit in calibrations:
+            unresolved_warnings.extend(str(item) for item in audit.get("calibration_warnings") or audit.get("warnings") or [])
+            if audit.get("rejection_reasons"):
+                reasons.extend(str(item) for item in audit.get("rejection_reasons") or [])
+                status = self._max_status(status, "REVIEW")
+        for drift in drift_reports:
+            severity = str(drift.get("severity") or "INFO")
+            unresolved_warnings.extend(str(item) for item in drift.get("drift_flags") or [])
+            if severity == "BLOCKING":
+                reasons.append("calibration_drift_blocking")
+                status = "BLOCK"
+            elif severity == "REVIEW":
+                reasons.append("calibration_drift_requires_review")
+                status = self._max_status(status, "REVIEW")
+            elif severity == "WATCH":
+                reasons.append("calibration_drift_watch")
+                status = self._max_status(status, "WATCH")
+        if window_set and (window_set.get("summary") or {}).get("failed_window_count"):
+            reasons.append("replay_window_failures_present")
+            status = self._max_status(status, "REVIEW")
+        if model.get("warnings"):
+            unresolved_warnings.extend(str(item) for item in model.get("warnings") or [])
+        return status, sorted(set(reasons)), sorted(set(unresolved_warnings))
+
+    def _max_status(self, current: str, candidate: str) -> str:
+        order = {"PASS": 0, "WATCH": 1, "REVIEW": 2, "BLOCK": 3}
+        return candidate if order[candidate] > order[current] else current
+
+
 class ExportWorkflowService:
     def __init__(self, repos: RepositoryRegistry, exporter: ExportService | None = None) -> None:
         self.repos = repos
@@ -2289,6 +2889,98 @@ class ExportWorkflowService:
             {"comparison_type": comparison.get("comparison_type"), "diagnostic_only": True},
         )
         return {"status": "ok", "path": str(path), "rows": len(comparison.get("models") or []), "export": record}
+
+    def export_replay_window_set(self, window_set_id: str) -> dict[str, Any]:
+        window_set = self.repos.replay_windows.get_set(window_set_id)
+        if window_set is None:
+            return {"status": "not_found", "window_set_id": window_set_id}
+        results = self.repos.replay_windows.list_results(window_set_id, limit=100_000)
+        path = self.exporter.export_replay_window_set_xlsx(window_set, results)
+        record = self.repos.exports.record(
+            "replay_window_set",
+            "xlsx",
+            path,
+            len(results),
+            window_set_id,
+            {
+                "window_set_id": window_set_id,
+                "window_mode": window_set.get("window_mode"),
+                "diagnostic_only": True,
+                "config_hash": window_set.get("config_hash"),
+            },
+        )
+        return {"status": "ok", "path": str(path), "rows": len(results), "export": record}
+
+    def export_calibration_drift(self, drift_report_id: str, kind: str) -> dict[str, Any]:
+        report = self.repos.model_calibration_drift.get(drift_report_id)
+        if report is None:
+            return {"status": "not_found", "drift_report_id": drift_report_id}
+        windows = self.repos.model_calibration_drift.list_windows(drift_report_id, limit=100_000)
+        if kind == "xlsx":
+            path = self.exporter.export_calibration_drift_xlsx(report, windows)
+        elif kind == "json":
+            path = self.exporter.export_calibration_drift_json(report)
+        else:
+            raise ValueError("calibration drift export kind must be xlsx or json")
+        record = self.repos.exports.record(
+            "calibration_drift",
+            kind,
+            path,
+            len(windows),
+            drift_report_id,
+            {
+                "model_version": report.get("model_version"),
+                "severity": report.get("severity"),
+                "diagnostic_only": True,
+            },
+        )
+        return {"status": "ok", "kind": kind, "path": str(path), "rows": len(windows), "export": record}
+
+    def export_calibration_drift_windows(self, drift_report_id: str, kind: str) -> dict[str, Any]:
+        report = self.repos.model_calibration_drift.get(drift_report_id)
+        if report is None:
+            return {"status": "not_found", "drift_report_id": drift_report_id}
+        windows = self.repos.model_calibration_drift.list_windows(drift_report_id, limit=100_000)
+        if kind == "csv":
+            path = self.exporter.export_calibration_drift_windows_csv(drift_report_id, windows)
+        elif kind == "xlsx":
+            path = self.exporter.export_calibration_drift_windows_xlsx(drift_report_id, windows)
+        else:
+            raise ValueError("calibration drift windows export kind must be csv or xlsx")
+        record = self.repos.exports.record(
+            "calibration_drift_windows",
+            kind,
+            path,
+            len(windows),
+            drift_report_id,
+            {"model_version": report.get("model_version"), "diagnostic_only": True},
+        )
+        return {"status": "ok", "kind": kind, "path": str(path), "rows": len(windows), "export": record}
+
+    def export_model_review(self, review_report_id: str, kind: str) -> dict[str, Any]:
+        report = self.repos.model_review_reports.get(review_report_id)
+        if report is None:
+            return {"status": "not_found", "review_report_id": review_report_id}
+        if kind == "xlsx":
+            path = self.exporter.export_model_review_xlsx(report)
+        elif kind == "json":
+            path = self.exporter.export_model_review_json(report)
+        else:
+            raise ValueError("model review export kind must be xlsx or json")
+        record = self.repos.exports.record(
+            "model_review",
+            kind,
+            path,
+            1,
+            review_report_id,
+            {
+                "model_version": report.get("model_version"),
+                "readiness_status": report.get("readiness_status"),
+                "diagnostic_only": True,
+                "model_activation_unchanged": True,
+            },
+        )
+        return {"status": "ok", "kind": kind, "path": str(path), "rows": 1, "export": record}
 
     def _sensitivity_export_payload(self, sensitivity: dict[str, Any], export_scope: str) -> dict[str, Any]:
         return {

@@ -4,7 +4,7 @@ Status date: 2026-07-01
 
 ## Summary
 
-The API route `_MEMORY` workflow state has been replaced with repository-backed persistence. The local-first API runtime uses SQLite at `data/local_repo.sqlite3` when no database URL is configured, and it uses PostgreSQL/TimescaleDB when `DATABASE_URL` points at a migrated Postgres database. Phase 7 verifies the same persisted API vertical slice against both backends, including candidate market replay runs, simulated trades, replay sensitivity, and label-vs-replay comparisons.
+The API route `_MEMORY` workflow state has been replaced with repository-backed persistence. The local-first API runtime uses SQLite at `data/local_repo.sqlite3` when no database URL is configured, and it uses PostgreSQL/TimescaleDB when `DATABASE_URL` points at a migrated Postgres database. Phase 10 verifies the same persisted API vertical slice against both backends, including candidate market replay, counterfactual replay, sensitivity, calibration audits, replay window sets/results, calibration drift reports, and model review reports.
 
 This is still a scanner, research, validation, backtest, model metadata, signal, and export platform. It is not a broker, not an order router, and not a profitability engine.
 
@@ -12,7 +12,7 @@ This is still a scanner, research, validation, backtest, model metadata, signal,
 
 - Local default: `data/local_repo.sqlite3`, ignored by git along with SQLite WAL sidecars.
 - Configured SQLite: `sqlite:///...` paths, including `AMD_SQLITE_PATH` for local test/runtime overrides.
-- PostgreSQL runtime: sync SQLAlchemy/psycopg repository store against Alembic revision `0005_phase8_replay_aware_models` on local host port `15432`.
+- PostgreSQL runtime: sync SQLAlchemy/psycopg repository store against Alembic revision `0007_phase10_review` on local host port `15432`.
 - Export artifacts: `exports/`, ignored except `.gitkeep`.
 - Model artifacts: `model_artifacts/`, ignored except `.gitkeep`.
 - FMP secrets: `FMP_API_KEY` from environment or ignored env files only.
@@ -32,6 +32,11 @@ It exposes concrete repositories for:
 - `model_runs`
 - `model_evidence_cells`
 - `candidate_score_audits`
+- `model_calibration_audits`
+- `model_comparisons`
+- `replay_windows`
+- `model_calibration_drift`
+- `model_review_reports`
 - `active_models`
 - `live_signals`
 - `scanner_runs`
@@ -68,6 +73,10 @@ Backend selection is explicit:
 - `/models/{model_version}/evidence` reads persisted replay-aware evidence cells.
 - `/models/{model_version}/score-candidates` scores persisted or inline candidates and can write `candidate_score_audits`.
 - `/models/{model_version}/score-audits` reads persisted score audits.
+- `/models/{model_version}/calibration-audit` writes persisted calibration audits.
+- `/models/{model_version}/calibration-drift` writes persisted calibration drift reports.
+- `/models/{model_version}/review-report` writes persisted advisory model review reports.
+- `/data/quality-report` reads persisted bars, pipeline windows, and provider requests to report data quality.
 - `/models/validate` writes validation reports.
 - `/models/validate?validation_mode=replay_aware_walk_forward` writes replay-aware validation reports with purpose `replay_aware_validation`.
 - `/models/activate` requires an accepted persisted validation report before activating.
@@ -76,6 +85,8 @@ Backend selection is explicit:
 - `/backtest/replay/{replay_run_id}/trades` reads paginated simulated trades from persistence.
 - `/backtest/replay/{replay_run_id}/sensitivity` writes persisted replay sensitivity runs and scenarios.
 - `/backtest/compare-label-vs-replay` writes persisted comparison reports.
+- `/orchestration/replay-window-sets` writes persisted replay window sets.
+- `/orchestration/replay-window-sets/{window_set_id}/run` writes persisted replay window results.
 - `/signals/live` and `/signals/history` read persisted live signals.
 - `/exports/*` read persisted signals, replay runs/trades, replay sensitivity runs, or daily reviews and write export metadata with file hashes and workbook sheets when available.
 - `/review/daily` reads persisted signals and writes daily review payloads.
@@ -134,6 +145,14 @@ The aligned table set is:
 - `backtest_comparisons`
 - `simulated_trades`
 - `pipeline_build_windows`
+- `model_calibration_audits`
+- `model_calibration_bins`
+- `model_comparisons`
+- `replay_window_sets`
+- `replay_window_results`
+- `model_calibration_drift_reports`
+- `model_calibration_drift_windows`
+- `model_review_reports`
 
 ## Incremental Build Windows
 
@@ -155,3 +174,9 @@ PostgreSQL now verifies Alembic revision `0006_phase9_calibration`. SQLite boots
 Counterfactual replay persists in the existing `replay_runs` and `simulated_trades` tables using JSON metadata. Calibration audits and model comparisons use dedicated repositories exposed through the registry as `model_calibration_audits` and `model_comparisons`.
 
 New persisted API/export surfaces include calibration audit create/list/get/bins, model comparison, counterfactual-vs-portfolio comparison, calibration audit XLSX, calibration bins CSV/XLSX, calibration metrics JSON, and model comparison XLSX.
+
+## Phase 10 Persistence Update
+
+PostgreSQL now verifies Alembic revision `0007_phase10_review`. SQLite bootstrap and Postgres migrations include replay window sets/results, calibration drift reports/windows, and model review reports.
+
+New persisted API/export surfaces include replay window set create/list/get/run/export, data quality reporting, calibration drift create/list/get/windows, model review report create/list/get, replay window set XLSX, calibration drift XLSX/JSON/window CSV/XLSX, and model review XLSX/JSON.

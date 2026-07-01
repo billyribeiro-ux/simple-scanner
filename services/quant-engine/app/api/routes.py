@@ -20,11 +20,15 @@ from app.schemas.market import (
     BacktestComparisonRequest,
     BacktestRequest,
     CalibrationAuditRequest,
+    CalibrationDriftRequest,
     CounterfactualComparisonRequest,
     ExportRequest,
     IngestRequest,
     ModelComparisonRequest,
+    ModelReviewRequest,
     ReplayBacktestRequest,
+    ReplayWindowRunRequest,
+    ReplayWindowSetRequest,
     ScannerStartRequest,
     ScoreCandidatesRequest,
     SensitivityRequest,
@@ -33,15 +37,19 @@ from app.schemas.market import (
 from app.services.workflows import (
     BacktestService,
     CalibrationAuditService,
+    CalibrationDriftService,
     DailyReviewService,
     DataIngestionService,
+    DataQualityService,
     ExportWorkflowService,
     FeatureBuildService,
     LabelBuildService,
     ModelActivationService,
     ModelComparisonService,
+    ModelReviewReportService,
     ModelTrainingService,
     ReplayAwareScoringService,
+    ReplayWindowOrchestrationService,
     ValidationWorkflowService,
 )
 from app.utils.time import UTC
@@ -129,6 +137,23 @@ async def ingest(request: IngestRequest) -> dict[str, object]:
 @router.get("/data/bars")
 async def data_bars() -> list[dict[str, object]]:
     return [bar.model_dump(mode="json") for bar in repos().bars.list_all()]
+
+
+@router.get("/data/quality-report")
+async def data_quality_report(
+    symbols: str | None = None,
+    intervals: str | None = None,
+    start: datetime | None = None,
+    end: datetime | None = None,
+    session: str = "rth",
+) -> dict[str, object]:
+    return DataQualityService(repos()).report(
+        symbols=[item.strip() for item in symbols.split(",") if item.strip()] if symbols else None,
+        intervals=[item.strip() for item in intervals.split(",") if item.strip()] if intervals else None,
+        start=start,
+        end=end,
+        session=session,
+    )
 
 
 @router.get("/data/quotes/latest")
@@ -369,9 +394,56 @@ async def get_calibration_audit_bins(
     return CalibrationAuditService(repos()).bins(calibration_audit_id, limit=limit, offset=offset, bin_type=bin_type)
 
 
+@router.post("/models/{model_version}/calibration-drift")
+async def create_calibration_drift(
+    model_version: str,
+    request: CalibrationDriftRequest | None = None,
+) -> dict[str, object]:
+    payload = request.model_dump(mode="json") if request else {}
+    return CalibrationDriftService(repos()).create(model_version, payload)
+
+
+@router.get("/models/{model_version}/calibration-drift")
+async def list_calibration_drift(model_version: str, limit: int = 100, offset: int = 0) -> dict[str, object]:
+    return CalibrationDriftService(repos()).list(model_version, limit=limit, offset=offset)
+
+
+@router.get("/models/calibration-drift/{drift_report_id}")
+async def get_calibration_drift(drift_report_id: str) -> dict[str, object]:
+    return CalibrationDriftService(repos()).get(drift_report_id)
+
+
+@router.get("/models/calibration-drift/{drift_report_id}/windows")
+async def get_calibration_drift_windows(
+    drift_report_id: str,
+    limit: int = 500,
+    offset: int = 0,
+) -> dict[str, object]:
+    return CalibrationDriftService(repos()).windows(drift_report_id, limit=limit, offset=offset)
+
+
 @router.post("/models/compare")
 async def compare_models(request: ModelComparisonRequest) -> dict[str, object]:
     return ModelComparisonService(repos()).compare(request.model_dump(mode="json"))
+
+
+@router.post("/models/{model_version}/review-report")
+async def create_model_review_report(
+    model_version: str,
+    request: ModelReviewRequest | None = None,
+) -> dict[str, object]:
+    payload = request.model_dump(mode="json") if request else {}
+    return ModelReviewReportService(repos()).create(model_version, payload)
+
+
+@router.get("/models/{model_version}/review-reports")
+async def list_model_review_reports(model_version: str, limit: int = 100, offset: int = 0) -> dict[str, object]:
+    return ModelReviewReportService(repos()).list(model_version, limit=limit, offset=offset)
+
+
+@router.get("/models/review-reports/{review_report_id}")
+async def get_model_review_report(review_report_id: str) -> dict[str, object]:
+    return ModelReviewReportService(repos()).get(review_report_id)
 
 
 @router.get("/models/{model_version}")
@@ -387,6 +459,40 @@ async def run_backtest(request: BacktestRequest) -> dict[str, object]:
 @router.post("/backtest/replay")
 async def run_replay_backtest(request: ReplayBacktestRequest) -> dict[str, object]:
     return BacktestService(repos()).run_replay(request.model_dump(mode="json"))
+
+
+@router.post("/orchestration/replay-window-sets")
+async def create_replay_window_set(request: ReplayWindowSetRequest) -> dict[str, object]:
+    return ReplayWindowOrchestrationService(repos()).create(request.model_dump(mode="json"))
+
+
+@router.get("/orchestration/replay-window-sets")
+async def list_replay_window_sets(limit: int = 100, offset: int = 0) -> dict[str, object]:
+    return ReplayWindowOrchestrationService(repos()).list(limit=limit, offset=offset)
+
+
+@router.get("/orchestration/replay-window-sets/{window_set_id}")
+async def get_replay_window_set(window_set_id: str) -> dict[str, object]:
+    return ReplayWindowOrchestrationService(repos()).get(window_set_id)
+
+
+@router.get("/orchestration/replay-window-sets/{window_set_id}/results")
+async def get_replay_window_set_results(window_set_id: str, limit: int = 500, offset: int = 0) -> dict[str, object]:
+    return ReplayWindowOrchestrationService(repos()).results(window_set_id, limit=limit, offset=offset)
+
+
+@router.post("/orchestration/replay-window-sets/{window_set_id}/run")
+async def run_replay_window_set(
+    window_set_id: str,
+    request: ReplayWindowRunRequest | None = None,
+) -> dict[str, object]:
+    payload = request.model_dump(mode="json") if request else {}
+    return ReplayWindowOrchestrationService(repos()).run(window_set_id, payload)
+
+
+@router.post("/orchestration/replay-window-sets/{window_set_id}/export")
+async def export_replay_window_set(window_set_id: str) -> dict[str, object]:
+    return ReplayWindowOrchestrationService(repos()).export(window_set_id)
 
 
 @router.get("/pipeline/status")
@@ -660,6 +766,55 @@ async def export_model_comparison_xlsx(request: ExportRequest) -> dict[str, obje
     if not request.run_id:
         return {"status": "error", "reason": "run_id_required"}
     return ExportWorkflowService(repos()).export_model_comparison(request.run_id)
+
+
+@router.post("/exports/replay-window-set.xlsx")
+async def export_replay_window_set_xlsx(request: ExportRequest) -> dict[str, object]:
+    if not request.run_id:
+        return {"status": "error", "reason": "run_id_required"}
+    return ExportWorkflowService(repos()).export_replay_window_set(request.run_id)
+
+
+@router.post("/exports/calibration-drift.xlsx")
+async def export_calibration_drift_xlsx(request: ExportRequest) -> dict[str, object]:
+    if not request.run_id:
+        return {"status": "error", "reason": "run_id_required"}
+    return ExportWorkflowService(repos()).export_calibration_drift(request.run_id, "xlsx")
+
+
+@router.post("/exports/calibration-drift.json")
+async def export_calibration_drift_json(request: ExportRequest) -> dict[str, object]:
+    if not request.run_id:
+        return {"status": "error", "reason": "run_id_required"}
+    return ExportWorkflowService(repos()).export_calibration_drift(request.run_id, "json")
+
+
+@router.post("/exports/calibration-drift-windows.csv")
+async def export_calibration_drift_windows_csv(request: ExportRequest) -> dict[str, object]:
+    if not request.run_id:
+        return {"status": "error", "reason": "run_id_required"}
+    return ExportWorkflowService(repos()).export_calibration_drift_windows(request.run_id, "csv")
+
+
+@router.post("/exports/calibration-drift-windows.xlsx")
+async def export_calibration_drift_windows_xlsx(request: ExportRequest) -> dict[str, object]:
+    if not request.run_id:
+        return {"status": "error", "reason": "run_id_required"}
+    return ExportWorkflowService(repos()).export_calibration_drift_windows(request.run_id, "xlsx")
+
+
+@router.post("/exports/model-review.xlsx")
+async def export_model_review_xlsx(request: ExportRequest) -> dict[str, object]:
+    if not request.run_id:
+        return {"status": "error", "reason": "run_id_required"}
+    return ExportWorkflowService(repos()).export_model_review(request.run_id, "xlsx")
+
+
+@router.post("/exports/model-review.json")
+async def export_model_review_json(request: ExportRequest) -> dict[str, object]:
+    if not request.run_id:
+        return {"status": "error", "reason": "run_id_required"}
+    return ExportWorkflowService(repos()).export_model_review(request.run_id, "json")
 
 
 @router.get("/exports/{export_id}")

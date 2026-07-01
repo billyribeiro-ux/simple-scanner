@@ -48,21 +48,26 @@ EXPECTED_TABLES = {
     "model_artifacts",
     "model_calibration_audits",
     "model_calibration_bins",
+    "model_calibration_drift_reports",
+    "model_calibration_drift_windows",
     "model_comparisons",
     "model_evidence_cells",
+    "model_review_reports",
     "model_runs",
     "pipeline_build_windows",
     "provider_requests",
     "replay_runs",
     "replay_sensitivity_runs",
     "replay_sensitivity_scenarios",
+    "replay_window_results",
+    "replay_window_sets",
     "scanner_runs",
     "simulated_trades",
     "symbols",
     "validation_reports",
     "validation_windows",
 }
-EXPECTED_ALEMBIC_REVISION = "0006_phase9_calibration"
+EXPECTED_ALEMBIC_REVISION = "0007_phase10_review"
 
 
 def _now_iso() -> str:
@@ -575,6 +580,119 @@ class SQLiteStore:
 
                     CREATE INDEX IF NOT EXISTS ix_model_comparisons_created
                         ON model_comparisons(created_at);
+
+                    CREATE TABLE IF NOT EXISTS replay_window_sets (
+                        window_set_id TEXT PRIMARY KEY,
+                        name TEXT NOT NULL,
+                        description TEXT,
+                        symbols_json TEXT DEFAULT '[]',
+                        intervals_json TEXT DEFAULT '[]',
+                        setup_types_json TEXT DEFAULT '[]',
+                        start TEXT,
+                        end TEXT,
+                        window_mode TEXT NOT NULL,
+                        window_size_days INTEGER,
+                        step_days INTEGER,
+                        embargo_minutes INTEGER,
+                        session TEXT NOT NULL DEFAULT 'rth',
+                        replay_config_json TEXT DEFAULT '{}',
+                        sensitivity_config_json TEXT DEFAULT '{}',
+                        validation_config_json TEXT DEFAULT '{}',
+                        summary_json TEXT DEFAULT '{}',
+                        status TEXT NOT NULL,
+                        warnings_json TEXT DEFAULT '[]',
+                        payload_json TEXT NOT NULL,
+                        created_at TEXT NOT NULL,
+                        completed_at TEXT
+                    );
+
+                    CREATE INDEX IF NOT EXISTS ix_replay_window_sets_status_created
+                        ON replay_window_sets(status, created_at);
+
+                    CREATE TABLE IF NOT EXISTS replay_window_results (
+                        window_result_id TEXT PRIMARY KEY,
+                        window_set_id TEXT NOT NULL,
+                        window_index INTEGER NOT NULL,
+                        train_start TEXT,
+                        train_end TEXT,
+                        validation_start TEXT,
+                        validation_end TEXT,
+                        test_start TEXT,
+                        test_end TEXT,
+                        replay_start TEXT,
+                        replay_end TEXT,
+                        replay_run_ids_json TEXT DEFAULT '[]',
+                        counterfactual_replay_run_id TEXT,
+                        portfolio_replay_run_id TEXT,
+                        sensitivity_run_ids_json TEXT DEFAULT '[]',
+                        calibration_audit_ids_json TEXT DEFAULT '[]',
+                        comparison_ids_json TEXT DEFAULT '[]',
+                        model_versions_json TEXT DEFAULT '[]',
+                        status TEXT NOT NULL,
+                        metrics_json TEXT DEFAULT '{}',
+                        warnings_json TEXT DEFAULT '[]',
+                        payload_json TEXT NOT NULL,
+                        created_at TEXT NOT NULL,
+                        completed_at TEXT
+                    );
+
+                    CREATE INDEX IF NOT EXISTS ix_replay_window_results_set_index
+                        ON replay_window_results(window_set_id, window_index);
+
+                    CREATE TABLE IF NOT EXISTS model_calibration_drift_reports (
+                        drift_report_id TEXT PRIMARY KEY,
+                        model_version TEXT NOT NULL,
+                        calibration_audit_ids_json TEXT DEFAULT '[]',
+                        window_result_ids_json TEXT DEFAULT '[]',
+                        replay_run_ids_json TEXT DEFAULT '[]',
+                        summary_json TEXT DEFAULT '{}',
+                        score_bin_drift_json TEXT DEFAULT '{}',
+                        grade_bin_drift_json TEXT DEFAULT '{}',
+                        action_bin_drift_json TEXT DEFAULT '{}',
+                        stability_metrics_json TEXT DEFAULT '{}',
+                        drift_flags_json TEXT DEFAULT '[]',
+                        severity TEXT NOT NULL,
+                        warnings_json TEXT DEFAULT '[]',
+                        payload_json TEXT NOT NULL,
+                        created_at TEXT NOT NULL
+                    );
+
+                    CREATE INDEX IF NOT EXISTS ix_drift_reports_model_created
+                        ON model_calibration_drift_reports(model_version, created_at);
+
+                    CREATE TABLE IF NOT EXISTS model_calibration_drift_windows (
+                        id TEXT PRIMARY KEY,
+                        drift_report_id TEXT NOT NULL,
+                        window_result_id TEXT,
+                        window_index INTEGER NOT NULL,
+                        metrics_json TEXT DEFAULT '{}',
+                        flags_json TEXT DEFAULT '[]',
+                        severity TEXT NOT NULL,
+                        created_at TEXT NOT NULL
+                    );
+
+                    CREATE INDEX IF NOT EXISTS ix_drift_windows_report_index
+                        ON model_calibration_drift_windows(drift_report_id, window_index);
+
+                    CREATE TABLE IF NOT EXISTS model_review_reports (
+                        review_report_id TEXT PRIMARY KEY,
+                        model_version TEXT NOT NULL,
+                        window_set_id TEXT,
+                        validation_report_ids_json TEXT DEFAULT '[]',
+                        calibration_audit_ids_json TEXT DEFAULT '[]',
+                        drift_report_ids_json TEXT DEFAULT '[]',
+                        sensitivity_run_ids_json TEXT DEFAULT '[]',
+                        comparison_ids_json TEXT DEFAULT '[]',
+                        summary_json TEXT DEFAULT '{}',
+                        readiness_status TEXT NOT NULL,
+                        readiness_reasons_json TEXT DEFAULT '[]',
+                        unresolved_warnings_json TEXT DEFAULT '[]',
+                        payload_json TEXT NOT NULL,
+                        created_at TEXT NOT NULL
+                    );
+
+                    CREATE INDEX IF NOT EXISTS ix_model_review_reports_model_created
+                        ON model_review_reports(model_version, created_at);
 
                     CREATE TABLE IF NOT EXISTS active_models (
                         active_model_id TEXT PRIMARY KEY,
@@ -2156,6 +2274,406 @@ class ModelComparisonRepository:
                 connection.close()
 
 
+class ReplayWindowRepository:
+    def __init__(self, store: SQLiteStore) -> None:
+        self.store = store
+
+    def save_set(self, window_set: dict[str, Any]) -> dict[str, Any]:
+        payload = _payload(window_set)
+        created_at = str(payload.get("created_at") or _now_iso())
+        window_set_id = str(payload.get("window_set_id") or _stable_id("window_set", payload.get("name"), created_at))
+        row_payload = payload | {"window_set_id": window_set_id, "created_at": created_at}
+        with self.store._lock:
+            connection = self.store.connect()
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO replay_window_sets(
+                        window_set_id, name, description, symbols_json, intervals_json, setup_types_json,
+                        start, "end", window_mode, window_size_days, step_days, embargo_minutes, session,
+                        replay_config_json, sensitivity_config_json, validation_config_json, summary_json,
+                        status, warnings_json, payload_json, created_at, completed_at
+                    )
+                    VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(window_set_id) DO UPDATE SET
+                        summary_json=excluded.summary_json,
+                        status=excluded.status,
+                        warnings_json=excluded.warnings_json,
+                        payload_json=excluded.payload_json,
+                        completed_at=excluded.completed_at
+                    """,
+                    (
+                        window_set_id,
+                        str(row_payload.get("name") or window_set_id),
+                        row_payload.get("description"),
+                        _json_dumps(row_payload.get("symbols") or []),
+                        _json_dumps(row_payload.get("intervals") or []),
+                        _json_dumps(row_payload.get("setup_types") or row_payload.get("candidate_setup_types") or []),
+                        row_payload.get("start"),
+                        row_payload.get("end"),
+                        str(row_payload.get("window_mode") or "custom"),
+                        row_payload.get("window_size_days"),
+                        row_payload.get("step_days"),
+                        row_payload.get("embargo_minutes"),
+                        str(row_payload.get("session") or "rth"),
+                        _json_dumps(row_payload.get("replay_config") or {}),
+                        _json_dumps(row_payload.get("sensitivity_config") or {}),
+                        _json_dumps(row_payload.get("validation_config") or {}),
+                        _json_dumps(row_payload.get("summary") or {}),
+                        str(row_payload.get("status") or "created"),
+                        _json_dumps(row_payload.get("warnings") or []),
+                        _json_dumps(row_payload),
+                        created_at,
+                        row_payload.get("completed_at"),
+                    ),
+                )
+                connection.commit()
+            finally:
+                if str(self.store.path) != ":memory:":
+                    connection.close()
+        return row_payload
+
+    def save_result(self, result: dict[str, Any]) -> dict[str, Any]:
+        payload = _payload(result)
+        created_at = str(payload.get("created_at") or _now_iso())
+        window_set_id = str(payload["window_set_id"])
+        window_index = int(payload.get("window_index") or 0)
+        window_result_id = str(payload.get("window_result_id") or _stable_id("window_result", window_set_id, window_index))
+        row_payload = payload | {
+            "window_result_id": window_result_id,
+            "window_set_id": window_set_id,
+            "window_index": window_index,
+            "created_at": created_at,
+        }
+        with self.store._lock:
+            connection = self.store.connect()
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO replay_window_results(
+                        window_result_id, window_set_id, window_index, train_start, train_end,
+                        validation_start, validation_end, test_start, test_end, replay_start, replay_end,
+                        replay_run_ids_json, counterfactual_replay_run_id, portfolio_replay_run_id,
+                        sensitivity_run_ids_json, calibration_audit_ids_json, comparison_ids_json,
+                        model_versions_json, status, metrics_json, warnings_json, payload_json,
+                        created_at, completed_at
+                    )
+                    VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(window_result_id) DO UPDATE SET
+                        replay_run_ids_json=excluded.replay_run_ids_json,
+                        counterfactual_replay_run_id=excluded.counterfactual_replay_run_id,
+                        portfolio_replay_run_id=excluded.portfolio_replay_run_id,
+                        sensitivity_run_ids_json=excluded.sensitivity_run_ids_json,
+                        calibration_audit_ids_json=excluded.calibration_audit_ids_json,
+                        comparison_ids_json=excluded.comparison_ids_json,
+                        model_versions_json=excluded.model_versions_json,
+                        status=excluded.status,
+                        metrics_json=excluded.metrics_json,
+                        warnings_json=excluded.warnings_json,
+                        payload_json=excluded.payload_json,
+                        completed_at=excluded.completed_at
+                    """,
+                    (
+                        window_result_id,
+                        window_set_id,
+                        window_index,
+                        row_payload.get("train_start"),
+                        row_payload.get("train_end"),
+                        row_payload.get("validation_start"),
+                        row_payload.get("validation_end"),
+                        row_payload.get("test_start"),
+                        row_payload.get("test_end"),
+                        row_payload.get("replay_start"),
+                        row_payload.get("replay_end"),
+                        _json_dumps(row_payload.get("replay_run_ids") or []),
+                        row_payload.get("counterfactual_replay_run_id"),
+                        row_payload.get("portfolio_replay_run_id"),
+                        _json_dumps(row_payload.get("sensitivity_run_ids") or []),
+                        _json_dumps(row_payload.get("calibration_audit_ids") or []),
+                        _json_dumps(row_payload.get("comparison_ids") or []),
+                        _json_dumps(row_payload.get("model_versions") or []),
+                        str(row_payload.get("status") or "created"),
+                        _json_dumps(row_payload.get("metrics") or {}),
+                        _json_dumps(row_payload.get("warnings") or []),
+                        _json_dumps(row_payload),
+                        created_at,
+                        row_payload.get("completed_at"),
+                    ),
+                )
+                connection.commit()
+            finally:
+                if str(self.store.path) != ":memory:":
+                    connection.close()
+        return row_payload
+
+    def get_set(self, window_set_id: str) -> dict[str, Any] | None:
+        connection = self.store.connect()
+        try:
+            row = connection.execute(
+                "SELECT payload_json FROM replay_window_sets WHERE window_set_id = ?",
+                (window_set_id,),
+            ).fetchone()
+            return _json_loads(row["payload_json"]) if row else None
+        finally:
+            if str(self.store.path) != ":memory:":
+                connection.close()
+
+    def list_sets(self, limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:
+        connection = self.store.connect()
+        try:
+            rows = connection.execute(
+                "SELECT payload_json FROM replay_window_sets ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                (limit, offset),
+            ).fetchall()
+            return [_json_loads(row["payload_json"]) for row in rows]
+        finally:
+            if str(self.store.path) != ":memory:":
+                connection.close()
+
+    def list_results(self, window_set_id: str, limit: int = 500, offset: int = 0) -> list[dict[str, Any]]:
+        connection = self.store.connect()
+        try:
+            rows = connection.execute(
+                """
+                SELECT payload_json FROM replay_window_results
+                WHERE window_set_id = ?
+                ORDER BY window_index
+                LIMIT ? OFFSET ?
+                """,
+                (window_set_id, limit, offset),
+            ).fetchall()
+            return [_json_loads(row["payload_json"]) for row in rows]
+        finally:
+            if str(self.store.path) != ":memory:":
+                connection.close()
+
+    def get_result(self, window_result_id: str) -> dict[str, Any] | None:
+        connection = self.store.connect()
+        try:
+            row = connection.execute(
+                "SELECT payload_json FROM replay_window_results WHERE window_result_id = ?",
+                (window_result_id,),
+            ).fetchone()
+            return _json_loads(row["payload_json"]) if row else None
+        finally:
+            if str(self.store.path) != ":memory:":
+                connection.close()
+
+
+class CalibrationDriftRepository:
+    def __init__(self, store: SQLiteStore) -> None:
+        self.store = store
+
+    def save(self, report: dict[str, Any]) -> dict[str, Any]:
+        payload = _payload(report)
+        created_at = str(payload.get("created_at") or _now_iso())
+        drift_report_id = str(payload.get("drift_report_id") or _stable_id("drift", payload.get("model_version"), created_at))
+        windows = [dict(row) for row in payload.get("window_metrics") or payload.get("windows") or []]
+        row_payload = payload | {"drift_report_id": drift_report_id, "created_at": created_at}
+        with self.store._lock:
+            connection = self.store.connect()
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO model_calibration_drift_reports(
+                        drift_report_id, model_version, calibration_audit_ids_json, window_result_ids_json,
+                        replay_run_ids_json, summary_json, score_bin_drift_json, grade_bin_drift_json,
+                        action_bin_drift_json, stability_metrics_json, drift_flags_json, severity,
+                        warnings_json, payload_json, created_at
+                    )
+                    VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(drift_report_id) DO UPDATE SET
+                        summary_json=excluded.summary_json,
+                        score_bin_drift_json=excluded.score_bin_drift_json,
+                        grade_bin_drift_json=excluded.grade_bin_drift_json,
+                        action_bin_drift_json=excluded.action_bin_drift_json,
+                        stability_metrics_json=excluded.stability_metrics_json,
+                        drift_flags_json=excluded.drift_flags_json,
+                        severity=excluded.severity,
+                        warnings_json=excluded.warnings_json,
+                        payload_json=excluded.payload_json
+                    """,
+                    (
+                        drift_report_id,
+                        str(row_payload["model_version"]),
+                        _json_dumps(row_payload.get("calibration_audit_ids") or []),
+                        _json_dumps(row_payload.get("window_result_ids") or []),
+                        _json_dumps(row_payload.get("replay_run_ids") or []),
+                        _json_dumps(row_payload.get("summary") or {}),
+                        _json_dumps(row_payload.get("score_bin_drift") or {}),
+                        _json_dumps(row_payload.get("grade_bin_drift") or {}),
+                        _json_dumps(row_payload.get("action_bin_drift") or {}),
+                        _json_dumps(row_payload.get("stability_metrics") or {}),
+                        _json_dumps(row_payload.get("drift_flags") or []),
+                        str(row_payload.get("severity") or "INFO"),
+                        _json_dumps(row_payload.get("warnings") or []),
+                        _json_dumps(row_payload),
+                        created_at,
+                    ),
+                )
+                connection.execute("DELETE FROM model_calibration_drift_windows WHERE drift_report_id = ?", (drift_report_id,))
+                connection.executemany(
+                    """
+                    INSERT INTO model_calibration_drift_windows(
+                        id, drift_report_id, window_result_id, window_index, metrics_json,
+                        flags_json, severity, created_at
+                    )
+                    VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    [
+                        (
+                            _stable_id("drift_window", drift_report_id, row.get("window_result_id"), index),
+                            drift_report_id,
+                            row.get("window_result_id"),
+                            int(row.get("window_index") or index),
+                            _json_dumps(row.get("metrics") or row),
+                            _json_dumps(row.get("flags") or []),
+                            str(row.get("severity") or "INFO"),
+                            created_at,
+                        )
+                        for index, row in enumerate(windows, start=1)
+                    ],
+                )
+                connection.commit()
+            finally:
+                if str(self.store.path) != ":memory:":
+                    connection.close()
+        return row_payload | {"windows_written": len(windows)}
+
+    def get(self, drift_report_id: str) -> dict[str, Any] | None:
+        connection = self.store.connect()
+        try:
+            row = connection.execute(
+                "SELECT payload_json FROM model_calibration_drift_reports WHERE drift_report_id = ?",
+                (drift_report_id,),
+            ).fetchone()
+            return _json_loads(row["payload_json"]) if row else None
+        finally:
+            if str(self.store.path) != ":memory:":
+                connection.close()
+
+    def list(self, model_version: str, limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:
+        connection = self.store.connect()
+        try:
+            rows = connection.execute(
+                """
+                SELECT payload_json FROM model_calibration_drift_reports
+                WHERE model_version = ?
+                ORDER BY created_at DESC
+                LIMIT ? OFFSET ?
+                """,
+                (model_version, limit, offset),
+            ).fetchall()
+            return [_json_loads(row["payload_json"]) for row in rows]
+        finally:
+            if str(self.store.path) != ":memory:":
+                connection.close()
+
+    def list_windows(self, drift_report_id: str, limit: int = 500, offset: int = 0) -> builtins.list[dict[str, Any]]:
+        connection = self.store.connect()
+        try:
+            rows = connection.execute(
+                """
+                SELECT * FROM model_calibration_drift_windows
+                WHERE drift_report_id = ?
+                ORDER BY window_index
+                LIMIT ? OFFSET ?
+                """,
+                (drift_report_id, limit, offset),
+            ).fetchall()
+            output = []
+            for row in rows:
+                data = dict(row)
+                data["metrics"] = _json_loads(data.pop("metrics_json"))
+                data["flags"] = _json_loads(data.pop("flags_json"))
+                output.append(data)
+            return output
+        finally:
+            if str(self.store.path) != ":memory:":
+                connection.close()
+
+
+class ModelReviewReportRepository:
+    def __init__(self, store: SQLiteStore) -> None:
+        self.store = store
+
+    def save(self, report: dict[str, Any]) -> dict[str, Any]:
+        payload = _payload(report)
+        created_at = str(payload.get("created_at") or _now_iso())
+        review_report_id = str(payload.get("review_report_id") or _stable_id("model_review", payload.get("model_version"), created_at))
+        row_payload = payload | {"review_report_id": review_report_id, "created_at": created_at}
+        with self.store._lock:
+            connection = self.store.connect()
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO model_review_reports(
+                        review_report_id, model_version, window_set_id, validation_report_ids_json,
+                        calibration_audit_ids_json, drift_report_ids_json, sensitivity_run_ids_json,
+                        comparison_ids_json, summary_json, readiness_status, readiness_reasons_json,
+                        unresolved_warnings_json, payload_json, created_at
+                    )
+                    VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(review_report_id) DO UPDATE SET
+                        summary_json=excluded.summary_json,
+                        readiness_status=excluded.readiness_status,
+                        readiness_reasons_json=excluded.readiness_reasons_json,
+                        unresolved_warnings_json=excluded.unresolved_warnings_json,
+                        payload_json=excluded.payload_json
+                    """,
+                    (
+                        review_report_id,
+                        str(row_payload["model_version"]),
+                        row_payload.get("window_set_id"),
+                        _json_dumps(row_payload.get("validation_report_ids") or []),
+                        _json_dumps(row_payload.get("calibration_audit_ids") or []),
+                        _json_dumps(row_payload.get("drift_report_ids") or []),
+                        _json_dumps(row_payload.get("sensitivity_run_ids") or []),
+                        _json_dumps(row_payload.get("comparison_ids") or []),
+                        _json_dumps(row_payload.get("summary") or {}),
+                        str(row_payload.get("readiness_status") or "REVIEW"),
+                        _json_dumps(row_payload.get("readiness_reasons") or []),
+                        _json_dumps(row_payload.get("unresolved_warnings") or []),
+                        _json_dumps(row_payload),
+                        created_at,
+                    ),
+                )
+                connection.commit()
+            finally:
+                if str(self.store.path) != ":memory:":
+                    connection.close()
+        return row_payload
+
+    def get(self, review_report_id: str) -> dict[str, Any] | None:
+        connection = self.store.connect()
+        try:
+            row = connection.execute(
+                "SELECT payload_json FROM model_review_reports WHERE review_report_id = ?",
+                (review_report_id,),
+            ).fetchone()
+            return _json_loads(row["payload_json"]) if row else None
+        finally:
+            if str(self.store.path) != ":memory:":
+                connection.close()
+
+    def list(self, model_version: str, limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:
+        connection = self.store.connect()
+        try:
+            rows = connection.execute(
+                """
+                SELECT payload_json FROM model_review_reports
+                WHERE model_version = ?
+                ORDER BY created_at DESC
+                LIMIT ? OFFSET ?
+                """,
+                (model_version, limit, offset),
+            ).fetchall()
+            return [_json_loads(row["payload_json"]) for row in rows]
+        finally:
+            if str(self.store.path) != ":memory:":
+                connection.close()
+
+
 class ActiveModelRepository:
     def __init__(self, store: SQLiteStore, model_runs: ModelRunRepository) -> None:
         self.store = store
@@ -3193,6 +3711,9 @@ class RepositoryRegistry:
         self.candidate_score_audits = CandidateScoreAuditRepository(self.store)
         self.model_calibration_audits = CalibrationAuditRepository(self.store)
         self.model_comparisons = ModelComparisonRepository(self.store)
+        self.replay_windows = ReplayWindowRepository(self.store)
+        self.model_calibration_drift = CalibrationDriftRepository(self.store)
+        self.model_review_reports = ModelReviewReportRepository(self.store)
         self.active_models = ActiveModelRepository(self.store, self.model_runs)
         self.live_signals = LiveSignalRepository(self.store)
         self.scanner_runs = ScannerRunRepository(self.store)

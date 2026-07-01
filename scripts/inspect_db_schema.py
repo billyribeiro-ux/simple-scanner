@@ -21,14 +21,19 @@ EXPECTED_TABLES = {
     "model_artifacts",
     "model_calibration_audits",
     "model_calibration_bins",
+    "model_calibration_drift_reports",
+    "model_calibration_drift_windows",
     "model_comparisons",
     "model_evidence_cells",
+    "model_review_reports",
     "model_runs",
     "pipeline_build_windows",
     "provider_requests",
     "replay_runs",
     "replay_sensitivity_runs",
     "replay_sensitivity_scenarios",
+    "replay_window_results",
+    "replay_window_sets",
     "scanner_runs",
     "simulated_trades",
     "symbols",
@@ -36,8 +41,12 @@ EXPECTED_TABLES = {
     "validation_windows",
 }
 
-DEFAULT_URL = "postgresql+psycopg://amd:amd@localhost:15432/adaptive_market_decoder"
-EXPECTED_REVISION = "0006_phase9_calibration"
+DEFAULT_POSTGRES_USER = os.environ.get("LOCAL_POSTGRES_USER", "amd")
+DEFAULT_POSTGRES_PASSWORD = os.environ.get("LOCAL_POSTGRES_PASSWORD", "amd")
+DEFAULT_POSTGRES_HOST = os.environ.get("LOCAL_POSTGRES_HOST", "localhost")
+DEFAULT_POSTGRES_PORT = os.environ.get("LOCAL_POSTGRES_PORT", "15432")
+DEFAULT_POSTGRES_DB = os.environ.get("LOCAL_POSTGRES_DB", "adaptive_market_decoder")
+EXPECTED_REVISION = "0007_phase10_review"
 EXPECTED_INDEXES = {
     "ix_backtest_comparisons_replay_created",
     "ix_candidate_signals_replay_lookup",
@@ -54,10 +63,15 @@ EXPECTED_INDEXES = {
     "ix_calibration_audits_model_created",
     "ix_calibration_bins_audit_type",
     "ix_model_comparisons_created",
+    "ix_drift_reports_model_created",
+    "ix_drift_windows_report_index",
+    "ix_model_review_reports_model_created",
     "ix_pipeline_windows_lookup",
     "ix_replay_runs_created_type",
     "ix_replay_runs_config_hash",
     "ix_replay_runs_simulation_type",
+    "ix_replay_window_results_set_index",
+    "ix_replay_window_sets_status_created",
     "ix_sensitivity_runs_replay_created",
     "ix_sensitivity_scenarios_run_cost",
     "ix_validation_reports_model_purpose_created",
@@ -120,6 +134,23 @@ EXPECTED_COLUMNS = {
         "metrics_json",
     },
     "model_comparisons": {"comparison_id", "model_versions_json", "summary_json", "payload_json"},
+    "replay_window_sets": {"window_set_id", "window_mode", "summary_json", "payload_json"},
+    "replay_window_results": {"window_result_id", "window_set_id", "metrics_json", "payload_json"},
+    "model_calibration_drift_reports": {
+        "drift_report_id",
+        "model_version",
+        "summary_json",
+        "stability_metrics_json",
+        "payload_json",
+    },
+    "model_calibration_drift_windows": {"drift_report_id", "window_index", "metrics_json", "flags_json"},
+    "model_review_reports": {
+        "review_report_id",
+        "model_version",
+        "summary_json",
+        "readiness_status",
+        "payload_json",
+    },
     "pipeline_build_windows": {
         "artifact_type",
         "symbol",
@@ -203,6 +234,45 @@ EXPECTED_JSON_COLUMNS = {
     ("model_comparisons", "replay_run_ids_json"),
     ("model_comparisons", "summary_json"),
     ("model_comparisons", "payload_json"),
+    ("replay_window_sets", "symbols_json"),
+    ("replay_window_sets", "intervals_json"),
+    ("replay_window_sets", "setup_types_json"),
+    ("replay_window_sets", "replay_config_json"),
+    ("replay_window_sets", "sensitivity_config_json"),
+    ("replay_window_sets", "validation_config_json"),
+    ("replay_window_sets", "summary_json"),
+    ("replay_window_sets", "warnings_json"),
+    ("replay_window_sets", "payload_json"),
+    ("replay_window_results", "replay_run_ids_json"),
+    ("replay_window_results", "sensitivity_run_ids_json"),
+    ("replay_window_results", "calibration_audit_ids_json"),
+    ("replay_window_results", "comparison_ids_json"),
+    ("replay_window_results", "model_versions_json"),
+    ("replay_window_results", "metrics_json"),
+    ("replay_window_results", "warnings_json"),
+    ("replay_window_results", "payload_json"),
+    ("model_calibration_drift_reports", "calibration_audit_ids_json"),
+    ("model_calibration_drift_reports", "window_result_ids_json"),
+    ("model_calibration_drift_reports", "replay_run_ids_json"),
+    ("model_calibration_drift_reports", "summary_json"),
+    ("model_calibration_drift_reports", "score_bin_drift_json"),
+    ("model_calibration_drift_reports", "grade_bin_drift_json"),
+    ("model_calibration_drift_reports", "action_bin_drift_json"),
+    ("model_calibration_drift_reports", "stability_metrics_json"),
+    ("model_calibration_drift_reports", "drift_flags_json"),
+    ("model_calibration_drift_reports", "warnings_json"),
+    ("model_calibration_drift_reports", "payload_json"),
+    ("model_calibration_drift_windows", "metrics_json"),
+    ("model_calibration_drift_windows", "flags_json"),
+    ("model_review_reports", "validation_report_ids_json"),
+    ("model_review_reports", "calibration_audit_ids_json"),
+    ("model_review_reports", "drift_report_ids_json"),
+    ("model_review_reports", "sensitivity_run_ids_json"),
+    ("model_review_reports", "comparison_ids_json"),
+    ("model_review_reports", "summary_json"),
+    ("model_review_reports", "readiness_reasons_json"),
+    ("model_review_reports", "unresolved_warnings_json"),
+    ("model_review_reports", "payload_json"),
     ("active_models", "payload_json"),
     ("live_signals", "payload_json"),
     ("pipeline_build_windows", "payload_json"),
@@ -239,7 +309,12 @@ EXPECTED_JSON_COLUMNS = {
 
 
 def _migration_url() -> str:
-    configured = os.environ.get("DATABASE_URL") or DEFAULT_URL
+    default_url = (
+        "postgresql+psycopg://"
+        + f"{DEFAULT_POSTGRES_USER}:{DEFAULT_POSTGRES_PASSWORD}"
+        + f"@{DEFAULT_POSTGRES_HOST}:{DEFAULT_POSTGRES_PORT}/{DEFAULT_POSTGRES_DB}"
+    )
+    configured = os.environ.get("DATABASE_URL") or default_url
     return configured.replace("+asyncpg", "+psycopg")
 
 

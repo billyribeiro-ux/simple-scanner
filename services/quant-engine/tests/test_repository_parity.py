@@ -462,6 +462,86 @@ def test_repository_core_contract_parity(tmp_path, monkeypatch, backend: str) ->
             "summary": {"diagnostic_only": True},
         }
     )
+    window_set = repo.replay_windows.save_set(
+        {
+            "window_set_id": "parity-window-set",
+            "name": "parity-window-set",
+            "symbols": ["AAPL"],
+            "intervals": ["1min"],
+            "setup_types": ["VWAP reclaim long"],
+            "start": bars[0].timestamp_utc.isoformat(),
+            "end": bars[-1].timestamp_utc.isoformat(),
+            "window_mode": "custom",
+            "generated_windows": [
+                {
+                    "window_index": 1,
+                    "replay_start": bars[0].timestamp_utc.isoformat(),
+                    "replay_end": bars[-1].timestamp_utc.isoformat(),
+                }
+            ],
+            "summary": {"window_count": 1, "completed_window_count": 1},
+            "status": "completed",
+            "warnings": [],
+        }
+    )
+    window_result = repo.replay_windows.save_result(
+        {
+            "window_result_id": "parity-window-result",
+            "window_set_id": "parity-window-set",
+            "window_index": 1,
+            "replay_start": bars[0].timestamp_utc.isoformat(),
+            "replay_end": bars[-1].timestamp_utc.isoformat(),
+            "replay_run_ids": ["parity-replay"],
+            "counterfactual_replay_run_id": None,
+            "portfolio_replay_run_id": "parity-replay",
+            "model_versions": ["parity-model-accepted"],
+            "status": "completed",
+            "metrics": {"total_trades": 1, "average_r": 1.5, "profit_factor": 0},
+            "warnings": [],
+        }
+    )
+    drift = repo.model_calibration_drift.save(
+        {
+            "drift_report_id": "parity-drift",
+            "model_version": "parity-model-accepted",
+            "calibration_audit_ids": ["calibration-parity"],
+            "window_result_ids": ["parity-window-result"],
+            "replay_run_ids": ["parity-replay"],
+            "summary": {"severity": "INFO", "diagnostic_only": True},
+            "score_bin_drift": {},
+            "grade_bin_drift": {},
+            "action_bin_drift": {},
+            "stability_metrics": {"rank_correlation_latest": 1.0},
+            "drift_flags": [],
+            "severity": "INFO",
+            "warnings": [],
+            "window_metrics": [
+                {
+                    "window_result_id": "parity-window-result",
+                    "window_index": 1,
+                    "metrics": {"rank_correlation_score": 1.0, "high_grade_average_r": 1.5},
+                    "flags": [],
+                    "severity": "INFO",
+                }
+            ],
+        }
+    )
+    review_report = repo.model_review_reports.save(
+        {
+            "review_report_id": "parity-review",
+            "model_version": "parity-model-accepted",
+            "window_set_id": "parity-window-set",
+            "validation_report_ids": [accepted["report_id"]],
+            "calibration_audit_ids": ["calibration-parity"],
+            "drift_report_ids": ["parity-drift"],
+            "sensitivity_run_ids": ["parity-sensitivity"],
+            "comparison_ids": [model_comparison["comparison_id"]],
+            "summary": {"readiness_status": "PASS", "model_activation_unchanged": True},
+            "readiness_status": "PASS",
+            "readiness_reasons": [],
+            "unresolved_warnings": [],
+        }
+    )
     replay_windows = repo.pipeline_windows.mark_built(
         "replay",
         ["AAPL"],
@@ -474,6 +554,10 @@ def test_repository_core_contract_parity(tmp_path, monkeypatch, backend: str) ->
     assert saved_replay["trades_written"] == 2
     assert sensitivity["scenarios_written"] == 1
     assert comparison["comparison_id"]
+    assert window_set["window_set_id"] == "parity-window-set"
+    assert window_result["window_result_id"] == "parity-window-result"
+    assert drift["drift_report_id"] == "parity-drift"
+    assert review_report["review_report_id"] == "parity-review"
     assert replay_windows[0]["dirty"] is False
 
     reopened = RepositoryRegistry(settings=get_settings())
@@ -487,6 +571,11 @@ def test_repository_core_contract_parity(tmp_path, monkeypatch, backend: str) ->
     assert reopened.model_calibration_audits.get("calibration-parity")["model_version"] == "parity-model-accepted"
     assert reopened.model_calibration_audits.list_bins("calibration-parity")
     assert reopened.model_comparisons.get(model_comparison["comparison_id"])["comparison_type"] == "model_comparison"
+    assert reopened.replay_windows.get_set("parity-window-set")["status"] == "completed"
+    assert reopened.replay_windows.list_results("parity-window-set")[0]["window_result_id"] == "parity-window-result"
+    assert reopened.model_calibration_drift.get("parity-drift")["severity"] == "INFO"
+    assert reopened.model_calibration_drift.list_windows("parity-drift")[0]["window_index"] == 1
+    assert reopened.model_review_reports.get("parity-review")["readiness_status"] == "PASS"
     assert reopened.validation_reports.latest(model_version="parity-model-accepted")["activation_decision"] == "accepted"
     assert reopened.active_models.get_active()["model_version"] == "parity-model-accepted"
     assert reopened.scanner_runs.latest()["scanner_run_id"] == scanner_run_id

@@ -212,6 +212,12 @@ def _run_persisted_api_vertical_slice(
 
         bars = client.get("/data/bars").json()
         assert len(bars) == 480
+        quality_report = client.get(
+            "/data/quality-report",
+            params={"symbols": "AAPL,SPY", "intervals": "1min", "start": start.isoformat(), "end": end.isoformat()},
+        ).json()
+        assert quality_report["status"] == "ok"
+        assert quality_report["summary"]["bar_count"] == 240
 
         latest_quotes = client.get("/data/quotes/latest").json()
         assert {quote["symbol"] for quote in latest_quotes} == {"AAPL", "SPY", "QQQ", "NVDA"}
@@ -527,6 +533,70 @@ def _run_persisted_api_vertical_slice(
             },
         ).json()
         assert replay_aware_validation["validation_mode"] == "replay_aware_walk_forward"
+        window_set = client.post(
+            "/orchestration/replay-window-sets",
+            json={
+                "name": "api-smoke-window-set",
+                "symbols": ["AAPL", "SPY"],
+                "intervals": ["1min"],
+                "window_mode": "custom",
+                "windows": [
+                    {
+                        "replay_start": start.isoformat(),
+                        "replay_end": (start + timedelta(minutes=30)).isoformat(),
+                    }
+                ],
+                "replay_config": {"allow_stale": True, "max_hold_minutes": 15},
+                "model_version": replay_aware_model_version,
+                "run_immediately": False,
+            },
+        ).json()
+        window_set_id = window_set["window_set_id"]
+        assert window_set["status"] == "created"
+        assert window_set["symbols"] == ["AAPL", "SPY"]
+        assert client.get("/orchestration/replay-window-sets").json()["window_sets"]
+        assert client.get(f"/orchestration/replay-window-sets/{window_set_id}").json()["window_set_id"] == window_set_id
+        window_run = client.post(
+            f"/orchestration/replay-window-sets/{window_set_id}/run",
+            json={"run_replay": False, "run_calibration": False},
+        ).json()
+        assert window_run["status"] == "ok"
+        assert window_run["summary"]["completed_window_count"] == 1
+        window_results = client.get(f"/orchestration/replay-window-sets/{window_set_id}/results").json()
+        assert len(window_results["results"]) == 1
+        window_set_export_direct = client.post(f"/orchestration/replay-window-sets/{window_set_id}/export").json()
+        assert window_set_export_direct["status"] == "ok"
+        calibration_drift = client.post(
+            f"/models/{replay_aware_model_version}/calibration-drift",
+            json={
+                "calibration_audit_ids": [calibration_audit_id],
+                "window_set_id": window_set_id,
+                "minimum_recent_high_grade_samples": 1,
+            },
+        ).json()
+        drift_report_id = calibration_drift["drift_report_id"]
+        assert calibration_drift["status"] == "ok"
+        drift_list = client.get(f"/models/{replay_aware_model_version}/calibration-drift").json()
+        assert drift_report_id in {report["drift_report_id"] for report in drift_list["drift_reports"]}
+        drift_detail = client.get(f"/models/calibration-drift/{drift_report_id}").json()
+        assert drift_detail["drift_report_id"] == drift_report_id
+        drift_windows = client.get(f"/models/calibration-drift/{drift_report_id}/windows").json()
+        assert drift_windows["windows"]
+        model_review = client.post(
+            f"/models/{replay_aware_model_version}/review-report",
+            json={
+                "validation_report_ids": [replay_aware_validation["report_id"]],
+                "calibration_audit_ids": [calibration_audit_id],
+                "drift_report_ids": [drift_report_id],
+                "window_set_id": window_set_id,
+            },
+        ).json()
+        review_report_id = model_review["review_report_id"]
+        assert model_review["status"] == "ok"
+        assert model_review["summary"]["model_activation_unchanged"] is True
+        review_list = client.get(f"/models/{replay_aware_model_version}/review-reports").json()
+        assert review_report_id in {report["review_report_id"] for report in review_list["review_reports"]}
+        assert client.get(f"/models/review-reports/{review_report_id}").json()["review_report_id"] == review_report_id
         repo.validation_reports.save(
             {
                 "model_version": replay_aware_model_version,
@@ -643,6 +713,34 @@ def _run_persisted_api_vertical_slice(
             "/exports/model-comparison.xlsx",
             json={"kind": "model-comparison", "run_id": model_comparison["comparison_id"]},
         ).json()
+        replay_window_set_export = client.post(
+            "/exports/replay-window-set.xlsx",
+            json={"kind": "replay-window-set", "run_id": window_set_id},
+        ).json()
+        drift_export_xlsx = client.post(
+            "/exports/calibration-drift.xlsx",
+            json={"kind": "calibration-drift", "run_id": drift_report_id},
+        ).json()
+        drift_export_json = client.post(
+            "/exports/calibration-drift.json",
+            json={"kind": "calibration-drift", "run_id": drift_report_id},
+        ).json()
+        drift_windows_csv = client.post(
+            "/exports/calibration-drift-windows.csv",
+            json={"kind": "calibration-drift-windows", "run_id": drift_report_id},
+        ).json()
+        drift_windows_xlsx = client.post(
+            "/exports/calibration-drift-windows.xlsx",
+            json={"kind": "calibration-drift-windows", "run_id": drift_report_id},
+        ).json()
+        model_review_xlsx = client.post(
+            "/exports/model-review.xlsx",
+            json={"kind": "model-review", "run_id": review_report_id},
+        ).json()
+        model_review_json = client.post(
+            "/exports/model-review.json",
+            json={"kind": "model-review", "run_id": review_report_id},
+        ).json()
         review = client.post("/review/daily").json()
         persisted_review = client.get(f"/review/daily/{review['date']}").json()
         daily_export = client.post("/exports/daily-review.xlsx", json={"kind": "daily-review"}).json()
@@ -672,6 +770,14 @@ def _run_persisted_api_vertical_slice(
         assert calibration_bins_xlsx["rows"] == len(calibration_bins["bins"])
         assert calibration_metrics_json["status"] == "ok"
         assert model_comparison_export["status"] == "ok"
+        assert window_set_export_direct["status"] == "ok"
+        assert replay_window_set_export["status"] == "ok"
+        assert drift_export_xlsx["status"] == "ok"
+        assert drift_export_json["status"] == "ok"
+        assert drift_windows_csv["rows"] == len(drift_windows["windows"])
+        assert drift_windows_xlsx["rows"] == len(drift_windows["windows"])
+        assert model_review_xlsx["status"] == "ok"
+        assert model_review_json["status"] == "ok"
         assert {"Live Signals", "Model Info"} <= _sheet_names(xlsx_export["path"])
         assert {"Live Signals", "Model Info"} <= _sheet_names(backtest_export["path"])
         assert {
@@ -703,6 +809,10 @@ def _run_persisted_api_vertical_slice(
         assert {"Summary", "Score Bins", "Grade Bins", "Action Bins", "Provenance"} <= _sheet_names(calibration_audit_export["path"])
         assert {"Calibration Bins"} <= _sheet_names(calibration_bins_xlsx["path"])
         assert {"Summary", "Models", "Calibration Metrics", "Warnings"} <= _sheet_names(model_comparison_export["path"])
+        assert {"Summary", "Generated Windows", "Window Results", "Config"} <= _sheet_names(replay_window_set_export["path"])
+        assert {"Summary", "Drift Flags", "Window Metrics", "Stability"} <= _sheet_names(drift_export_xlsx["path"])
+        assert {"Drift Windows"} <= _sheet_names(drift_windows_xlsx["path"])
+        assert {"Summary", "Readiness", "Readiness Reasons", "Unresolved Warnings"} <= _sheet_names(model_review_xlsx["path"])
         assert review["signals_fired"] + review["signals_skipped"] == len(live_signals)
         assert persisted_review["status"] == "local-file"
         assert len(daily_export["paths"]) == 3
@@ -728,6 +838,11 @@ def _run_persisted_api_vertical_slice(
     assert reopened.candidate_score_audits.list(replay_aware_model_version)
     assert reopened.model_calibration_audits.get(calibration_audit_id)["model_version"] == replay_aware_model_version
     assert reopened.model_comparisons.get(model_comparison["comparison_id"])["comparison_type"] == "model_comparison"
+    assert reopened.replay_windows.get_set(window_set_id)["status"] == "completed"
+    assert reopened.replay_windows.list_results(window_set_id)[0]["status"] == "completed"
+    assert reopened.model_calibration_drift.get(drift_report_id)["model_version"] == replay_aware_model_version
+    assert reopened.model_calibration_drift.list_windows(drift_report_id)
+    assert reopened.model_review_reports.get(review_report_id)["model_version"] == replay_aware_model_version
     assert reopened.active_models.get_active()["model_version"] == replacement_version
     assert reopened.scanner_runs.latest()["scanner_run_id"] == scanner_start["scanner_run_id"]
     assert len(reopened.live_signals.list_latest()) == len(live_signals)
@@ -756,6 +871,14 @@ def _run_persisted_api_vertical_slice(
         calibration_bins_xlsx["path"],
         calibration_metrics_json["path"],
         model_comparison_export["path"],
+        window_set_export_direct["path"],
+        replay_window_set_export["path"],
+        drift_export_xlsx["path"],
+        drift_export_json["path"],
+        drift_windows_csv["path"],
+        drift_windows_xlsx["path"],
+        model_review_xlsx["path"],
+        model_review_json["path"],
         *replay_summary_export["paths"],
         *daily_export["paths"],
         model_dir / "active_model.json",

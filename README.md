@@ -66,6 +66,9 @@ make api-smoke-postgres
 make repository-parity-test
 make replay-test
 make replay-sensitivity-test
+make replay-window-test
+make model-review-test
+make db-query-diagnostics
 make export-test
 make fmp-smoke
 make test
@@ -75,7 +78,7 @@ make test
 
 `make api-smoke` runs the default SQLite persisted FastAPI vertical slice with a mocked provider. `make api-smoke-postgres` runs the same API workflow against the migrated local Postgres/TimescaleDB compose database. Neither smoke path requires FMP, internet, or secrets.
 
-`make replay-test` runs the candidate-to-trade market replay unit tests. `make replay-sensitivity-test` runs replay audit/sensitivity tests. `make export-test` verifies replay, sensitivity, and signal CSV/XLSX export generation.
+`make replay-test` runs the candidate-to-trade market replay unit tests. `make replay-sensitivity-test` runs replay audit/sensitivity tests. `make replay-window-test` runs multi-window replay orchestration tests. `make model-review-test` runs calibration drift, model review, and data quality tests. `make export-test` verifies replay, sensitivity, signal, calibration, drift, review, and window-set export generation.
 
 `make fmp-smoke` is optional and runs live FMP REST checks only when `FMP_API_KEY` is configured. Otherwise it skips with a non-secret message.
 
@@ -102,8 +105,9 @@ FastAPI selects the repository backend explicitly:
 7. Run `POST /backtest/run` for label-derived evidence, or `POST /backtest/replay` for candidate-to-trade market replay.
 8. For replay validation, pass an explicit `replay_run_id` or `replay_filter`.
 9. Run replay sensitivity and label-vs-replay comparison before treating replay evidence as model-selection input.
-10. Start the scanner.
-11. Export live signals, replay summaries/trades, sensitivity artifacts, history, backtests, or daily reviews.
+10. Generate replay window sets, calibration drift reports, and model review reports when comparing model readiness across time.
+11. Start the scanner.
+12. Export live signals, replay summaries/trades, sensitivity artifacts, drift/model-review artifacts, history, backtests, or daily reviews.
 
 ## Backtest Modes
 
@@ -179,6 +183,46 @@ Calibration exports:
 - `POST /exports/model-comparison.xlsx`
 
 Activation can require calibration with `calibration_audit_required=true`. If the active replay-aware model requires calibration and the audit is missing or failed, scanner output suppresses actionable TAKE and emits `calibration_required_or_failed`.
+
+## Phase 10 Replay Windows, Drift, And Review
+
+Replay window orchestration:
+
+- `POST /orchestration/replay-window-sets`
+- `GET /orchestration/replay-window-sets`
+- `GET /orchestration/replay-window-sets/{window_set_id}`
+- `GET /orchestration/replay-window-sets/{window_set_id}/results`
+- `POST /orchestration/replay-window-sets/{window_set_id}/run`
+- `POST /orchestration/replay-window-sets/{window_set_id}/export`
+
+Calibration drift:
+
+- `POST /models/{model_version}/calibration-drift`
+- `GET /models/{model_version}/calibration-drift`
+- `GET /models/calibration-drift/{drift_report_id}`
+- `GET /models/calibration-drift/{drift_report_id}/windows`
+
+Model review reports:
+
+- `POST /models/{model_version}/review-report`
+- `GET /models/{model_version}/review-reports`
+- `GET /models/review-reports/{review_report_id}`
+
+Data quality:
+
+- `GET /data/quality-report`
+
+Phase 10 exports:
+
+- `POST /exports/replay-window-set.xlsx`
+- `POST /exports/calibration-drift.xlsx`
+- `POST /exports/calibration-drift.json`
+- `POST /exports/calibration-drift-windows.csv`
+- `POST /exports/calibration-drift-windows.xlsx`
+- `POST /exports/model-review.xlsx`
+- `POST /exports/model-review.json`
+
+These artifacts are advisory research and operational review outputs. They do not activate models, route orders, or make profitability claims.
 
 ## Default Universe
 

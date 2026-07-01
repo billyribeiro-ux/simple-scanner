@@ -1,6 +1,6 @@
 # Data Model
 
-Core storage is designed around PostgreSQL with TimescaleDB when available. If the Timescale extension is not available, the same tables function as plain PostgreSQL tables. Phase 8 advances Alembic to revision `0005_phase8_replay_aware_models`, adding replay-aware evidence and score-audit persistence on top of Phase 7 replay audit fields, replay sensitivity tables, comparison tables, incremental build-window metadata, critical indexes, unique constraints, JSON columns, `timescaledb`, and `bars` as a hypertable against the local compose database. The API repository runtime supports both SQLite local storage and PostgreSQL.
+Core storage is designed around PostgreSQL with TimescaleDB when available. If the Timescale extension is not available, the same tables function as plain PostgreSQL tables. Phase 10 advances Alembic to revision `0007_phase10_review`, adding replay window orchestration, calibration drift, and model review persistence on top of Phase 9 counterfactual calibration. The API repository runtime supports both SQLite local storage and PostgreSQL.
 
 ## Tables
 
@@ -46,3 +46,13 @@ Alembic is now `0006_phase9_calibration`. New persisted tables are `model_calibr
 `replay_runs` and `simulated_trades` carry counterfactual replay via existing JSON payloads. Counterfactual runs use `simulation_type = model_training_counterfactual`; per-trade metadata stores replay purpose, candidate-quality label, counterfactual observed status, portfolio-blocked marker, concurrency count, overlap group, and concurrency bucket.
 
 `model_calibration_audits` stores score/grade/action bins, rank correlation, monotonicity, separation metrics, stability metrics, warnings, rejection reasons, and provenance. `model_calibration_bins` stores the bin rows used by exports and audit drilldowns. `model_comparisons` stores diagnostic model comparison payloads and never auto-activates a model.
+
+## Phase 10 Update
+
+Alembic is now `0007_phase10_review`. New persisted tables are `replay_window_sets`, `replay_window_results`, `model_calibration_drift_reports`, `model_calibration_drift_windows`, and `model_review_reports`.
+
+`replay_window_sets` stores generated daily/rolling/anchored/custom windows, replay configuration, model version, summary, warnings, and status. `replay_window_results` stores per-window replay IDs, comparison IDs, calibration IDs, metrics, warnings, and completion state.
+
+`model_calibration_drift_reports` stores advisory drift severity, drift flags, score/grade/action bin drift, stability metrics, linked calibration/window/replay IDs, warnings, and config. `model_calibration_drift_windows` stores per-window drift metrics and flags.
+
+`model_review_reports` stores advisory readiness status, validation/calibration/drift/sensitivity/comparison references, unresolved warnings, and `model_activation_unchanged=true` in summaries. Review reports never activate or deactivate models.

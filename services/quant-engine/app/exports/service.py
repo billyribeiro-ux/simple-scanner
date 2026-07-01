@@ -165,6 +165,34 @@ MODEL_COMPARISON_COLUMNS = [
     "active",
 ]
 
+REPLAY_WINDOW_RESULT_COLUMNS = [
+    "window_result_id",
+    "window_set_id",
+    "window_index",
+    "replay_start",
+    "replay_end",
+    "counterfactual_replay_run_id",
+    "portfolio_replay_run_id",
+    "status",
+    "total_trades",
+    "average_r",
+    "profit_factor",
+    "max_drawdown_r",
+    "warning_count",
+]
+
+DRIFT_WINDOW_COLUMNS = [
+    "drift_report_id",
+    "window_result_id",
+    "window_index",
+    "severity",
+    "rank_correlation_score",
+    "monotonicity_pass",
+    "high_grade_average_r",
+    "take_minus_watch_average_r",
+    "flags",
+]
+
 
 class ExportService:
     def __init__(self) -> None:
@@ -541,6 +569,114 @@ class ExportService:
         self._write_workbook(path, sheets)
         return path
 
+    def export_replay_window_set_xlsx(
+        self,
+        window_set: dict[str, object],
+        results: Iterable[dict[str, object]],
+    ) -> Path:
+        window_set_id = str(window_set.get("window_set_id") or "latest")
+        path = self.settings.exports_dir / f"replay_window_set_{window_set_id}.xlsx"
+        result_rows = [self._replay_window_result_row(result) for result in results]
+        sheets = {
+            "Summary": [["metric", "value"], *[[key, self._cell_value(value)] for key, value in dict(window_set.get("summary") or {}).items()]],
+            "Generated Windows": self._dict_table(window_set.get("generated_windows")),
+            "Window Results": [REPLAY_WINDOW_RESULT_COLUMNS, *[[row.get(column) for column in REPLAY_WINDOW_RESULT_COLUMNS] for row in result_rows]],
+            "Replay Runs": self._dict_table([run_id for row in result_rows for run_id in list(row.get("replay_run_ids") or [])]),
+            "Warnings": [["warning"], *[[warning] for warning in list(window_set.get("warnings") or [])]],
+            "Config": [
+                ["key", "value"],
+                ["window_set_id", window_set_id],
+                ["window_mode", window_set.get("window_mode")],
+                ["symbols", self._cell_value(window_set.get("symbols") or [])],
+                ["intervals", self._cell_value(window_set.get("intervals") or [])],
+                ["diagnostic_only", True],
+            ],
+        }
+        self._write_workbook(path, sheets)
+        return path
+
+    def export_calibration_drift_xlsx(
+        self,
+        report: dict[str, object],
+        windows: Iterable[dict[str, object]],
+    ) -> Path:
+        drift_report_id = str(report.get("drift_report_id") or "latest")
+        path = self.settings.exports_dir / f"calibration_drift_{drift_report_id}.xlsx"
+        window_rows = [self._drift_window_row(drift_report_id, row) for row in windows]
+        sheets = {
+            "Summary": [["metric", "value"], *[[key, self._cell_value(value)] for key, value in dict(report.get("summary") or {}).items()]],
+            "Drift Flags": [["flag"], *[[flag] for flag in list(report.get("drift_flags") or [])]],
+            "Window Metrics": [DRIFT_WINDOW_COLUMNS, *[[row.get(column) for column in DRIFT_WINDOW_COLUMNS] for row in window_rows]],
+            "Score Bin Drift": self._metric_sheet(report.get("score_bin_drift")),
+            "Grade Bin Drift": self._metric_sheet(report.get("grade_bin_drift")),
+            "Action Bin Drift": self._metric_sheet(report.get("action_bin_drift")),
+            "Stability": [["metric", "value"], *[[key, self._cell_value(value)] for key, value in dict(report.get("stability_metrics") or {}).items()]],
+            "Warnings": [["warning"], *[[warning] for warning in list(report.get("warnings") or [])]],
+            "Config": [["key", "value"], *[[key, self._cell_value(value)] for key, value in dict(report.get("config") or {}).items()]],
+        }
+        self._write_workbook(path, sheets)
+        return path
+
+    def export_calibration_drift_json(self, report: dict[str, object]) -> Path:
+        drift_report_id = str(report.get("drift_report_id") or "latest")
+        path = self.settings.exports_dir / f"calibration_drift_{drift_report_id}.json"
+        path.write_text(json.dumps(report, indent=2, default=str, allow_nan=False), encoding="utf-8")
+        return path
+
+    def export_calibration_drift_windows_csv(
+        self,
+        drift_report_id: str,
+        windows: Iterable[dict[str, object]],
+    ) -> Path:
+        path = self.settings.exports_dir / f"calibration_drift_windows_{drift_report_id}.csv"
+        rows = [self._drift_window_row(drift_report_id, row) for row in windows]
+        with path.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=DRIFT_WINDOW_COLUMNS)
+            writer.writeheader()
+            writer.writerows(rows)
+        return path
+
+    def export_calibration_drift_windows_xlsx(
+        self,
+        drift_report_id: str,
+        windows: Iterable[dict[str, object]],
+    ) -> Path:
+        path = self.settings.exports_dir / f"calibration_drift_windows_{drift_report_id}.xlsx"
+        rows = [self._drift_window_row(drift_report_id, row) for row in windows]
+        self._write_workbook(
+            path,
+            {"Drift Windows": [DRIFT_WINDOW_COLUMNS, *[[row.get(column) for column in DRIFT_WINDOW_COLUMNS] for row in rows]]},
+        )
+        return path
+
+    def export_model_review_xlsx(self, report: dict[str, object]) -> Path:
+        review_report_id = str(report.get("review_report_id") or "latest")
+        path = self.settings.exports_dir / f"model_review_{review_report_id}.xlsx"
+        sheets = {
+            "Summary": [["metric", "value"], *[[key, self._cell_value(value)] for key, value in dict(report.get("summary") or {}).items()]],
+            "Readiness": [
+                ["key", "value"],
+                ["readiness_status", report.get("readiness_status")],
+                ["model_version", report.get("model_version")],
+                ["window_set_id", report.get("window_set_id")],
+                ["model_activation_unchanged", True],
+            ],
+            "Readiness Reasons": [["reason"], *[[reason] for reason in list(report.get("readiness_reasons") or [])]],
+            "Unresolved Warnings": [["warning"], *[[warning] for warning in list(report.get("unresolved_warnings") or [])]],
+            "Validation Reports": self._dict_table(report.get("validation_reports")),
+            "Calibration Audits": self._dict_table(report.get("calibration_audits")),
+            "Drift Reports": self._dict_table(report.get("drift_reports")),
+            "Model Summary": [["key", "value"], *[[key, self._cell_value(value)] for key, value in dict(report.get("model_summary") or {}).items()]],
+        }
+        self._write_workbook(path, sheets)
+        return path
+
+    def export_model_review_json(self, report: dict[str, object]) -> Path:
+        review_report_id = str(report.get("review_report_id") or "latest")
+        path = self.settings.exports_dir / f"model_review_{review_report_id}.json"
+        path.write_text(json.dumps(report, indent=2, default=str, allow_nan=False), encoding="utf-8")
+        return path
+
     def _signal_row(self, signal: Signal) -> dict[str, object]:
         payload = signal.model_dump(mode="json")
         payload["side"] = signal.side.value
@@ -639,6 +775,40 @@ class ExportService:
             "fragility_flag_rate": metrics.get("fragility_flag_rate"),
         }
         return {column: row.get(column) for column in CALIBRATION_BIN_COLUMNS}
+
+    def _replay_window_result_row(self, result: dict[str, object]) -> dict[str, object]:
+        metrics = dict(result.get("metrics") or {})
+        return {
+            "window_result_id": result.get("window_result_id"),
+            "window_set_id": result.get("window_set_id"),
+            "window_index": result.get("window_index"),
+            "replay_start": result.get("replay_start"),
+            "replay_end": result.get("replay_end"),
+            "counterfactual_replay_run_id": result.get("counterfactual_replay_run_id"),
+            "portfolio_replay_run_id": result.get("portfolio_replay_run_id"),
+            "status": result.get("status"),
+            "total_trades": metrics.get("total_trades"),
+            "average_r": metrics.get("average_r"),
+            "profit_factor": metrics.get("profit_factor"),
+            "max_drawdown_r": metrics.get("max_drawdown_r"),
+            "warning_count": len(list(result.get("warnings") or [])),
+            "replay_run_ids": list(result.get("replay_run_ids") or []),
+        }
+
+    def _drift_window_row(self, drift_report_id: str, window: dict[str, object]) -> dict[str, object]:
+        metrics = dict(window.get("metrics") or {})
+        flags = list(window.get("flags") or [])
+        return {
+            "drift_report_id": drift_report_id,
+            "window_result_id": window.get("window_result_id"),
+            "window_index": window.get("window_index"),
+            "severity": window.get("severity"),
+            "rank_correlation_score": metrics.get("rank_correlation_score"),
+            "monotonicity_pass": metrics.get("monotonicity_pass"),
+            "high_grade_average_r": metrics.get("high_grade_average_r"),
+            "take_minus_watch_average_r": metrics.get("take_minus_watch_average_r"),
+            "flags": " | ".join(str(flag) for flag in flags),
+        }
 
     def _replay_workbook_sheets(
         self,

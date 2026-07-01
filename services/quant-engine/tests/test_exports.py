@@ -347,3 +347,95 @@ def test_replay_aware_exports_include_required_workbook_sheets(tmp_path, monkeyp
         "Rejection Reasons",
         "Config",
     } <= _sheet_names(validation_xlsx)
+
+
+def test_phase10_exports_include_window_drift_and_review_sheets(tmp_path, monkeypatch) -> None:
+    service = ExportService()
+    monkeypatch.setattr(service.settings, "exports_dir", tmp_path)
+    window_set = {
+        "window_set_id": "window-export-test",
+        "window_mode": "custom",
+        "symbols": ["AAPL"],
+        "intervals": ["1min"],
+        "summary": {"window_count": 1, "completed_window_count": 1},
+        "generated_windows": [
+            {
+                "window_index": 1,
+                "replay_start": datetime(2026, 6, 1, 13, 30, tzinfo=UTC).isoformat(),
+                "replay_end": datetime(2026, 6, 1, 14, 0, tzinfo=UTC).isoformat(),
+            }
+        ],
+        "warnings": [],
+    }
+    window_results = [
+        {
+            "window_result_id": "window-result-export-test",
+            "window_set_id": "window-export-test",
+            "window_index": 1,
+            "replay_start": datetime(2026, 6, 1, 13, 30, tzinfo=UTC).isoformat(),
+            "replay_end": datetime(2026, 6, 1, 14, 0, tzinfo=UTC).isoformat(),
+            "replay_run_ids": ["replay-export-test"],
+            "portfolio_replay_run_id": "replay-export-test",
+            "status": "completed",
+            "metrics": {"total_trades": 4, "average_r": 0.25, "profit_factor": 1.4, "max_drawdown_r": -1.0},
+            "warnings": [],
+        }
+    ]
+    drift = {
+        "drift_report_id": "drift-export-test",
+        "model_version": "model-export-test",
+        "summary": {"severity": "WATCH", "diagnostic_only": True},
+        "drift_flags": ["insufficient_history_for_drift"],
+        "score_bin_drift": {"75-100": {"average_r_delta": -0.1}},
+        "grade_bin_drift": {"A": {"average_r_delta": -0.1}},
+        "action_bin_drift": {"TAKE": {"average_r_delta": -0.1}},
+        "stability_metrics": {"rank_correlation_latest": 0.4},
+        "warnings": ["diagnostic only"],
+        "config": {"minimum_recent_high_grade_samples": 5},
+    }
+    drift_windows = [
+        {
+            "drift_report_id": "drift-export-test",
+            "window_result_id": "window-result-export-test",
+            "window_index": 1,
+            "severity": "WATCH",
+            "metrics": {
+                "rank_correlation_score": 0.4,
+                "monotonicity_pass": True,
+                "high_grade_average_r": 0.2,
+                "take_minus_watch_average_r": 0.1,
+            },
+            "flags": ["insufficient_history_for_drift"],
+        }
+    ]
+    review = {
+        "review_report_id": "review-export-test",
+        "model_version": "model-export-test",
+        "window_set_id": "window-export-test",
+        "summary": {"readiness_status": "WATCH", "model_activation_unchanged": True},
+        "readiness_status": "WATCH",
+        "readiness_reasons": ["calibration_drift_watch"],
+        "unresolved_warnings": ["insufficient_history_for_drift"],
+        "validation_reports": [],
+        "calibration_audits": [],
+        "drift_reports": [drift],
+        "model_summary": {"model_type": "replay_aware_baseline"},
+    }
+
+    window_xlsx = service.export_replay_window_set_xlsx(window_set, window_results)
+    drift_xlsx = service.export_calibration_drift_xlsx(drift, drift_windows)
+    drift_json = service.export_calibration_drift_json(drift)
+    drift_windows_csv = service.export_calibration_drift_windows_csv("drift-export-test", drift_windows)
+    drift_windows_xlsx = service.export_calibration_drift_windows_xlsx("drift-export-test", drift_windows)
+    review_xlsx = service.export_model_review_xlsx(review)
+    review_json = service.export_model_review_json(review)
+
+    assert {"Summary", "Generated Windows", "Window Results", "Config"} <= _sheet_names(window_xlsx)
+    assert {"Summary", "Drift Flags", "Window Metrics", "Stability"} <= _sheet_names(drift_xlsx)
+    assert json.loads(drift_json.read_text(encoding="utf-8"))["drift_report_id"] == "drift-export-test"
+    with drift_windows_csv.open(newline="", encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+    assert rows[0]["window_result_id"] == "window-result-export-test"
+    assert {"Drift Windows"} <= _sheet_names(drift_windows_xlsx)
+    assert {"Summary", "Readiness", "Readiness Reasons", "Unresolved Warnings"} <= _sheet_names(review_xlsx)
+    assert json.loads(review_json.read_text(encoding="utf-8"))["review_report_id"] == "review-export-test"

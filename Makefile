@@ -7,7 +7,7 @@ LOCAL_POSTGRES_HOST ?= localhost
 LOCAL_POSTGRES_PORT ?= 15432
 LOCAL_POSTGRES_DB ?= adaptive_market_decoder
 
-.PHONY: help doctor setup setup-backend require-backend-venv quant-test backend-test backend-lint backend-typecheck api-smoke api-smoke-sqlite api-smoke-postgres repository-parity-test replay-test replay-sensitivity-test export-test fmp-smoke dev api-dev web-dev db-up db-down db-migrate db-inspect db-diagnostics db-reset-dev ingest features labels train validate backtest scanner export test lint typecheck
+.PHONY: help doctor setup setup-backend require-backend-venv quant-test backend-test backend-lint backend-typecheck api-smoke api-smoke-sqlite api-smoke-postgres repository-parity-test replay-test replay-sensitivity-test replay-window-test model-review-test export-test fmp-smoke dev api-dev web-dev db-up db-down db-migrate db-inspect db-diagnostics db-query-diagnostics db-reset-dev ingest features labels train validate backtest scanner export test lint typecheck
 
 help:
 	@printf "Adaptive Market Decoder commands\n\n"
@@ -24,6 +24,7 @@ help:
 	@printf "  make db-migrate          Run Alembic migrations\n"
 	@printf "  make db-inspect          Inspect migrated Postgres/Timescale schema\n"
 	@printf "  make db-diagnostics      Print read-only Postgres replay/sensitivity diagnostics\n"
+	@printf "  make db-query-diagnostics Print read-only Postgres replay/window/model review diagnostics\n"
 	@printf "  make db-reset-dev        DEV ONLY: delete local database volumes, restart, and migrate\n\n"
 	@printf "Quality:\n"
 	@printf "  make quant-test          Run pure quant tests, with python3 fallback when venv is absent\n"
@@ -36,6 +37,8 @@ help:
 	@printf "  make repository-parity-test Run SQLite/Postgres repository parity tests\n"
 	@printf "  make replay-test        Run candidate-to-trade replay simulator tests\n"
 	@printf "  make replay-sensitivity-test Run replay audit and sensitivity tests\n"
+	@printf "  make replay-window-test Run multi-window replay orchestration tests\n"
+	@printf "  make model-review-test  Run calibration drift and model review tests\n"
 	@printf "  make export-test        Run export workbook/CSV tests\n"
 	@printf "  make fmp-smoke           Run optional live FMP REST smoke if FMP_API_KEY is configured\n"
 	@printf "  make test lint typecheck Run backend and frontend quality gates\n"
@@ -112,6 +115,12 @@ replay-test: require-backend-venv
 replay-sensitivity-test: require-backend-venv
 	cd $(SERVICE_DIR) && PYTHONPATH=. .venv/bin/python -m pytest tests/quant/test_replay_sensitivity.py
 
+replay-window-test: require-backend-venv
+	cd $(SERVICE_DIR) && PYTHONPATH=. .venv/bin/python -m pytest tests/quant/test_phase10_orchestration_drift_review.py -k "window or orchestration"
+
+model-review-test: require-backend-venv
+	cd $(SERVICE_DIR) && PYTHONPATH=. .venv/bin/python -m pytest tests/quant/test_phase10_orchestration_drift_review.py -k "drift or review or quality"
+
 export-test: require-backend-venv
 	cd $(SERVICE_DIR) && PYTHONPATH=. .venv/bin/python -m pytest tests/test_exports.py
 
@@ -142,6 +151,8 @@ db-inspect: require-backend-venv
 
 db-diagnostics: require-backend-venv
 	PYTHONPATH=$(SERVICE_DIR) $(SERVICE_DIR)/.venv/bin/python scripts/db_query_diagnostics.py
+
+db-query-diagnostics: db-diagnostics
 
 db-reset-dev:
 	@printf "\nDEV ONLY: this deletes local Postgres/Redis containers and named volumes for this compose project.\n"

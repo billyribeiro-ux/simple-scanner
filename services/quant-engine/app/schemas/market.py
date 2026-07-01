@@ -288,6 +288,58 @@ class ModelComparisonRequest(BaseModel):
     comparison_window: dict[str, Any] | None = None
 
 
+class ReplayWindowSetRequest(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    symbols: list[str] | None = None
+    intervals: list[Literal["1min", "5min", "15min"]] = ["1min"]
+    setup_types: list[str] = Field(default_factory=list)
+    start: datetime | None = None
+    end: datetime | None = None
+    window_mode: Literal["daily", "rolling", "anchored", "custom"] = "daily"
+    window_size_days: int | None = None
+    step_days: int | None = None
+    train_size_days: int | None = None
+    validation_size_days: int | None = None
+    min_training_days: int | None = None
+    embargo_minutes: int = 0
+    session: str = "rth"
+    windows: list[dict[str, Any]] | None = None
+    replay_config: dict[str, Any] = Field(default_factory=dict)
+    sensitivity_config: dict[str, Any] = Field(default_factory=dict)
+    validation_config: dict[str, Any] = Field(default_factory=dict)
+    model_version: str | None = None
+    run_immediately: bool = False
+    allow_large_window_count: bool = False
+    max_windows: int = 50
+
+
+class ReplayWindowRunRequest(BaseModel):
+    rerun: bool = False
+    run_replay: bool = True
+    run_calibration: bool = False
+
+
+class CalibrationDriftRequest(BaseModel):
+    calibration_audit_ids: list[str] | None = None
+    window_set_id: str | None = None
+    window_result_ids: list[str] | None = None
+    replay_run_ids: list[str] | None = None
+    minimum_recent_high_grade_samples: int = 5
+    rank_correlation_drop_threshold: float = 0.10
+    limit: int = 20
+
+
+class ModelReviewRequest(BaseModel):
+    validation_report_ids: list[str] | None = None
+    calibration_audit_ids: list[str] | None = None
+    drift_report_ids: list[str] | None = None
+    sensitivity_run_ids: list[str] | None = None
+    comparison_ids: list[str] | None = None
+    window_set_id: str | None = None
+    calibration_required: bool = False
+
+
 class ScoreCandidatesRequest(BaseModel):
     candidate_ids: list[str] | None = None
     candidates: list[dict[str, Any]] | None = None
