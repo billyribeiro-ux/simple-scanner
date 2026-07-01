@@ -25,6 +25,12 @@ class SignalEngine:
         model: dict[str, Any],
         confidence_threshold: float = 0.70,
     ) -> Signal:
+        features = dict(features)
+        features.setdefault("symbol", latest_bar.symbol)
+        features.setdefault("interval", latest_bar.interval)
+        features.setdefault("timestamp_utc", latest_bar.timestamp_utc)
+        features.setdefault("timestamp_et", latest_bar.timestamp_et)
+        features.setdefault("session_date", latest_bar.timestamp_et.date())
         side, setup_type, reasons = self.rules.detect(features)
         market_regime = str(features.get("market_regime") or "mixed_uncertain")
         ticker_regime = str(features.get("ticker_regime") or self.regimes.classify_ticker(features))

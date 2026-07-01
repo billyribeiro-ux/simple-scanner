@@ -4,6 +4,7 @@ from datetime import date, datetime
 from typing import Any
 
 from app.quant.types import CandidateSignal
+from app.utils.time import UTC
 
 
 LONG = "LONG"
@@ -204,13 +205,20 @@ class CandidateSignalEngine:
     ) -> CandidateSignal:
         timestamp_utc = feature.get("timestamp_utc")
         if not isinstance(timestamp_utc, datetime):
-            timestamp_utc = datetime.fromisoformat(str(feature["timestamp"]))
+            timestamp_value = feature.get("timestamp")
+            timestamp_utc = (
+                datetime.fromisoformat(str(timestamp_value))
+                if timestamp_value is not None
+                else datetime.now(UTC)
+            )
         timestamp_et = feature.get("timestamp_et")
         if not isinstance(timestamp_et, datetime):
             timestamp_et = timestamp_utc
         session_date_value = feature.get("session_date")
         if isinstance(session_date_value, date):
             session_date = session_date_value
+        elif session_date_value is None:
+            session_date = timestamp_et.date()
         else:
             session_date = date.fromisoformat(str(session_date_value))
         warnings = tuple(str(flag) for flag in feature.get("data_quality_flags", []) or [])

@@ -7,6 +7,8 @@ from zoneinfo import ZoneInfo
 
 from app.config import get_settings
 from app.data.fmp import FMPMarketDataProvider
+from app.data.symbols import normalize_symbols
+from app.db.repositories import get_repository_registry
 from app.features.engine import FeatureEngine
 from app.models.engine import ModelEngine
 from app.regimes.classifier import RegimeClassifier
@@ -26,6 +28,7 @@ class ScannerState:
         self.minimum_context_bars = 30
         self._task: asyncio.Task[None] | None = None
         self._queue: asyncio.Queue[Signal] | None = None
+        self.scanner_run_id: str | None = None
 
     def status(self) -> dict[str, object]:
         return {
@@ -34,15 +37,25 @@ class ScannerState:
             "latest_count": len(self.latest_signals),
             "last_error": self.last_error,
             "context_symbols": sorted({key[0] for key in self.context_bars}),
+            "scanner_run_id": self.scanner_run_id,
         }
 
     async def start(self, symbols: list[str] | None = None, confidence_threshold: float | None = None) -> None:
         if self.running:
             return
+        settings = get_settings()
+        selected = normalize_symbols(symbols or settings.symbol_list)
+        model = get_repository_registry().active_models.get_active() or ModelEngine().load()
+        threshold = confidence_threshold or settings.min_confidence
         self.running = True
         self.started_at = datetime.now(UTC)
         self._queue = asyncio.Queue(maxsize=500)
-        self._task = asyncio.create_task(self._run(symbols, confidence_threshold))
+        self.scanner_run_id = get_repository_registry().scanner_runs.start(
+            selected,
+            threshold,
+            str(model.get("model_version", "untrained-baseline")),
+        )
+        self._task = asyncio.create_task(self._run(selected, threshold, model))
 
     async def stop(self) -> None:
         self.running = False
@@ -52,6 +65,13 @@ class ScannerState:
                 await self._task
             except asyncio.CancelledError:
                 pass
+        if self.scanner_run_id:
+            get_repository_registry().scanner_runs.finish(
+                self.scanner_run_id,
+                status="stopped",
+                latest_error=self.last_error,
+                stats={"latest_count": len(self.latest_signals)},
+            )
 
     async def stream(self):
         while True:
@@ -60,27 +80,47 @@ class ScannerState:
             signal = await self._queue.get()
             yield signal
 
-    async def _run(self, symbols: list[str] | None, confidence_threshold: float | None) -> None:
+    async def _run(self, symbols: list[str] | None, confidence_threshold: float | None, model: dict[str, Any] | None = None) -> None:
         settings = get_settings()
         provider = FMPMarketDataProvider(settings)
-        model = ModelEngine().load()
         selected = symbols or settings.symbol_list
         threshold = confidence_threshold or settings.min_confidence
         if not settings.fmp_api_key:
             self.last_error = "FMP_API_KEY is not configured; scanner requires a provider for live quotes"
             self.running = False
+            if self.scanner_run_id:
+                get_repository_registry().scanner_runs.finish(
+                    self.scanner_run_id,
+                    status="error",
+                    latest_error=self.last_error,
+                )
             return
         while self.running:
             try:
                 quotes = await provider.get_batch_quotes(selected)
+                get_repository_registry().provider_requests.record(
+                    provider="fmp",
+                    endpoint="batch-quote",
+                    status="ok",
+                    row_count=len(quotes),
+                    metadata={"symbols": selected},
+                )
                 for quote in quotes:
                     signal = await self.score_quote(provider, quote, model, threshold)
                     self.latest_signals = [signal, *self.latest_signals][:250]
+                    get_repository_registry().live_signals.upsert_many([signal], scanner_run_id=self.scanner_run_id)
                     if self._queue is not None and not self._queue.full():
                         await self._queue.put(signal)
                 await asyncio.sleep(settings.rest_poll_seconds)
             except Exception as exc:  # pragma: no cover - live loop behavior
                 self.last_error = str(exc)
+                get_repository_registry().provider_requests.record(
+                    provider="fmp",
+                    endpoint="batch-quote",
+                    status="error",
+                    error_message=str(exc),
+                    metadata={"symbols": selected},
+                )
                 await asyncio.sleep(settings.rest_poll_seconds)
 
     async def score_quote(
@@ -117,7 +157,22 @@ class ScannerState:
         if len(existing) >= self.minimum_context_bars:
             return
         start = now - timedelta(days=max(self.context_lookback_sessions + 2, 7))
+        if self.scanner_run_id is not None:
+            persisted = get_repository_registry().bars.query(symbols=[symbol], intervals=["1min"], start=start, end=now)
+            if len(persisted) >= self.minimum_context_bars:
+                self.context_bars[key] = sorted(persisted, key=lambda bar: bar.timestamp_utc)[-2000:]
+                return
         bars = await provider.get_historical_bars(symbol, "1min", start, now)
+        if self.scanner_run_id is not None:
+            get_repository_registry().bars.upsert_many(bars)
+            get_repository_registry().provider_requests.record(
+                provider="fmp",
+                endpoint="historical-chart/1min",
+                status="ok",
+                symbol=symbol,
+                interval="1min",
+                row_count=len(bars),
+            )
         self.context_bars[key] = sorted(bars, key=lambda bar: bar.timestamp_utc)[-2000:]
 
     def _quote_to_bar(self, quote: Quote, timestamp: datetime) -> Bar:
