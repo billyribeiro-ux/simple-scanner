@@ -47,16 +47,36 @@ def upgrade() -> None:
         "features",
         sa.Column("id", sa.BigInteger(), primary_key=True),
         sa.Column("symbol", sa.String(length=16), nullable=False, index=True),
+        sa.Column("interval", sa.String(length=8), nullable=False, index=True),
         sa.Column("timestamp_utc", sa.DateTime(timezone=True), nullable=False, index=True),
-        sa.Column("feature_set_version", sa.String(length=32), nullable=False),
+        sa.Column("timestamp_et", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("session_date", sa.Date(), nullable=False, index=True),
+        sa.Column("feature_set_version", sa.String(length=64), nullable=False),
+        sa.Column("data_quality_flags", sa.JSON(), nullable=False, server_default="[]"),
         sa.Column("payload", sa.JSON(), nullable=False),
+    )
+    op.create_index(
+        "uq_features_symbol_interval_ts_version",
+        "features",
+        ["symbol", "interval", "timestamp_utc", "feature_set_version"],
+        unique=True,
     )
     op.create_table(
         "labels",
         sa.Column("label_id", sa.String(length=64), primary_key=True),
         sa.Column("symbol", sa.String(length=16), nullable=False, index=True),
+        sa.Column("interval", sa.String(length=8), nullable=False, index=True),
         sa.Column("timestamp_utc", sa.DateTime(timezone=True), nullable=False, index=True),
         sa.Column("side", sa.String(length=16), nullable=False),
+        sa.Column("setup_type", sa.String(length=128), nullable=False, index=True),
+        sa.Column("label_config_version", sa.String(length=64), nullable=False),
+        sa.Column("entry_price", sa.Numeric(18, 6), nullable=False),
+        sa.Column("stop_price", sa.Numeric(18, 6), nullable=False),
+        sa.Column("target_1", sa.Numeric(18, 6), nullable=False),
+        sa.Column("target_2", sa.Numeric(18, 6), nullable=False),
+        sa.Column("target_3", sa.Numeric(18, 6), nullable=False),
+        sa.Column("realized_r", sa.Numeric(18, 6), nullable=False),
+        sa.Column("outcome", sa.String(length=16), nullable=False),
         sa.Column("payload", sa.JSON(), nullable=False),
     )
     for table_name in [

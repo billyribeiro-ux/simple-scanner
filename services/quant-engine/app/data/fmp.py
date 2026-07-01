@@ -2,10 +2,15 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime
+from datetime import datetime
+
+from app.utils.time import UTC
 from zoneinfo import ZoneInfo
 
-import httpx
+try:
+    import httpx
+except ModuleNotFoundError:  # pragma: no cover - compatibility path for mocked pure tests
+    httpx = None
 
 from app.config import Settings, get_settings
 from app.data.provider import MarketDataProvider
@@ -35,6 +40,8 @@ class FMPClient:
             try:
                 async with self._lock:
                     self._request_count += 1
+                if httpx is None:
+                    raise RuntimeError("httpx is not installed; install backend dependencies before live FMP calls")
                 async with httpx.AsyncClient(timeout=self.settings.request_timeout_seconds) as client:
                     response = await client.get(url, params=params)
                 response.raise_for_status()
@@ -44,7 +51,7 @@ class FMPClient:
                 if attempt >= self.settings.max_retries:
                     break
                 await asyncio.sleep(min(2.0**attempt, 8.0))
-        safe_url = redact_url(str(httpx.URL(url, params=params)))
+        safe_url = redact_url(str(httpx.URL(url, params=params)) if httpx is not None else url)
         raise RuntimeError(f"FMP request failed after retries: {safe_url}") from last_error
 
 
@@ -109,6 +116,19 @@ class FMPMarketDataProvider(MarketDataProvider):
         )
         rows = payload if isinstance(payload, list) else []
         bars = [self._bar_from_row(symbol, interval, row) for row in rows if isinstance(row, dict)]
+        return sorted(bars, key=lambda bar: bar.timestamp_utc)
+
+    async def get_daily_bars(self, symbol: str, start: datetime, end: datetime) -> list[Bar]:
+        symbol = normalize_symbol(symbol)
+        payload = await self.client.get(
+            "historical-price-eod/full",
+            {"symbol": symbol, "from": start.date().isoformat(), "to": end.date().isoformat()},
+        )
+        if isinstance(payload, dict):
+            rows = payload.get("historical") or payload.get("data") or []
+        else:
+            rows = payload if isinstance(payload, list) else []
+        bars = [self._bar_from_row(symbol, "1day", row) for row in rows if isinstance(row, dict)]
         return sorted(bars, key=lambda bar: bar.timestamp_utc)
 
     async def stream_quotes(self, symbols: list[str]) -> AsyncIterator[Quote]:
