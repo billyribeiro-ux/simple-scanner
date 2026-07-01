@@ -35,7 +35,8 @@ def run_migrations_online() -> None:
     with connectable.connect() as connection:
         context.configure(connection=connection, target_metadata=target_metadata)
         with context.begin_transaction():
-            connection.exec_driver_sql("CREATE EXTENSION IF NOT EXISTS timescaledb CASCADE")
+            if connection.dialect.name == "postgresql":
+                connection.exec_driver_sql("CREATE EXTENSION IF NOT EXISTS timescaledb CASCADE")
             context.run_migrations()
 
 
