@@ -15,9 +15,13 @@ Adaptive Market Decoder is a local-first trading research and live signal platfo
 ```bash
 cp .env.example .env.local
 # edit .env.local and set FMP_API_KEY
+source "$HOME/.nvm/nvm.sh"
+nvm use 24.18.0
+COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack prepare pnpm@11.5.2 --activate
+make frontend-doctor
 make doctor
 make setup-backend
-corepack pnpm install
+COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm install --frozen-lockfile
 make db-up
 make db-migrate
 make db-inspect
@@ -47,8 +51,10 @@ corepack pnpm build
 corepack pnpm check
 corepack pnpm test
 corepack pnpm lint
+corepack pnpm --filter @amd/web test:e2e
 
 make doctor
+make frontend-doctor
 make setup-backend
 make quant-test
 make ingest
@@ -250,6 +256,21 @@ Phase 11 exports:
 - `POST /exports/champion-challenger-comparison.xlsx`
 
 Research cycles and proposals are diagnostic governance artifacts. They do not silently retrain, silently activate, route orders, call broker APIs, claim profitability, or make the system self-learning.
+
+## Phase 12 Operator Governance UI
+
+Phase 12 adds a thin SvelteKit operator control surface for the Phase 11 governance workflow:
+
+- `/operations`: backend health, persistence status, active model, latest cycle/proposal, stale windows, and data quality.
+- `/research`: safe governance hub with no direct activation control.
+- `/research/cycles`: list/create controlled research cycles with safe defaults, `APPL` to `AAPL` normalization, dry-run, run, and export actions.
+- `/research/cycles/{research_cycle_id}`: cycle detail, stale/data-quality state, artifacts, warnings, and export metadata.
+- `/research/proposals`: proposal list and export actions.
+- `/research/proposals/{proposal_id}`: evidence review, approve/reject actions, and explicit activation panel.
+- `/research/decision-ledger`: filterable append-only decision ledger.
+- `/research/status`: read-only research governance status.
+
+Approval and activation remain separate. The proposal detail page requires an approved proposal, an explicit checkbox, and the phrase `ACTIVATE SCANNER MODEL` before it sends `confirm_manual_activation=true`. This updates scanner model state only; it does not trade.
 
 ## Default Universe
 

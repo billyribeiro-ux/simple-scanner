@@ -11,7 +11,8 @@ Status date: 2026-07-01
 
 Local audit result:
 
-- Current Homebrew Node: `25.3.0`; on 2026-07-01 it aborts before Corepack can run because a `simdjson` dynamic library is missing. Install/use exact Node `24.18.0` before treating frontend gates as target-runtime verification.
+- Target Node available through NVM: `source "$HOME/.nvm/nvm.sh" && nvm use 24.18.0`.
+- Current Homebrew Node: `25.3.0`; on 2026-07-01 it aborts before Corepack can run because a `simdjson` dynamic library is missing. Do not use it for frontend acceptance.
 - Current Python: `python3.14 --version` reports `3.14.6`.
 - Backend venv: `services/quant-engine/.venv` exists and reports Python `3.14.6`.
 - Docker: reachable.
@@ -23,6 +24,10 @@ Local audit result:
 ## First Checks
 
 ```bash
+source "$HOME/.nvm/nvm.sh"
+nvm use 24.18.0
+COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack prepare pnpm@11.5.2 --activate
+make frontend-doctor
 make help
 make doctor
 ```
@@ -99,17 +104,7 @@ make db-inspect
 
 `make db-inspect` confirms the Alembic revision, expected table count, critical indexes, unique constraints, selected columns, JSON columns, and installed extensions. The current local result is:
 
-```text
-alembic_version=0004_phase7_audit
-tables=23
-missing_tables=none
-missing_indexes=none
-missing_constraints=none
-missing_columns=none
-missing_json_columns=none
-extensions=plpgsql,timescaledb
-timescale_hypertables=bars
-```
+On 2026-07-01 Phase 12 verification, Docker Desktop was not reachable from this shell and Postgres on `localhost:15432` refused connections. `docker compose config` passed, but `docker compose up -d postgres redis`, `docker compose ps`, `make db-migrate`, `make db-inspect`, and `make db-query-diagnostics` were blocked by the unavailable daemon/database.
 
 Read-only query diagnostics:
 
@@ -193,11 +188,18 @@ make replay-sensitivity-test
 Frontend gates:
 
 ```bash
-corepack pnpm check
-corepack pnpm build
-corepack pnpm test
-corepack pnpm lint
+source "$HOME/.nvm/nvm.sh"
+nvm use 24.18.0
+COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack prepare pnpm@11.5.2 --activate
+COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm install --frozen-lockfile
+COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm check
+COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm build
+COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm test
+COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm lint
+COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm --filter @amd/web test:e2e
 ```
+
+Root package scripts and Playwright's `webServer.command` call `corepack pnpm` internally so nested workspace commands stay on `pnpm@11.5.2`.
 
 Optional live FMP smoke:
 

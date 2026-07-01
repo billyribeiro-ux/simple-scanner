@@ -191,3 +191,22 @@ The persisted API smoke now covers data quality reporting, replay window set orc
 ## Phase 11 Coverage
 
 The persisted API smoke now covers controlled research cycle create/dry-run/run/list/get/artifacts, explicit champion/challenger evidence IDs, proposal approve/activate flow, blocked activation without manual confirmation, operations research status, decision-ledger reads, Phase 11 exports, and reopened repository reads for research cycles, cycle artifacts, comparisons, proposals, and ledger rows.
+
+## Phase 12 Frontend Smoke
+
+Phase 12 adds Playwright coverage in `apps/web/tests/governance.spec.ts`. These tests mock the FastAPI backend and require no FMP key. They verify:
+
+- `/operations` loads research status;
+- `/research/cycles` loads, accepts safe create defaults, normalizes `APPL` to `AAPL`, and calls dry-run;
+- `/research/proposals/{proposal_id}` loads, approval does not activate, and activation requires explicit phrase plus checkbox;
+- `/research/decision-ledger` loads and applies filters;
+- governance pages do not expose `FMP_API_KEY`, `DATABASE_URL`, or execution-control button/link labels.
+
+Run with:
+
+```bash
+source "$HOME/.nvm/nvm.sh"
+nvm use 24.18.0
+COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack prepare pnpm@11.5.2 --activate
+COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm --filter @amd/web test:e2e
+```

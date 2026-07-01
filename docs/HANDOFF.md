@@ -4,7 +4,7 @@ Report status date: 2026-07-01
 
 ## Executive State
 
-Phase 11 controlled research governance is complete in source. Python `3.14.6` is installed through Homebrew, `services/quant-engine/.venv` exists on Python `3.14.6`, Docker Postgres/TimescaleDB plus Redis are the required database runtime, Alembic upgrades the target database to `0008_phase11_research`, and the persisted FastAPI vertical-slice smoke test covers research cycles, champion/challenger comparison, model proposals, decision ledger, research status, and exports with a mocked provider and no live FMP key.
+Phase 12 target frontend runtime and thin operator governance UI are complete in source. Node `24.18.0` is available through NVM and all frontend target-runtime gates pass with pnpm `11.5.2` through Corepack. Python `3.14.6` is installed, `services/quant-engine/.venv` exists on Python `3.14.6`, and the backend SQLite/mocked-provider test gates pass. Docker/Postgres verification is blocked in this run because the local Docker socket is unavailable and Postgres on `localhost:15432` refuses connections.
 
 This remains a local-first scanner, research, validation, backtest, signal, and export platform only. It is not a broker, auto-trader, order router, self-learning system, or profitability system.
 
@@ -13,17 +13,22 @@ This remains a local-first scanner, research, validation, backtest, signal, and 
 - Node target: `24.18.0`
 - Package manager: `pnpm@11.5.2` through Corepack
 - Python target: `3.14.6`, documented as the latest stable Python release for this project as of June 30, 2026
-- Current local Node: `25.3.0`, which triggers an expected target warning
+- Target Node is available through NVM; use `source "$HOME/.nvm/nvm.sh" && nvm use 24.18.0`
+- Homebrew Node `25.3.0` exists but is not used for acceptance
 - Current local Python: `python3.14` and Homebrew `python3` report `3.14.6`
 - Backend venv: `services/quant-engine/.venv` on Python `3.14.6`
 
 ## Exact Setup Commands
 
 ```bash
+source "$HOME/.nvm/nvm.sh"
+nvm use 24.18.0
+COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack prepare pnpm@11.5.2 --activate
+make frontend-doctor
 make help
 make doctor
 make setup-backend
-corepack pnpm install
+COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm install --frozen-lockfile
 make db-up
 make db-migrate
 make db-inspect
@@ -51,10 +56,11 @@ make research-status-test
 make export-test
 make db-query-diagnostics
 make fmp-smoke
-corepack pnpm check
-corepack pnpm build
-corepack pnpm test
-corepack pnpm lint
+COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm check
+COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm build
+COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm test
+COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm lint
+COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm --filter @amd/web test:e2e
 python3 -m compileall services/quant-engine/app services/quant-engine/tests
 git diff --check
 ```
@@ -105,16 +111,55 @@ Safe status fields are exposed through `GET /health`, `GET /config`, and `make d
 - CSV/XLSX/JSON export generation from persisted signals, replay runs/trades, replay sensitivity runs, replay-aware model summaries, evidence cells, score audits, replay-aware validation reports, calibration reports, replay window sets, calibration drift reports, model review reports, and daily reviews, with file hashes and workbook sheets recorded.
 - CSV/XLSX/JSON export generation for research cycles, model proposals, and champion/challenger comparisons from persisted source IDs, with file hashes and workbook sheet names recorded.
 - Approval of a model proposal is separate from activation. Explicit proposal activation requires `confirm_manual_activation=true`, accepted validation, non-blocking readiness, and a proposal recommendation that is eligible for activation.
+- The Phase 12 operator UI enforces approval/activation separation with a disabled activation panel until the proposal is approved, the confirmation checkbox is checked, and `ACTIVATE SCANNER MODEL` is typed.
 - Activation guard requiring a persisted accepted validation report; replay-aware models specifically require accepted `replay_aware_walk_forward` validation.
 - Secret redaction behavior and absence of the supplied FMP key from repo files.
 
 ## What Is Not Safe To Trust Yet
 
 - Live FMP entitlement coverage. The live smoke was not run because `FMP_API_KEY` is not loaded into the process environment or ignored env files.
+- Current Postgres compose verification. Docker socket `/Users/billyribeiro/.docker/run/docker.sock` was unavailable in the Phase 12 run, so compose startup, migrations, schema inspection, and query diagnostics could not be re-run against Postgres.
 - Market replay as execution-grade reality. Replay is now auditable and sensitivity-tested, but fills are still simulated from OHLCV with conservative same-bar rules, configurable slippage/spread, and no true market depth.
 - Model calibration as a live probability. Calibration/drift reports are operational diagnostics, not calibrated probability estimates.
 - Live trading readiness. No broker execution or order routing exists.
 - Fully automated adaptation. Research cycles can compare and propose, but they do not silently activate models or mutate scanner behavior.
+
+## Phase 12 Operator UI
+
+Start the backend and frontend:
+
+```bash
+make api-dev
+source "$HOME/.nvm/nvm.sh"
+nvm use 24.18.0
+COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack prepare pnpm@11.5.2 --activate
+make web-dev
+```
+
+Open `http://localhost:5173`.
+
+Routes:
+
+- `/operations`: backend health, persistence, active model, latest cycle/proposal, stale windows, data quality, and warnings.
+- `/research`: safe governance hub.
+- `/research/cycles`: create, dry-run, run, and export research cycles. Defaults keep `refresh_data=false`, `allow_stale=false`, and `run_now=false`.
+- `/research/cycles/{research_cycle_id}`: inspect cycle summary, config hash, input fingerprint, artifacts, warnings, and export metadata.
+- `/research/proposals`: list proposals and export proposal reports.
+- `/research/proposals/{proposal_id}`: review evidence, approve, reject, and explicitly activate an approved scanner model.
+- `/research/decision-ledger`: filter by model version, proposal ID, research cycle ID, decision type, and time range.
+- `/research/status`: read-only governance status.
+
+Manual activation flow:
+
+1. Open `/research/proposals/{proposal_id}`.
+2. Review evidence, gates, and ledger history.
+3. Click `Approve proposal` if appropriate. This does not activate.
+4. In the explicit activation panel, check the manual confirmation box and type `ACTIVATE SCANNER MODEL`.
+5. Click `Activate approved scanner model`. The frontend sends `confirm_manual_activation=true`, and the backend guard can still block.
+
+What is safe to trust: UI route wiring, typed API client calls, no frontend secret exposure, approval-not-activation behavior, explicit activation confirmation, and mocked e2e coverage.
+
+What is not safe to trust: live FMP entitlement, Postgres verification in this run, or any assumption that UI approval guarantees backend activation.
 
 ## Phase 11 Research Cycle Operations
 
@@ -252,12 +297,12 @@ curl -s -X POST http://localhost:8000/exports/sensitivity-summary.xlsx \
 
 ## Current Blockers
 
-- Local Homebrew Node is `25.3.0`, while the project target is `24.18.0`, and this local Node currently aborts before Corepack can run because a `simdjson` dynamic library is missing. Fallback frontend checks passed under the bundled Codex Node `24.14.0`, but that is not the target runtime and is not an acceptance substitute for Node `24.18.0`.
+- Docker Desktop/daemon is not reachable from this shell. `docker compose up -d postgres redis`, `docker compose ps`, `make db-migrate`, `make db-inspect`, and `make db-query-diagnostics` are blocked until the Docker socket exists and Postgres is listening on `localhost:15432`.
 - Optional live FMP smoke requires `FMP_API_KEY` to be configured outside the committed repo.
 
 ## Exact Next Recommended Phase
 
-Phase 12 should focus on a thin operator UI for controlled research cycles, proposals, and decision-ledger review, plus optional queue/scheduler work for bounded daily cycle execution. Do not add broker execution, WebSocket scope, options data, self-learning language, or profitability claims.
+Phase 13 should add a bounded local operator runbook and optional non-autonomous scheduler for preparing daily research cycles, with queue/status visibility only. Do not add automatic activation, broker execution, WebSocket scope, options data, self-learning language, or profitability claims.
 
 ## Phase 8 Replay-Aware Model Selection Historical Notes
 

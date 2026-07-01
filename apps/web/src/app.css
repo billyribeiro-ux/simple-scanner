@@ -42,6 +42,15 @@ button {
   cursor: pointer;
 }
 
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+button svg {
+  pointer-events: none;
+}
+
 a {
   color: inherit;
   text-decoration: none;
@@ -101,11 +110,59 @@ a {
 }
 
 .field input,
-.field select {
+.field select,
+.field textarea {
   min-height: 38px;
   border: 1px solid var(--line);
   border-radius: 6px;
   background: #0c131a;
   color: var(--text);
   padding: 8px 10px;
+}
+
+.field textarea {
+  min-height: 82px;
+  resize: vertical;
+}
+
+.table-wrap {
+  width: 100%;
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+th,
+td {
+  border-bottom: 1px solid var(--line);
+  padding: 10px 8px;
+  text-align: left;
+  vertical-align: top;
+}
+
+th {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+td {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+}
+
+.link {
+  color: var(--blue);
 }

@@ -31,3 +31,7 @@ The persisted comparison stores champion metrics, challenger metrics, delta metr
 - A worse challenger can recommend `KEEP_CHAMPION`.
 
 Use `POST /exports/champion-challenger-comparison.xlsx` with `run_id` set to the comparison ID for the workbook report.
+
+## Operator UI
+
+Phase 12 surfaces comparison evidence through proposal detail pages rather than adding a separate comparison workbench. Operators review champion, challenger, delta, readiness, and gate summaries on `/research/proposals/{proposal_id}` before approving or rejecting a proposal. Comparison exports remain available from proposal/cycle context when the persisted comparison ID is known.

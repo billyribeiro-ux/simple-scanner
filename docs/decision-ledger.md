@@ -31,3 +31,7 @@ Supported filters include model version, proposal ID, research cycle ID, decisio
 ## Rules
 
 Normal operation appends rows and does not mutate old decisions. Ledger payloads include reason codes, evidence references, actor strings, previous/current model versions, and metadata. They must not include FMP keys, database passwords, full provider credentials, or frontend-exposed secrets.
+
+## Operator UI
+
+Phase 12 exposes the ledger at `/research/decision-ledger`. Filters include model version, proposal ID, research cycle ID, decision type, start timestamp, and end timestamp. Rows link back to proposal and cycle detail pages when IDs are present and show reason codes, evidence refs, actor, status, and timestamp.

@@ -4,7 +4,12 @@
 
   const links = [
     ['/', 'Dashboard'],
-    ['/research', 'Research'],
+    ['/operations', 'Operations'],
+    ['/research', 'Research Hub'],
+    ['/research/cycles', 'Cycles'],
+    ['/research/proposals', 'Proposals'],
+    ['/research/decision-ledger', 'Decision Ledger'],
+    ['/research/status', 'Research Status'],
     ['/backtest', 'Backtest'],
     ['/scanner', 'Scanner'],
     ['/exports', 'Exports'],
@@ -97,7 +102,7 @@
     }
 
     nav {
-      grid-template-columns: repeat(3, minmax(0, 1fr));
+      grid-template-columns: repeat(2, minmax(0, 1fr));
     }
   }
 </style>

@@ -1,4 +1,15 @@
-export type { AppConfig, Signal } from '@amd/shared';
+export type {
+  ActivationResponse,
+  AppConfig,
+  DecisionLedgerEvent,
+  ExportMetadata,
+  HealthStatus,
+  ModelProposal,
+  ResearchCycle,
+  ResearchCycleArtifact,
+  ResearchStatus,
+  Signal,
+} from '@amd/shared';
 
 export type ProviderHealth = {
   status: string;

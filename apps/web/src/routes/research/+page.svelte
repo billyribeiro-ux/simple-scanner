@@ -1,77 +1,54 @@
 <script lang="ts">
   import BrainIcon from 'phosphor-svelte/lib/BrainIcon';
-
-  let symbols = $state('AMZN,AAPL,TSLA,SPY,QQQ,IWM,NVDA,GOOGL,BABA,SHOP');
-  let start = $state('2026-01-01');
-  let end = $state('2026-06-30');
-  let interval1 = $state(true);
-  let interval5 = $state(true);
-  let interval15 = $state(true);
-  let maxHold = $state(60);
-  let targetR = $state(1.5);
-  let status = $state('Ready');
-
-  function mark(action: string) {
-    status = `${action} requested. Backend route is wired for local execution.`;
-  }
+  import ShieldCheckIcon from 'phosphor-svelte/lib/ShieldCheckIcon';
 </script>
 
 <svelte:head>
-  <title>Research | Adaptive Market Decoder</title>
+  <title>Research Governance | Adaptive Market Decoder</title>
 </svelte:head>
 
 <div class="page">
   <header>
     <BrainIcon size={28} weight="duotone" />
     <div>
-      <h1>Training and research</h1>
-      <p>{status}</p>
+      <h1>Research governance</h1>
+      <p>Controlled cycles, model proposals, and explicit scanner model activation review.</p>
     </div>
   </header>
 
-  <section class="panel form-grid">
-    <label class="field">Symbols <input bind:value={symbols} /></label>
-    <label class="field">Training start <input type="date" bind:value={start} /></label>
-    <label class="field">Training end <input type="date" bind:value={end} /></label>
-    <label class="field"
-      >Max hold minutes <input type="number" bind:value={maxHold} min="5" max="240" /></label
-    >
-    <label class="field"
-      >Target R <input type="number" bind:value={targetR} min="0.5" max="5" step="0.1" /></label
-    >
-    <div class="field">
-      Intervals
-      <div class="checks">
-        <label><input type="checkbox" bind:checked={interval1} /> 1m</label>
-        <label><input type="checkbox" bind:checked={interval5} /> 5m</label>
-        <label><input type="checkbox" bind:checked={interval15} /> 15m</label>
-      </div>
+  <section class="panel notice">
+    <ShieldCheckIcon size={22} weight="duotone" />
+    <div>
+      <strong>No broker execution</strong>
+      <span
+        >Approval and activation are separate steps. Activation updates the scanner model only.</span
+      >
     </div>
-  </section>
-
-  <section class="toolbar">
-    <button class="btn" onclick={() => mark('Feature build')}>Build Features</button>
-    <button class="btn" onclick={() => mark('Label build')}>Build Labels</button>
-    <button class="btn primary" onclick={() => mark('Model train')}>Train Model</button>
-    <button class="btn" onclick={() => mark('Validation')}>Validate</button>
-    <button class="btn" onclick={() => mark('Activation')}>Activate Model</button>
   </section>
 
   <section class="grid">
-    <div class="panel">
-      <strong>Chronological split</strong><span>No random shuffle across time.</span>
-    </div>
-    <div class="panel">
-      <strong>Leakage checks</strong><span>Labels use next-bar execution.</span>
-    </div>
-    <div class="panel">
-      <strong>Activation guard</strong><span>Models activate only after passing validation.</span>
-    </div>
+    <a class="panel link-card" href="/research/cycles">
+      <strong>Research cycles</strong>
+      <span>Create, dry-run, run, inspect, and export controlled research cycles.</span>
+    </a>
+    <a class="panel link-card" href="/research/proposals">
+      <strong>Model proposals</strong>
+      <span>Review champion/challenger evidence and gate results before any approval.</span>
+    </a>
+    <a class="panel link-card" href="/research/decision-ledger">
+      <strong>Decision ledger</strong>
+      <span>Inspect the append-only record of cycle, proposal, and activation decisions.</span>
+    </a>
+    <a class="panel link-card" href="/operations">
+      <strong>Operations status</strong>
+      <span>Read backend persistence, active model, stale window, and data quality status.</span>
+    </a>
   </section>
 </div>
 
 <style>
-  header {
+  header,
+  .notice {
     display: flex;
     align-items: center;
     gap: 12px;
@@ -87,21 +64,19 @@
     color: var(--muted);
   }
 
-  .form-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
-    gap: 14px;
-  }
-
-  .checks {
-    min-height: 38px;
-    display: flex;
-    align-items: center;
-    gap: 12px;
-  }
-
-  .panel strong,
-  .panel span {
+  .notice strong,
+  .notice span,
+  .link-card strong,
+  .link-card span {
     display: block;
+  }
+
+  .link-card {
+    min-height: 116px;
+  }
+
+  .link-card strong {
+    color: var(--text);
+    margin-bottom: 8px;
   }
 </style>

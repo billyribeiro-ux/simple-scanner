@@ -4,7 +4,33 @@ Status date: 2026-07-01
 
 ## Scope
 
-Phase 11 hardens replay-aware model selection with a controlled research cycle, champion/challenger comparison, model proposal lifecycle, decision ledger, operations research status, and export provenance. It does not add broker execution, order routing, options data, market internals, WebSockets, calibrated ML, self-learning behavior, or profitability claims.
+Phase 12 hardens replay-aware model selection operations with a target frontend runtime check and a thin operator UI for the Phase 11 controlled research cycle, champion/challenger comparison, model proposal lifecycle, decision ledger, operations research status, and export provenance. It does not add broker execution, order routing, options data, market internals, WebSockets, calibrated ML, self-learning behavior, or profitability claims.
+
+## Frontend Runtime
+
+Target frontend acceptance requires Node `24.18.0` and pnpm `11.5.2`.
+
+```bash
+source "$HOME/.nvm/nvm.sh"
+nvm use 24.18.0
+COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack prepare pnpm@11.5.2 --activate
+make frontend-doctor
+COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm check
+COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm build
+COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm test
+COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm lint
+COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm --filter @amd/web test:e2e
+```
+
+Root package scripts and Playwright web-server startup call `corepack pnpm` internally so nested commands stay on the pinned package manager.
+
+## Operator UI Guardrails
+
+- `/operations` and `/research/status` are read-only status surfaces.
+- `/research/cycles` creates/dry-runs/runs governance cycles but does not activate models.
+- `/research/proposals/{proposal_id}` keeps approval and activation separate.
+- The activation button is disabled until proposal status is `APPROVED_FOR_ACTIVATION`, the operator checks an explicit confirmation box, and the phrase `ACTIVATE SCANNER MODEL` is typed.
+- Frontend calls use `PUBLIC_API_BASE_URL` as the only public API override and never require provider or database secrets.
 
 ## Database Revision
 

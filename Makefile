@@ -7,12 +7,13 @@ LOCAL_POSTGRES_HOST ?= localhost
 LOCAL_POSTGRES_PORT ?= 15432
 LOCAL_POSTGRES_DB ?= adaptive_market_decoder
 
-.PHONY: help doctor setup setup-backend require-backend-venv quant-test backend-test backend-lint backend-typecheck api-smoke api-smoke-sqlite api-smoke-postgres repository-parity-test replay-test replay-sensitivity-test replay-window-test model-review-test research-cycle-test research-status-test export-test fmp-smoke dev api-dev web-dev db-up db-down db-migrate db-inspect db-diagnostics db-query-diagnostics db-reset-dev ingest features labels train validate backtest scanner export test lint typecheck
+.PHONY: help doctor frontend-doctor setup setup-backend require-backend-venv quant-test backend-test backend-lint backend-typecheck api-smoke api-smoke-sqlite api-smoke-postgres repository-parity-test replay-test replay-sensitivity-test replay-window-test model-review-test research-cycle-test research-status-test export-test fmp-smoke dev api-dev web-dev db-up db-down db-migrate db-inspect db-diagnostics db-query-diagnostics db-reset-dev ingest features labels train validate backtest scanner export test lint typecheck
 
 help:
 	@printf "Adaptive Market Decoder commands\n\n"
 	@printf "Runtime:\n"
 	@printf "  make doctor              Check Node 24.18.0, Python 3.14.6, venv, Docker, env, and backend tools\n"
+	@printf "  make frontend-doctor     Check Node 24.18.0, Corepack/pnpm, SvelteKit, TS strict, and frontend secret hygiene\n"
 	@printf "  make setup               Install frontend workspace and backend venv\n"
 	@printf "  make setup-backend       Create services/quant-engine/.venv with python3.14 and install [dev,ml]\n"
 	@printf "  make api-dev             Start FastAPI backend on :8000\n"
@@ -52,6 +53,9 @@ setup:
 
 doctor:
 	@./scripts/doctor.sh
+
+frontend-doctor:
+	@./scripts/frontend_doctor.sh
 
 setup-backend:
 	@if ! command -v $(PYTHON314) >/dev/null 2>&1; then \
