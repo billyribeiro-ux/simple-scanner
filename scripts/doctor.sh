@@ -103,7 +103,12 @@ PY
 from app.db.repositories import persistence_backend_info
 
 info = persistence_backend_info()
-print(f"{info['backend']} {info['runtime']} database_url_kind={info['database_url_kind']}")
+print(
+    f"{info['persistence_backend']} {info['runtime_mode']} "
+    f"database_url_kind={info['database_url_kind']} "
+    f"database_reachable={info['database_reachable']} "
+    f"fallback_enabled={info['fallback_enabled']}"
+)
 PY
 )"
   if [ -n "$persistence_backend" ]; then

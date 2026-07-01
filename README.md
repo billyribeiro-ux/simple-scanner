@@ -22,6 +22,8 @@ make db-up
 make db-migrate
 make db-inspect
 make api-smoke
+make api-smoke-postgres
+make repository-parity-test
 ```
 
 `make doctor` does not print secrets. It reports whether `FMP_API_KEY` and `DATABASE_URL` are present.
@@ -59,21 +61,30 @@ make scanner
 make export
 make db-inspect
 make api-smoke
+make api-smoke-sqlite
+make api-smoke-postgres
+make repository-parity-test
 make fmp-smoke
 make test
 ```
 
 `make quant-test` runs pure deterministic quant tests without FMP, Docker, Redis, Postgres, or internet. If the backend venv is missing, it falls back to `python3` for this pure test path only. Full backend runtime still targets Python `3.14.6`.
 
-`make api-smoke` runs a persisted FastAPI vertical slice with a mocked provider. It does not require FMP, internet, or secrets.
+`make api-smoke` runs the default SQLite persisted FastAPI vertical slice with a mocked provider. `make api-smoke-postgres` runs the same API workflow against the migrated local Postgres/TimescaleDB compose database. Neither smoke path requires FMP, internet, or secrets.
 
 `make fmp-smoke` is optional and runs live FMP REST checks only when `FMP_API_KEY` is configured. Otherwise it skips with a non-secret message.
 
 ## Persistence Contract
 
-FastAPI currently uses the SQLite repository backend by default at `data/local_repo.sqlite3`. `GET /health`, `GET /config`, and `make doctor` report the active persistence backend without printing secrets or connection strings.
+FastAPI selects the repository backend explicitly:
 
-PostgreSQL/TimescaleDB migrations are verified through Alembic on the local compose database mapped to host port `15432`, but the active API repository implementation is still SQLite-only. Postgres-backed repository runtime is the next major persistence task.
+- no `DATABASE_URL`: SQLite at `data/local_repo.sqlite3`, or `AMD_SQLITE_PATH` when set;
+- `sqlite:///...`: SQLite at the configured path;
+- `postgres://`, `postgresql://`, or `postgresql+...`: PostgreSQL repository runtime against the migrated schema;
+- failed Postgres initialization: fail loudly unless `AMD_ALLOW_SQLITE_FALLBACK=true`;
+- explicit fallback: SQLite with runtime mode `sqlite-fallback-from-postgres` and a non-secret fallback reason.
+
+`GET /health`, `GET /config`, and `make doctor` report safe fields such as `persistence_backend`, `runtime_mode`, `database_configured`, `database_reachable`, `fallback_enabled`, and `fallback_reason`. They do not print passwords, API keys, or full database URLs.
 
 ## Typical Workflow
 

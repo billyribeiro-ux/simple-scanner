@@ -1,23 +1,30 @@
 from __future__ import annotations
 
-import sqlite3
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+import pytest
 from fastapi.testclient import TestClient
 from openpyxl import load_workbook
+from sqlalchemy import create_engine, text
 
 from app.config import get_settings
 from app.data.symbols import normalize_symbol, normalize_symbols
-from app.db.repositories import get_repository_registry, reset_repository_registry
+from app.db.repositories import (
+    EXPECTED_TABLES,
+    _sync_postgres_url,
+    get_repository_registry,
+    reset_repository_registry,
+)
 from app.schemas.market import Bar, Quote
 from app.utils.time import UTC
 
 ET = ZoneInfo("America/New_York")
 SYNTHETIC_START_ET = datetime(2026, 6, 1, 9, 30, tzinfo=ET)
 TEST_FMP_SENTINEL = "test-only-fmp-key"
+DEFAULT_POSTGRES_URL = "postgresql+psycopg://amd:amd@localhost:15432/adaptive_market_decoder"
 
 
 def _synthetic_bars(symbol: str, interval: str, count: int = 120) -> list[Bar]:
@@ -109,11 +116,39 @@ def _sheet_names(path: str | Path) -> set[str]:
         workbook.close()
 
 
-def test_persisted_api_vertical_slice_survives_repository_reinitialization(tmp_path, monkeypatch) -> None:
+def _postgres_available(database_url: str) -> bool:
+    try:
+        engine = create_engine(_sync_postgres_url(database_url), future=True)
+        with engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
+        return True
+    except Exception:
+        return False
+
+
+def _clear_postgres_tables(repo) -> None:
+    tables = sorted(EXPECTED_TABLES - {"alembic_version"})
+    quoted = ", ".join(f'"{table}"' for table in tables)
+    with repo.store.engine.begin() as connection:
+        connection.execute(text(f"TRUNCATE TABLE {quoted} RESTART IDENTITY CASCADE"))
+
+
+def _run_persisted_api_vertical_slice(
+    tmp_path,
+    monkeypatch,
+    backend: str,
+    database_url: str | None = None,
+) -> None:
     db_path = tmp_path / "api-smoke.sqlite3"
     exports_dir = tmp_path / "exports"
     model_dir = tmp_path / "models"
     monkeypatch.setenv("AMD_SQLITE_PATH", str(db_path))
+    if backend == "postgresql":
+        monkeypatch.setenv("DATABASE_URL", database_url or DEFAULT_POSTGRES_URL)
+        monkeypatch.delenv("AMD_ALLOW_SQLITE_FALLBACK", raising=False)
+    else:
+        monkeypatch.delenv("DATABASE_URL", raising=False)
+        monkeypatch.delenv("AMD_ALLOW_SQLITE_FALLBACK", raising=False)
     monkeypatch.setenv("FMP_API_KEY", TEST_FMP_SENTINEL)
     monkeypatch.setenv("PUBLIC_DEFAULT_SYMBOLS", "AAPL,SPY,QQQ,NVDA")
 
@@ -131,18 +166,29 @@ def test_persisted_api_vertical_slice_survives_repository_reinitialization(tmp_p
     monkeypatch.setattr(routes_module, "FMPMarketDataProvider", FakeFMPProvider)
     monkeypatch.setattr(scanner_module, "FMPMarketDataProvider", FakeFMPProvider)
     _reset_scanner(routes_module)
+    repo = get_repository_registry()
+    if backend == "postgresql":
+        assert repo.info()["persistence_backend"] == "postgresql"
+        _clear_postgres_tables(repo)
+        assert not db_path.exists()
+    else:
+        assert repo.info()["persistence_backend"] == "sqlite"
 
     start = SYNTHETIC_START_ET.astimezone(UTC)
     end = (SYNTHETIC_START_ET + timedelta(minutes=119)).astimezone(UTC)
 
     with TestClient(app) as client:
         health = client.get("/health").json()
-        assert health["persistence"]["backend"] == "sqlite"
-        assert health["persistence"]["path"] == str(db_path)
+        assert health["persistence"]["persistence_backend"] == backend
+        assert health["persistence"]["database_reachable"] is True
+        if backend == "sqlite":
+            assert health["persistence"]["path"] == str(db_path)
+        else:
+            assert health["persistence"]["runtime_mode"] == "postgresql"
 
         config = client.get("/config").json()
         assert config["fmp_api_key_configured"] is True
-        assert config["persistence"]["database_url_kind"] == "unset"
+        assert config["persistence"]["database_url_kind"] == ("postgresql" if backend == "postgresql" else "unset")
 
         ingest = client.post(
             "/data/ingest",
@@ -252,9 +298,8 @@ def test_persisted_api_vertical_slice_survives_repository_reinitialization(tmp_p
         model_detail = client.get(f"/models/{replacement_version}").json()
         assert model_detail["model_version"] == replacement_version
 
-        with sqlite3.connect(db_path) as connection:
-            active_count = connection.execute("SELECT count(*) FROM active_models").fetchone()[0]
-        assert active_count == 1
+        active_model_runs = [model for model in repo.model_runs.list_all() if model.get("active")]
+        assert len(active_model_runs) == 1
 
         backtest = client.post(
             "/backtest/run",
@@ -313,7 +358,11 @@ def test_persisted_api_vertical_slice_survives_repository_reinitialization(tmp_p
 
     reset_repository_registry()
     reopened = get_repository_registry()
-    assert reopened.info()["path"] == str(db_path)
+    if backend == "sqlite":
+        assert reopened.info()["path"] == str(db_path)
+    else:
+        assert reopened.info()["persistence_backend"] == "postgresql"
+        assert not db_path.exists()
     assert len(reopened.bars.list_all()) == 480
     assert len(reopened.features.list_all()) == 480
     assert len(reopened.labels.list_all()) > 0
@@ -322,13 +371,32 @@ def test_persisted_api_vertical_slice_survives_repository_reinitialization(tmp_p
     assert len(reopened.live_signals.list_latest()) == len(live_signals)
     assert len(reopened.exports.list_all()) >= 6
     assert reopened.daily_reviews.get(datetime.now(UTC).date()) is not None
+    assert TEST_FMP_SENTINEL not in str(reopened.provider_requests.list_all())
 
-    for path in [
+    clean_paths = [
         csv_export["path"],
         xlsx_export["path"],
         backtest_export["path"],
         *daily_export["paths"],
         model_dir / "active_model.json",
-        db_path,
-    ]:
+    ]
+    if backend == "sqlite":
+        clean_paths.append(db_path)
+    for path in clean_paths:
         _assert_path_clean(path)
+
+
+def test_persisted_api_vertical_slice_sqlite(tmp_path, monkeypatch) -> None:
+    _run_persisted_api_vertical_slice(tmp_path, monkeypatch, backend="sqlite")
+
+
+def test_persisted_api_vertical_slice_postgres(tmp_path, monkeypatch) -> None:
+    database_url = DEFAULT_POSTGRES_URL
+    if not _postgres_available(database_url):
+        pytest.skip("local Postgres/TimescaleDB is not available for persisted API smoke")
+    _run_persisted_api_vertical_slice(
+        tmp_path,
+        monkeypatch,
+        backend="postgresql",
+        database_url=database_url,
+    )

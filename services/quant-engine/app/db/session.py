@@ -9,7 +9,7 @@ from app.config import get_settings
 
 def get_engine():
     settings = get_settings()
-    url = settings.database_url or "postgresql+asyncpg://amd:amd@localhost:5432/adaptive_market_decoder"
+    url = settings.database_url or "postgresql+asyncpg://amd:amd@localhost:15432/adaptive_market_decoder"
     return create_async_engine(url, future=True)
 
 

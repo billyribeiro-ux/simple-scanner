@@ -9,7 +9,11 @@ from fastapi.responses import StreamingResponse
 from app.config import get_settings
 from app.data.fmp import FMPMarketDataProvider
 from app.data.symbols import normalize_symbols
-from app.db.repositories import get_repository_registry
+from app.db.repositories import (
+    PersistenceConfigurationError,
+    get_repository_registry,
+    persistence_backend_info,
+)
 from app.jobs.scanner import scanner_state
 from app.models.engine import ModelEngine
 from app.schemas.market import (
@@ -47,25 +51,33 @@ def _request_date(request: ExportRequest | None) -> date | None:
 
 @router.get("/health")
 async def health() -> dict[str, object]:
-    repository = repos()
+    try:
+        persistence = repos().info()
+        status = "ok" if persistence.get("database_reachable") is not False else "degraded"
+    except PersistenceConfigurationError as exc:
+        persistence = exc.safe_info
+        status = "error"
     return {
-        "status": "ok",
+        "status": status,
         "time": datetime.now(UTC).isoformat(),
-        "persistence": repository.info(),
+        "persistence": persistence,
     }
 
 
 @router.get("/config")
 async def config() -> dict[str, object]:
     settings = get_settings()
-    repository = repos()
+    try:
+        persistence = repos().info()
+    except PersistenceConfigurationError:
+        persistence = persistence_backend_info(settings)
     return {
         "app_name": settings.app_name,
         "default_symbols": settings.symbol_list,
         "timezone": settings.timezone,
         "min_confidence": settings.min_confidence,
         "fmp_api_key_configured": bool(settings.fmp_api_key),
-        "persistence": repository.info(),
+        "persistence": persistence,
     }
 
 

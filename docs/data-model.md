@@ -1,6 +1,6 @@
 # Data Model
 
-Core storage is designed around PostgreSQL with TimescaleDB when available. If the Timescale extension is not available, the same tables function as plain PostgreSQL tables. Phase 4 verified the Alembic migration against local Postgres/TimescaleDB with revision `0001_initial`, 17 expected tables, and `timescaledb` installed. The active API repository backend remains the durable local SQLite implementation at `data/local_repo.sqlite3`.
+Core storage is designed around PostgreSQL with TimescaleDB when available. If the Timescale extension is not available, the same tables function as plain PostgreSQL tables. Phase 5 verifies Alembic revision `0002_phase5_indexes`, 17 expected tables, critical indexes, unique constraints, JSON columns, and `timescaledb` against the local compose database. The API repository runtime supports both SQLite local storage and PostgreSQL.
 
 ## Tables
 
@@ -24,3 +24,7 @@ Core storage is designed around PostgreSQL with TimescaleDB when available. If t
 ## Signal Fields
 
 Signals include timestamp, ticker, side, entry/stop/targets, R metrics, confidence, grade, setup type, market and ticker regime, reasons, warnings, historical sample metrics, model metadata, status, exit fields, and realized R.
+
+## Phase 5 Indexes And Constraints
+
+`make db-inspect` verifies the migration revision plus critical lookup indexes on bars, features, labels, live signals, validation reports, and scanner runs. It also verifies the unique constraints that preserve idempotent upserts for bars, features, candidate signals, labels, and active model scope.

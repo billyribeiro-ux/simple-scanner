@@ -4,7 +4,7 @@ Report status date: 2026-07-01
 
 ## Executive State
 
-Phase 4 target runtime bring-up is complete for the local machine. Python `3.14.6` is installed through Homebrew, `services/quant-engine/.venv` exists on Python `3.14.6`, backend dependencies install, backend pytest/ruff/mypy pass through the venv, Docker Postgres/TimescaleDB plus Redis are healthy, Alembic upgrades the target database to `0001_initial`, and the persisted FastAPI vertical-slice smoke test passes with a mocked provider and no FMP key.
+Phase 5 PostgreSQL repository runtime implementation is complete. Python `3.14.6` is installed through Homebrew, `services/quant-engine/.venv` exists on Python `3.14.6`, Docker Postgres/TimescaleDB plus Redis are healthy, Alembic upgrades the target database to `0002_phase5_indexes`, and the persisted FastAPI vertical-slice smoke test passes against both SQLite and PostgreSQL with a mocked provider and no FMP key.
 
 This remains a local-first scanner, research, validation, backtest, signal, and export platform only. It is not a broker, auto-trader, order router, self-learning system, or profitability system.
 
@@ -39,6 +39,9 @@ make backend-test
 make backend-lint
 make backend-typecheck
 make api-smoke
+make api-smoke-sqlite
+make api-smoke-postgres
+make repository-parity-test
 make fmp-smoke
 corepack pnpm check
 corepack pnpm build
@@ -52,28 +55,30 @@ git diff --check
 
 ## Persistence Contract
 
-The active FastAPI repository backend is SQLite:
+The FastAPI repository backend is selected explicitly:
 
-- Backend type: `sqlite`
-- Runtime mode without `DATABASE_URL`: `sqlite-local`
-- Default path: `data/local_repo.sqlite3`
-- Safe status fields: `GET /health`, `GET /config`, and `make doctor`
+- no `DATABASE_URL`: SQLite local repository at `data/local_repo.sqlite3`, or `AMD_SQLITE_PATH` when set;
+- `sqlite:///...`: SQLite repository at the configured path;
+- Postgres URL: PostgreSQL repository runtime through sync SQLAlchemy/psycopg against the migrated schema;
+- failed Postgres init: hard failure by default;
+- `AMD_ALLOW_SQLITE_FALLBACK=true`: explicit SQLite fallback reported as `sqlite-fallback-from-postgres`.
 
-Postgres/TimescaleDB is migration-verified and remains the intended serious research/production target schema. The current repository implementation is still SQLite-only. If `DATABASE_URL` is set to Postgres, the API reports `sqlite-fallback` rather than pretending Postgres is the active API database.
+Safe status fields are exposed through `GET /health`, `GET /config`, and `make doctor`: `persistence_backend`, `runtime_mode`, `database_configured`, `database_reachable`, `fallback_enabled`, and `fallback_reason`. Full database URLs, passwords, and API keys are never returned.
 
 ## What Is Safe To Trust
 
 - Deterministic quant feature/label/backtest/model baseline tests.
 - Repository-backed API route state instead of route-level `_MEMORY`.
 - SQLite local API persistence and reinitialization survival for bars, features, labels, model runs, active model, scanner runs/signals, exports, and daily reviews.
-- Alembic migration success against local Postgres/TimescaleDB on host port `15432`.
+- Postgres API persistence and reinitialization survival for the same vertical slice.
+- Alembic migration and schema inspection success against local Postgres/TimescaleDB on host port `15432`.
+- SQLite/Postgres repository parity for symbols, bars, features, labels, models, scanner runs, signals, provider requests, exports, and daily reviews.
 - CSV/XLSX export generation from persisted signals and daily reviews.
 - Activation guard requiring a persisted accepted validation report.
 - Secret redaction behavior and absence of the supplied FMP key from repo files.
 
 ## What Is Not Safe To Trust Yet
 
-- Postgres-backed FastAPI repository runtime. The migration exists; the repository implementation still writes to SQLite.
 - Live FMP entitlement coverage. The live smoke was not run because `FMP_API_KEY` is not loaded into the process environment or ignored env files.
 - Backtest realism. Current backtest remains label-derived evidence, not market replay execution.
 - Model calibration. V1 remains a statistical evidence baseline, not a calibrated ML classifier.
@@ -82,11 +87,10 @@ Postgres/TimescaleDB is migration-verified and remains the intended serious rese
 ## Current Blockers
 
 - Local Node is `25.3.0`, while the project target is `24.18.0`. Corepack pnpm still runs, but frontend commands emit the expected engine warning.
-- Postgres repository runtime is not implemented yet.
 - Optional live FMP smoke requires `FMP_API_KEY` to be configured outside the committed repo.
 
 ## Exact Next Recommended Phase
 
-Phase 5: PostgreSQL repository runtime implementation and parity testing.
+Phase 6: incremental data pipeline and operational query hardening.
 
-The next phase should implement a Postgres-backed repository adapter behind the existing repository contract, run the same API smoke suite against SQLite and Postgres, and keep REST polling as the live-data default. Do not add broker execution, WebSocket scope, options data, or ML calibration in that phase.
+The next phase should add incremental rebuild paths for bars/features/labels, tighten repository query performance around scanner and validation workloads, and keep REST polling as the live-data default. Do not add broker execution, WebSocket scope, options data, or ML calibration in that phase.

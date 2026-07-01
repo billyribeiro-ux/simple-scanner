@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import math
+import os
 import sqlite3
 from collections.abc import Iterable
 from dataclasses import asdict, is_dataclass
@@ -12,10 +14,40 @@ from pathlib import Path
 from threading import RLock
 from typing import Any
 
+try:
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.engine import Engine, make_url
+except ModuleNotFoundError:  # pragma: no cover - no-venv pure quant compatibility
+    create_engine = None
+    text = None
+    Engine = Any  # type: ignore[misc,assignment]
+    make_url = None
+
 from app.config import Settings, get_settings
 from app.data.symbols import normalize_symbol
 from app.schemas.market import Bar, Label, Outcome, Side, Signal, SignalStatus
 from app.utils.time import UTC
+
+EXPECTED_TABLES = {
+    "active_models",
+    "alembic_version",
+    "bars",
+    "candidate_signals",
+    "closed_signals",
+    "daily_reviews",
+    "exports",
+    "features",
+    "labels",
+    "live_signals",
+    "model_artifacts",
+    "model_runs",
+    "provider_requests",
+    "scanner_runs",
+    "symbols",
+    "validation_reports",
+    "validation_windows",
+}
+EXPECTED_ALEMBIC_REVISION = "0002_phase5_indexes"
 
 
 def _now_iso() -> str:
@@ -27,6 +59,8 @@ def _to_jsonable(value: Any) -> Any:
         return value.isoformat()
     if isinstance(value, date):
         return value.isoformat()
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
     if isinstance(value, Enum):
         return value.value
     if is_dataclass(value):
@@ -41,10 +75,12 @@ def _to_jsonable(value: Any) -> Any:
 
 
 def _json_dumps(payload: Any) -> str:
-    return json.dumps(_to_jsonable(payload), sort_keys=True, separators=(",", ":"))
+    return json.dumps(_to_jsonable(payload), sort_keys=True, separators=(",", ":"), allow_nan=False)
 
 
 def _json_loads(payload: str | None) -> Any:
+    if isinstance(payload, (dict, list)):
+        return payload
     if not payload:
         return {}
     return json.loads(payload)
@@ -135,6 +171,78 @@ def _coerce_signal(payload: dict[str, Any]) -> Signal:
     if data.get("status") is not None and not isinstance(data.get("status"), SignalStatus):
         data["status"] = SignalStatus(str(data["status"]))
     return Signal(**data)
+
+
+class PersistenceConfigurationError(RuntimeError):
+    def __init__(self, message: str, safe_info: dict[str, Any]) -> None:
+        super().__init__(message)
+        self.safe_info = safe_info
+
+
+def _env_flag(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _sync_postgres_url(database_url: str) -> str:
+    if database_url.startswith("postgres://"):
+        return "postgresql+psycopg://" + database_url.removeprefix("postgres://")
+    if database_url.startswith("postgresql+asyncpg://"):
+        return database_url.replace("postgresql+asyncpg://", "postgresql+psycopg://", 1)
+    if database_url.startswith("postgresql://"):
+        return database_url.replace("postgresql://", "postgresql+psycopg://", 1)
+    return database_url
+
+
+def _database_descriptor(database_url: str) -> dict[str, Any]:
+    if make_url is None:
+        return {"database_driver": "unknown"}
+    try:
+        parsed = make_url(_sync_postgres_url(database_url))
+    except Exception:
+        return {"database_driver": "unknown"}
+    return {
+        "database_driver": parsed.drivername,
+        "database_host": parsed.host,
+        "database_port": parsed.port,
+        "database_name": parsed.database,
+    }
+
+
+def _convert_qmark_sql(sql: str) -> tuple[str, list[str]]:
+    names: list[str] = []
+    parts = sql.split("?")
+    if len(parts) == 1:
+        return sql, names
+    converted = [parts[0]]
+    for index, part in enumerate(parts[1:]):
+        name = f"p{index}"
+        names.append(name)
+        converted.append(f":{name}")
+        converted.append(part)
+    return "".join(converted), names
+
+
+def _bind_params(names: list[str], params: Any) -> dict[str, Any]:
+    if isinstance(params, dict):
+        return params
+    values = list(params or [])
+    return {name: values[index] for index, name in enumerate(names)}
+
+
+class _Row(dict[str, Any]):
+    pass
+
+
+class _Result:
+    def __init__(self, result: Any) -> None:
+        self.result = result
+
+    def fetchall(self) -> list[_Row]:
+        return [_Row(dict(row._mapping)) for row in self.result.fetchall()]
+
+    def fetchone(self) -> _Row | None:
+        row = self.result.fetchone()
+        return _Row(dict(row._mapping)) if row is not None else None
 
 
 class SQLiteStore:
@@ -419,6 +527,119 @@ class SQLiteStore:
             finally:
                 if str(self.path) != ":memory:":
                     connection.close()
+
+    def ping(self) -> bool:
+        connection = self.connect()
+        try:
+            connection.execute("SELECT 1").fetchone()
+            return True
+        finally:
+            if str(self.path) != ":memory:":
+                connection.close()
+
+
+class PostgresConnection:
+    def __init__(self, connection: Any) -> None:
+        self.connection = connection
+
+    def execute(self, sql: str, params: Any = None) -> _Result:
+        converted, names = _convert_qmark_sql(sql)
+        bound = _bind_params(names, params) if names else (params or {})
+        if text is None:  # pragma: no cover - guarded by PostgresStore
+            raise RuntimeError("SQLAlchemy is not installed")
+        return _Result(self.connection.execute(text(converted), bound))
+
+    def executemany(self, sql: str, rows: Iterable[Any]) -> _Result | None:
+        row_values = list(rows)
+        if not row_values:
+            return None
+        converted, names = _convert_qmark_sql(sql)
+        bound_rows = [_bind_params(names, row) for row in row_values]
+        if text is None:  # pragma: no cover - guarded by PostgresStore
+            raise RuntimeError("SQLAlchemy is not installed")
+        return _Result(self.connection.execute(text(converted), bound_rows))
+
+    def commit(self) -> None:
+        self.connection.commit()
+
+    def close(self) -> None:
+        self.connection.close()
+
+
+class PostgresStore:
+    def __init__(self, database_url: str) -> None:
+        if create_engine is None:
+            raise PersistenceConfigurationError(
+                "SQLAlchemy is required for PostgreSQL persistence",
+                {
+                    "persistence_backend": "postgresql",
+                    "backend": "postgresql",
+                    "runtime_mode": "postgresql-unavailable",
+                    "runtime": "postgresql-unavailable",
+                    "database_configured": True,
+                    "database_url_configured": True,
+                    "database_url_kind": "postgresql",
+                    "database_reachable": False,
+                    "fallback_enabled": _env_flag("AMD_ALLOW_SQLITE_FALLBACK"),
+                    "fallback_reason": "sqlalchemy_missing",
+                },
+            )
+        self.database_url = _sync_postgres_url(database_url)
+        self.descriptor = _database_descriptor(self.database_url)
+        self._lock = RLock()
+        self.path = Path(":postgresql:")
+        self.engine: Engine = create_engine(self.database_url, future=True)
+        self.verify_schema()
+
+    def connect(self) -> PostgresConnection:
+        return PostgresConnection(self.engine.connect())
+
+    def ping(self) -> bool:
+        with self.engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
+        return True
+
+    def verify_schema(self) -> None:
+        try:
+            with self.engine.connect() as connection:
+                tables = {
+                    str(row[0])
+                    for row in connection.execute(
+                        text("select tablename from pg_tables where schemaname = 'public'")
+                    ).fetchall()
+                }
+                version = (
+                    connection.execute(text("select version_num from alembic_version")).scalar_one_or_none()
+                    if "alembic_version" in tables
+                    else None
+                )
+        except Exception as exc:
+            raise PersistenceConfigurationError(
+                "PostgreSQL persistence is configured but not reachable",
+                self.failure_info("postgres_unreachable"),
+            ) from exc
+        missing = sorted(EXPECTED_TABLES - tables)
+        if missing or version != EXPECTED_ALEMBIC_REVISION:
+            raise PersistenceConfigurationError(
+                "PostgreSQL persistence is configured but migrations are incomplete",
+                self.failure_info("migration_required", missing_tables=missing, alembic_version=version),
+            )
+
+    def failure_info(self, reason: str, **extra: Any) -> dict[str, Any]:
+        return {
+            "persistence_backend": "postgresql",
+            "backend": "postgresql",
+            "runtime_mode": "postgresql-error",
+            "runtime": "postgresql-error",
+            "database_configured": True,
+            "database_url_configured": True,
+            "database_url_kind": "postgresql",
+            "database_reachable": False,
+            "fallback_enabled": _env_flag("AMD_ALLOW_SQLITE_FALLBACK"),
+            "fallback_reason": reason,
+            **self.descriptor,
+            **extra,
+        }
 
 
 class SymbolRepository:
@@ -925,7 +1146,7 @@ class ValidationReportRepository:
                             split.get("validation_end"),
                             split.get("test_start"),
                             split.get("test_end"),
-                            1 if window_payload.get("accepted") else 0,
+                            bool(window_payload.get("accepted")),
                             _json_dumps(window_payload.get("metrics") or {}),
                             _json_dumps(window_payload.get("rejection_reasons") or []),
                             _json_dumps(window_payload | {"window_id": window_id, "report_id": report_id}),
@@ -1012,7 +1233,7 @@ class ModelRunRepository:
                         payload.get("training_start"),
                         payload.get("training_end"),
                         str(payload.get("activation_decision") or "rejected"),
-                        1 if payload.get("active") else 0,
+                        bool(payload.get("active")),
                         _json_dumps(payload.get("metrics") or {}),
                         _json_dumps(payload.get("validation_metrics") or {}),
                         _json_dumps(payload),
@@ -1091,7 +1312,7 @@ class ModelRunRepository:
             try:
                 connection.execute(
                     "UPDATE model_runs SET active = ?, payload_json = ?, updated_at = ? WHERE model_version = ?",
-                    (1 if active else 0, _json_dumps(model) if model else None, _now_iso(), model_version),
+                    (bool(active), _json_dumps(model) if model else None, _now_iso(), model_version),
                 )
                 connection.commit()
             finally:
@@ -1133,8 +1354,17 @@ class ActiveModelRepository:
                     """,
                     (active_model_id, model_version, model_type, strategy_scope, activated_at, validation_report_id, _json_dumps(payload)),
                 )
-                connection.execute("UPDATE model_runs SET active = 0, updated_at = ?", (_now_iso(),))
-                connection.execute("UPDATE model_runs SET active = 1, payload_json = ?, updated_at = ? WHERE model_version = ?", (_json_dumps(payload), _now_iso(), model_version))
+                rows = connection.execute("SELECT model_version, payload_json FROM model_runs").fetchall()
+                for row in rows:
+                    row_version = str(row["model_version"])
+                    row_active = row_version == model_version
+                    row_payload = payload if row_active else _json_loads(row["payload_json"])
+                    if isinstance(row_payload, dict):
+                        row_payload = row_payload | {"active": row_active}
+                    connection.execute(
+                        "UPDATE model_runs SET active = ?, payload_json = ?, updated_at = ? WHERE model_version = ?",
+                        (row_active, _json_dumps(row_payload), _now_iso(), row_version),
+                    )
                 connection.commit()
             finally:
                 if str(self.store.path) != ":memory:":
@@ -1335,6 +1565,20 @@ class ProviderRequestRepository:
                     connection.close()
         return request_id
 
+    def list_all(self) -> list[dict[str, Any]]:
+        connection = self.store.connect()
+        try:
+            rows = connection.execute("SELECT * FROM provider_requests ORDER BY started_at DESC").fetchall()
+            output = []
+            for row in rows:
+                data = dict(row)
+                data["metadata"] = _json_loads(data.pop("metadata_json"))
+                output.append(data)
+            return output
+        finally:
+            if str(self.store.path) != ":memory:":
+                connection.close()
+
 
 class ExportRepository:
     def __init__(self, store: SQLiteStore) -> None:
@@ -1438,33 +1682,32 @@ def database_url_kind(settings: Settings | None = None) -> str:
         return "unset"
     if configured.startswith("sqlite:///"):
         return "sqlite"
-    if configured.startswith("postgresql://") or configured.startswith("postgresql+"):
+    if configured.startswith("postgres://") or configured.startswith("postgresql://") or configured.startswith("postgresql+"):
         return "postgresql"
     return configured.split(":", maxsplit=1)[0] or "unknown"
 
 
-def persistence_backend_info(
-    settings: Settings | None = None,
-    db_path: Path | str | None = None,
+def _sqlite_info(
+    runtime_mode: str,
+    reason: str,
+    path: Path,
+    database_configured: bool,
+    fallback_enabled: bool = False,
+    fallback_reason: str | None = None,
+    database_url_kind_value: str | None = None,
 ) -> dict[str, Any]:
-    settings = settings or get_settings()
-    kind = database_url_kind(settings)
-    path = Path(db_path) if db_path is not None else default_sqlite_path(settings)
-    if kind == "postgresql":
-        runtime = "sqlite-fallback"
-        reason = "postgresql_url_configured_but_sqlite_repository_active"
-    elif kind == "sqlite":
-        runtime = "sqlite-configured"
-        reason = "sqlite_database_url_configured"
-    else:
-        runtime = "sqlite-local"
-        reason = "database_url_not_configured"
     return {
+        "persistence_backend": "sqlite",
         "backend": "sqlite",
-        "runtime": runtime,
+        "runtime_mode": runtime_mode,
+        "runtime": runtime_mode,
         "reason": reason,
-        "database_url_configured": kind != "unset",
-        "database_url_kind": kind,
+        "database_configured": database_configured,
+        "database_url_configured": database_configured,
+        "database_url_kind": database_url_kind_value or ("sqlite" if database_configured else "unset"),
+        "database_reachable": True,
+        "fallback_enabled": fallback_enabled,
+        "fallback_reason": fallback_reason,
         "path": str(path),
     }
 
@@ -1472,10 +1715,52 @@ def persistence_backend_info(
 class RepositoryRegistry:
     def __init__(self, db_path: Path | str | None = None, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
+        self.database_url_kind = database_url_kind(self.settings)
+        self.fallback_enabled = _env_flag("AMD_ALLOW_SQLITE_FALLBACK")
         self.db_path = Path(db_path) if db_path is not None else default_sqlite_path(self.settings)
         self.backend = "sqlite"
-        self.runtime = persistence_backend_info(self.settings, self.db_path)
-        self.store = SQLiteStore(self.db_path)
+        self.runtime: dict[str, Any]
+        if self.database_url_kind == "postgresql":
+            try:
+                self.store = PostgresStore(self.settings.database_url)
+                self.backend = "postgresql"
+                self.runtime = {
+                    "persistence_backend": "postgresql",
+                    "backend": "postgresql",
+                    "runtime_mode": "postgresql",
+                    "runtime": "postgresql",
+                    "reason": "postgresql_database_url_configured",
+                    "database_configured": True,
+                    "database_url_configured": True,
+                    "database_url_kind": "postgresql",
+                    "database_reachable": True,
+                    "fallback_enabled": self.fallback_enabled,
+                    "fallback_reason": None,
+                    **self.store.descriptor,
+                }
+            except PersistenceConfigurationError as exc:
+                if not self.fallback_enabled:
+                    raise
+                self.store = SQLiteStore(self.db_path)
+                self.runtime = _sqlite_info(
+                    "sqlite-fallback-from-postgres",
+                    "postgresql_initialization_failed_explicit_fallback_enabled",
+                    self.db_path,
+                    database_configured=True,
+                    fallback_enabled=True,
+                    fallback_reason=str(exc.safe_info.get("fallback_reason") or "postgres_initialization_failed"),
+                    database_url_kind_value="postgresql",
+                )
+        else:
+            self.store = SQLiteStore(self.db_path)
+            self.runtime = _sqlite_info(
+                "sqlite-configured" if self.database_url_kind == "sqlite" else "sqlite-local",
+                "sqlite_database_url_configured" if self.database_url_kind == "sqlite" else "database_url_not_configured",
+                self.db_path,
+                database_configured=self.database_url_kind == "sqlite",
+                fallback_enabled=self.fallback_enabled,
+                database_url_kind_value=self.database_url_kind,
+            )
         self.symbols = SymbolRepository(self.store)
         self.bars = BarRepository(self.store, self.symbols)
         self.features = FeatureRepository(self.store)
@@ -1491,7 +1776,22 @@ class RepositoryRegistry:
         self.daily_reviews = DailyReviewRepository(self.store)
 
     def info(self) -> dict[str, Any]:
-        return dict(self.runtime)
+        info = dict(self.runtime)
+        try:
+            info["database_reachable"] = bool(self.store.ping())
+        except Exception:
+            info["database_reachable"] = False
+        return info
+
+
+def persistence_backend_info(
+    settings: Settings | None = None,
+    db_path: Path | str | None = None,
+) -> dict[str, Any]:
+    try:
+        return RepositoryRegistry(db_path=db_path, settings=settings).info()
+    except PersistenceConfigurationError as exc:
+        return dict(exc.safe_info)
 
 
 def default_sqlite_path(settings: Settings | None = None) -> Path:

@@ -22,7 +22,7 @@ The Phase 2 quant core favors deterministic, testable Python loops over prematur
 - Feature building recomputes all history for a symbol when called by the scanner.
 - Label simulation scans forward bars per candidate.
 - Walk-forward validation filters trades per window without an interval index.
-- The API still stores workflow state in memory, so there is no durable cache/reuse path yet.
+- Feature, label, and validation workflows now persist through repositories, but rebuilds are still broad rather than incremental.
 
 ## Phase 2 Efficiency Decisions
 
@@ -33,8 +33,8 @@ The Phase 2 quant core favors deterministic, testable Python loops over prematur
 
 ## Next Optimizations
 
-1. Persist bars/features/labels and reuse them by `(symbol, interval, session_date, feature_set_version)`.
-2. Add incremental feature updates for scanner context.
-3. Index candidate windows by symbol and timestamp for faster label simulation.
+1. Add incremental feature updates for scanner context and recently changed sessions.
+2. Narrow label rebuilds by `(symbol, interval, session_date, feature_set_version)`.
+3. Add candidate-window query helpers by symbol and timestamp for faster label simulation.
 4. Use Polars/Pandas grouped transforms once tests lock down leakage behavior.
 5. Store validation trades by window to avoid repeated scans.

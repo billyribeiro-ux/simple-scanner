@@ -17,8 +17,8 @@ Local audit result:
 - Docker: reachable.
 - Postgres/TimescaleDB and Redis: healthy after `docker compose up -d postgres redis`.
 - Postgres host port: `15432`.
-- `FMP_API_KEY`: missing from this shell during Phase 4 verification.
-- `DATABASE_URL`: missing from this shell; API uses SQLite local fallback.
+- `FMP_API_KEY`: optional; live FMP smoke skips when it is not configured.
+- `DATABASE_URL`: optional; no URL selects SQLite local, while a Postgres URL selects the Postgres repository runtime.
 
 ## First Checks
 
@@ -97,12 +97,16 @@ make db-migrate
 make db-inspect
 ```
 
-`make db-inspect` confirms the Alembic revision, expected table count, missing tables, and installed extensions. The current local result is:
+`make db-inspect` confirms the Alembic revision, expected table count, critical indexes, unique constraints, selected columns, JSON columns, and installed extensions. The current local result is:
 
 ```text
-alembic_version=0001_initial
+alembic_version=0002_phase5_indexes
 tables=17
 missing_tables=none
+missing_indexes=none
+missing_constraints=none
+missing_columns=none
+missing_json_columns=none
 extensions=plpgsql,timescaledb
 ```
 
@@ -122,7 +126,7 @@ make db-reset-dev
 
 ## API Persistence Backend
 
-The current FastAPI repository implementation is SQLite-backed. With no `DATABASE_URL`, it writes to:
+The FastAPI repository implementation supports SQLite and PostgreSQL. With no `DATABASE_URL`, it writes to:
 
 ```text
 data/local_repo.sqlite3
@@ -136,7 +140,7 @@ curl http://localhost:8000/health
 curl http://localhost:8000/config
 ```
 
-If `DATABASE_URL` is set to Postgres before a Postgres repository adapter exists, the API reports `sqlite-fallback` and does not falsely claim Postgres is active.
+With a Postgres `DATABASE_URL`, it uses the PostgreSQL repository runtime and verifies the migrated schema at startup. Postgres initialization failures are hard failures unless `AMD_ALLOW_SQLITE_FALLBACK=true`, in which case the runtime reports `sqlite-fallback-from-postgres`.
 
 ## API And Web
 
@@ -173,6 +177,9 @@ make backend-test
 make backend-lint
 make backend-typecheck
 make api-smoke
+make api-smoke-sqlite
+make api-smoke-postgres
+make repository-parity-test
 ```
 
 Frontend gates:

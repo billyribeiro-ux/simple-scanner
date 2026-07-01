@@ -4,14 +4,15 @@ Status date: 2026-07-01
 
 ## Summary
 
-The API route `_MEMORY` workflow state has been replaced with repository-backed persistence. The local-first API runtime currently uses a durable SQLite repository at `data/local_repo.sqlite3` when no SQLite URL override is provided. PostgreSQL/TimescaleDB remains the intended serious research/production database target, and Phase 4 verified that SQLAlchemy metadata plus Alembic migration upgrade the local TimescaleDB container to the same table contract.
+The API route `_MEMORY` workflow state has been replaced with repository-backed persistence. The local-first API runtime uses SQLite at `data/local_repo.sqlite3` when no database URL is configured, and it uses PostgreSQL/TimescaleDB when `DATABASE_URL` points at a migrated Postgres database. Phase 5 verifies the same persisted API vertical slice against both backends.
 
 This is still a scanner, research, validation, backtest, model metadata, signal, and export platform. It is not a broker, not an order router, and not a profitability engine.
 
 ## Runtime Stores
 
-- Local API fallback: `data/local_repo.sqlite3`, ignored by git along with SQLite WAL sidecars.
-- Migration-verified target: PostgreSQL/TimescaleDB through Alembic on local host port `15432`.
+- Local default: `data/local_repo.sqlite3`, ignored by git along with SQLite WAL sidecars.
+- Configured SQLite: `sqlite:///...` paths, including `AMD_SQLITE_PATH` for local test/runtime overrides.
+- PostgreSQL runtime: sync SQLAlchemy/psycopg repository store against Alembic revision `0002_phase5_indexes` on local host port `15432`.
 - Export artifacts: `exports/`, ignored except `.gitkeep`.
 - Model artifacts: `model_artifacts/`, ignored except `.gitkeep`.
 - FMP secrets: `FMP_API_KEY` from environment or ignored env files only.
@@ -36,11 +37,17 @@ It exposes concrete repositories for:
 - `exports`
 - `daily_reviews`
 
-The implementation is synchronous and transaction-scoped for local SQLite. API routes may call it directly because the local workload is small and file-backed; async network I/O remains isolated in FMP provider calls.
+The implementation is synchronous and transaction-scoped for both SQLite and PostgreSQL. API routes call the repository registry directly because the local V1 workload is small; async network I/O remains isolated in FMP provider calls.
 
 `RepositoryRegistry.info()` returns a safe backend descriptor used by `/health`, `/config`, and `make doctor`. It reports backend type, runtime mode, sanitized database URL kind, and local SQLite path without printing connection strings.
 
-If a Postgres `DATABASE_URL` is configured before a Postgres repository adapter exists, the runtime reports `sqlite-fallback` with reason `postgresql_url_configured_but_sqlite_repository_active`.
+Backend selection is explicit:
+
+- no `DATABASE_URL`: SQLite local runtime;
+- `sqlite:///...`: SQLite configured runtime;
+- Postgres URL: PostgreSQL runtime after schema and revision checks;
+- Postgres init failure: hard failure unless `AMD_ALLOW_SQLITE_FALLBACK=true`;
+- explicit fallback: SQLite runtime mode `sqlite-fallback-from-postgres` with a non-secret reason.
 
 ## API Source Of Truth
 
@@ -80,7 +87,7 @@ Model activation is repository-gated:
 1. A model run must exist.
 2. A validation report for that model version must exist.
 3. The latest validation report must have `activation_decision = accepted`.
-4. Activation writes `active_models` and updates the model run active flag.
+4. Activation writes `active_models` and updates the model run active flag and stored model payloads.
 
 Training metrics alone do not silently activate a model.
 
@@ -107,7 +114,7 @@ The aligned table set is:
 
 ## Current Limits
 
-- SQLite is the active API repository backend, not the final production persistence engine.
-- Alembic migrations now pass against local Postgres/TimescaleDB, but API repository writes are not Postgres-backed yet.
+- Postgres is implemented for the repository contract, but heavy query planning and Timescale hypertable policy tuning remain future work.
+- SQLite remains the local default for no-configuration development.
 - No live FMP smoke was executed because `FMP_API_KEY` is not loaded in the process environment or ignored env files.
 - No broker execution, order routing, WebSocket entitlement path, options, gamma, Greeks, or internals were added.

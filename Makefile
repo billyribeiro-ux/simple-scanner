@@ -2,7 +2,7 @@ PYTHON ?= python3
 PYTHON314 ?= python3.14
 SERVICE_DIR := services/quant-engine
 
-.PHONY: help doctor setup setup-backend require-backend-venv quant-test backend-test backend-lint backend-typecheck api-smoke fmp-smoke dev api-dev web-dev db-up db-down db-migrate db-inspect db-reset-dev ingest features labels train validate backtest scanner export test lint typecheck
+.PHONY: help doctor setup setup-backend require-backend-venv quant-test backend-test backend-lint backend-typecheck api-smoke api-smoke-sqlite api-smoke-postgres repository-parity-test fmp-smoke dev api-dev web-dev db-up db-down db-migrate db-inspect db-reset-dev ingest features labels train validate backtest scanner export test lint typecheck
 
 help:
 	@printf "Adaptive Market Decoder commands\n\n"
@@ -24,7 +24,10 @@ help:
 	@printf "  make backend-test        Run full backend pytest in the target venv\n"
 	@printf "  make backend-lint        Run backend ruff checks\n"
 	@printf "  make backend-typecheck   Run backend mypy checks\n"
-	@printf "  make api-smoke           Run persisted FastAPI vertical-slice smoke test\n"
+	@printf "  make api-smoke           Run default SQLite persisted FastAPI smoke test\n"
+	@printf "  make api-smoke-sqlite    Run explicit SQLite persisted FastAPI smoke test\n"
+	@printf "  make api-smoke-postgres  Run Postgres persisted FastAPI smoke test against local compose DB\n"
+	@printf "  make repository-parity-test Run SQLite/Postgres repository parity tests\n"
 	@printf "  make fmp-smoke           Run optional live FMP REST smoke if FMP_API_KEY is configured\n"
 	@printf "  make test lint typecheck Run backend and frontend quality gates\n"
 
@@ -71,8 +74,20 @@ backend-lint: require-backend-venv
 backend-typecheck: require-backend-venv
 	cd $(SERVICE_DIR) && .venv/bin/mypy app
 
-api-smoke: require-backend-venv
-	cd $(SERVICE_DIR) && PYTHONPATH=. .venv/bin/python -m pytest tests/test_persisted_api_smoke.py
+api-smoke: api-smoke-sqlite
+
+api-smoke-sqlite: require-backend-venv
+	cd $(SERVICE_DIR) && PYTHONPATH=. .venv/bin/python -m pytest tests/test_persisted_api_smoke.py::test_persisted_api_vertical_slice_sqlite
+
+api-smoke-postgres: require-backend-venv
+	@DATABASE_URL="$${DATABASE_URL:-postgresql+psycopg://amd:amd@localhost:15432/adaptive_market_decoder}" \
+		PYTHONPATH=$(SERVICE_DIR) \
+		$(SERVICE_DIR)/.venv/bin/python -m pytest $(SERVICE_DIR)/tests/test_persisted_api_smoke.py::test_persisted_api_vertical_slice_postgres
+
+repository-parity-test: require-backend-venv
+	@DATABASE_URL="$${DATABASE_URL:-postgresql+psycopg://amd:amd@localhost:15432/adaptive_market_decoder}" \
+		PYTHONPATH=$(SERVICE_DIR) \
+		$(SERVICE_DIR)/.venv/bin/python -m pytest $(SERVICE_DIR)/tests/test_repository_parity.py
 
 fmp-smoke: require-backend-venv
 	PYTHONPATH=$(SERVICE_DIR) $(SERVICE_DIR)/.venv/bin/python scripts/fmp_smoke.py
