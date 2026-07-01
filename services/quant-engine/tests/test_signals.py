@@ -1,4 +1,6 @@
-from datetime import UTC, datetime
+from datetime import datetime
+
+from app.utils.time import UTC
 from zoneinfo import ZoneInfo
 
 from app.schemas.market import Bar, Side

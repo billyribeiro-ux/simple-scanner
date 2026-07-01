@@ -1,4 +1,6 @@
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
+
+from app.utils.time import UTC
 from zoneinfo import ZoneInfo
 
 from app.features.engine import FeatureEngine

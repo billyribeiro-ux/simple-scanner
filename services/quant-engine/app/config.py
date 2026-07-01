@@ -1,10 +1,37 @@
 from __future__ import annotations
 
 from functools import lru_cache
+import os
 from pathlib import Path
 
-from pydantic import Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
+try:
+    from pydantic import Field
+    from pydantic_settings import BaseSettings, SettingsConfigDict
+except ModuleNotFoundError:  # pragma: no cover - compatibility path for pure quant tests without venv
+    def Field(default=None, alias: str | None = None):
+        return default
+
+    def SettingsConfigDict(**kwargs):
+        return kwargs
+
+    class BaseSettings:
+        def __init__(self, **kwargs):
+            annotations = getattr(type(self), "__annotations__", {})
+            for name in annotations:
+                if name == "model_config":
+                    continue
+                value = kwargs.get(name, getattr(type(self), name, None))
+                setattr(self, name, value)
+            env_map = {
+                "app_name": "PUBLIC_APP_NAME",
+                "fmp_api_key": "FMP_API_KEY",
+                "database_url": "DATABASE_URL",
+                "redis_url": "REDIS_URL",
+                "default_symbols": "PUBLIC_DEFAULT_SYMBOLS",
+            }
+            for attr, env_name in env_map.items():
+                if env_name in os.environ:
+                    setattr(self, attr, os.environ[env_name])
 
 
 DEFAULT_SYMBOLS = "AMZN,AAPL,TSLA,SPY,QQQ,IWM,NVDA,GOOGL,BABA,SHOP"

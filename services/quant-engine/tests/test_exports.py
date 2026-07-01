@@ -1,4 +1,6 @@
-from datetime import UTC, datetime
+from datetime import datetime
+
+from app.utils.time import UTC
 
 from app.exports.service import ExportService
 from app.schemas.market import Signal, Side

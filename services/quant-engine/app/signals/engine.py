@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime
+
+from app.utils.time import UTC
 from typing import Any
 
 from app.regimes.classifier import RegimeClassifier

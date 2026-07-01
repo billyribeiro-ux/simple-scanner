@@ -1,25 +1,73 @@
 from __future__ import annotations
 
 from datetime import datetime
-from enum import StrEnum
+from enum import Enum
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+try:
+    from pydantic import BaseModel, ConfigDict, Field
+except ModuleNotFoundError:  # pragma: no cover - compatibility path for pure quant tests without venv
+    class _FieldInfo:
+        def __init__(self, default: Any = None, default_factory: Any = None) -> None:
+            self.default = default
+            self.default_factory = default_factory
+
+        def value(self) -> Any:
+            if self.default_factory is not None:
+                return self.default_factory()
+            return self.default
+
+    def Field(default: Any = None, default_factory: Any = None, **_: Any) -> _FieldInfo:
+        return _FieldInfo(default=default, default_factory=default_factory)
+
+    def ConfigDict(**kwargs: Any) -> dict[str, Any]:
+        return kwargs
+
+    class BaseModel:
+        def __init__(self, **kwargs: Any) -> None:
+            annotations: dict[str, Any] = {}
+            for cls in reversed(type(self).mro()):
+                annotations.update(getattr(cls, "__annotations__", {}))
+            for name in annotations:
+                if name == "model_config":
+                    continue
+                if name in kwargs:
+                    value = kwargs[name]
+                else:
+                    default = getattr(type(self), name, None)
+                    value = default.value() if isinstance(default, _FieldInfo) else default
+                setattr(self, name, value)
+
+        def model_dump(self, mode: str = "python") -> dict[str, Any]:
+            output = {}
+            for key, value in self.__dict__.items():
+                if isinstance(value, Enum):
+                    output[key] = value.value if mode == "json" else value
+                elif isinstance(value, datetime):
+                    output[key] = value.isoformat() if mode == "json" else value
+                else:
+                    output[key] = value
+            return output
 
 
-class Side(StrEnum):
+class _StrEnum(str, Enum):
+    def __str__(self) -> str:
+        return self.value
+
+
+class Side(_StrEnum):
     LONG = "LONG"
     SHORT = "SHORT"
     NO_TRADE = "NO_TRADE"
 
 
-class Outcome(StrEnum):
+class Outcome(_StrEnum):
     WIN = "WIN"
     LOSS = "LOSS"
     NEUTRAL = "NEUTRAL"
 
 
-class SignalStatus(StrEnum):
+class SignalStatus(_StrEnum):
     OPEN = "OPEN"
     CLOSED = "CLOSED"
     SKIPPED = "SKIPPED"

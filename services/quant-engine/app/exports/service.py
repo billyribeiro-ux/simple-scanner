@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import csv
 import json
-from datetime import UTC, date, datetime
+from datetime import date, datetime
+
+from app.utils.time import UTC
 from pathlib import Path
 from typing import Iterable
 

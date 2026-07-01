@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import datetime
+
+from app.utils.time import UTC
 
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
