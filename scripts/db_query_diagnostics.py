@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import os
 import sys
+from collections.abc import Sequence
 
 from sqlalchemy import create_engine, text
+from sqlalchemy.engine import Connection, RowMapping
 
 DEFAULT_URL = "postgresql+psycopg://amd:amd@localhost:15432/adaptive_market_decoder"
 
@@ -12,11 +14,11 @@ def _database_url() -> str:
     return (os.environ.get("DATABASE_URL") or DEFAULT_URL).replace("+asyncpg", "+psycopg")
 
 
-def _scalar(connection, sql: str):
+def _scalar(connection: Connection, sql: str) -> str | int | None:
     return connection.execute(text(sql)).scalar()
 
 
-def _rows(connection, sql: str):
+def _rows(connection: Connection, sql: str) -> Sequence[RowMapping]:
     return connection.execute(text(sql)).mappings().all()
 
 
@@ -40,7 +42,8 @@ def main() -> int:
             "exports",
             "pipeline_build_windows",
         ):
-            count = _scalar(connection, f'select count(*) from "{table}"')
+            # table is drawn from the fixed tuple above, never from external input.
+            count = _scalar(connection, f'select count(*) from "{table}"')  # noqa: S608
             print(f"{table}.rows={count}")
         dirty = _rows(
             connection,
@@ -52,7 +55,14 @@ def main() -> int:
             order by artifact_type
             """,
         )
-        print("dirty_windows=" + (",".join(f"{row['artifact_type']}:{row['windows']}" for row in dirty) if dirty else "none"))
+        print(
+            "dirty_windows="
+            + (
+                ",".join(f"{row['artifact_type']}:{row['windows']}" for row in dirty)
+                if dirty
+                else "none"
+            )
+        )
         replay = _rows(
             connection,
             """
@@ -64,15 +74,20 @@ def main() -> int:
         )
         for row in replay:
             print(
-                "replay="
-                f"{row['replay_run_id']} simulation_type={row['simulation_type']} "
-                f"config_hash={row['config_hash']} input_fingerprint={row['input_fingerprint']} created_at={row['created_at']}"
+                f"replay={row['replay_run_id']} simulation_type={row['simulation_type']} "
+                + f"config_hash={row['config_hash']} input_fingerprint={row['input_fingerprint']} created_at={row['created_at']}"
             )
         try:
-            hypertables = _rows(connection, "select hypertable_name from timescaledb_information.hypertables order by hypertable_name")
+            hypertables = _rows(
+                connection,
+                "select hypertable_name from timescaledb_information.hypertables order by hypertable_name",
+            )
         except Exception:
-            hypertables = []
-        print("timescale_hypertables=" + (",".join(row["hypertable_name"] for row in hypertables) if hypertables else "none"))
+            hypertables: Sequence[RowMapping] = []
+        print(
+            "timescale_hypertables="
+            + (",".join(row["hypertable_name"] for row in hypertables) if hypertables else "none")
+        )
     return 0
 
 

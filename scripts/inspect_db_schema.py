@@ -73,13 +73,38 @@ EXPECTED_UNIQUE_CONSTRAINTS = {
 }
 EXPECTED_COLUMNS = {
     "bars": {"symbol", "interval", "timestamp_utc", "source", "payload_json"},
-    "features": {"symbol", "interval", "timestamp_utc", "feature_set_version", "payload_json"},
-    "labels": {"symbol", "timestamp_utc", "setup_type", "side", "outcome", "payload_json"},
+    "features": {
+        "symbol",
+        "interval",
+        "timestamp_utc",
+        "feature_set_version",
+        "payload_json",
+    },
+    "labels": {
+        "symbol",
+        "timestamp_utc",
+        "setup_type",
+        "side",
+        "outcome",
+        "payload_json",
+    },
     "live_signals": {"ticker", "timestamp_utc", "status", "payload_json"},
     "model_runs": {"model_version", "active", "payload_json"},
-    "model_evidence_cells": {"model_version", "cell_key", "dimensions_json", "metrics_json"},
+    "model_evidence_cells": {
+        "model_version",
+        "cell_key",
+        "dimensions_json",
+        "metrics_json",
+    },
     "candidate_score_audits": {"score_id", "model_version", "payload_json"},
-    "pipeline_build_windows": {"artifact_type", "symbol", "interval", "session_date", "dirty", "payload_json"},
+    "pipeline_build_windows": {
+        "artifact_type",
+        "symbol",
+        "interval",
+        "session_date",
+        "dirty",
+        "payload_json",
+    },
     "replay_runs": {
         "replay_run_id",
         "simulation_type",
@@ -91,10 +116,34 @@ EXPECTED_COLUMNS = {
         "summary_metrics_json",
         "payload_json",
     },
-    "replay_sensitivity_runs": {"sensitivity_run_id", "replay_run_id", "config_json", "summary_json", "payload_json"},
-    "replay_sensitivity_scenarios": {"scenario_id", "sensitivity_run_id", "replay_run_id", "summary_metrics_json", "payload_json"},
-    "backtest_comparisons": {"comparison_id", "replay_run_id", "summary_json", "payload_json"},
-    "simulated_trades": {"trade_id", "replay_run_id", "symbol", "setup_type", "status", "payload_json"},
+    "replay_sensitivity_runs": {
+        "sensitivity_run_id",
+        "replay_run_id",
+        "config_json",
+        "summary_json",
+        "payload_json",
+    },
+    "replay_sensitivity_scenarios": {
+        "scenario_id",
+        "sensitivity_run_id",
+        "replay_run_id",
+        "summary_metrics_json",
+        "payload_json",
+    },
+    "backtest_comparisons": {
+        "comparison_id",
+        "replay_run_id",
+        "summary_json",
+        "payload_json",
+    },
+    "simulated_trades": {
+        "trade_id",
+        "replay_run_id",
+        "symbol",
+        "setup_type",
+        "status",
+        "payload_json",
+    },
     "validation_reports": {"report_id", "model_version", "payload_json"},
     "active_models": {"model_type", "strategy_scope", "payload_json"},
     "exports": {"export_id", "payload_json"},
@@ -161,7 +210,9 @@ def main() -> int:
         tables = {
             str(row[0])
             for row in connection.execute(
-                text("select tablename from pg_tables where schemaname = 'public' order by tablename")
+                text(
+                    "select tablename from pg_tables where schemaname = 'public' order by tablename"
+                )
             )
         }
         extensions = [
@@ -221,7 +272,7 @@ def main() -> int:
                 )
             }
         except Exception:
-            hypertables = set()
+            hypertables: set[str] = set()
     missing = sorted(EXPECTED_TABLES - tables)
     missing_indexes = sorted(EXPECTED_INDEXES - indexes)
     missing_constraints = sorted(EXPECTED_UNIQUE_CONSTRAINTS - unique_constraints)
@@ -232,7 +283,9 @@ def main() -> int:
         if (table, column) not in columns
     )
     missing_json_columns = sorted(
-        f"{table}.{column}" for table, column in EXPECTED_JSON_COLUMNS if (table, column) not in json_columns
+        f"{table}.{column}"
+        for table, column in EXPECTED_JSON_COLUMNS
+        if (table, column) not in json_columns
     )
     version = version_row[0] if version_row else "missing"
     print(f"alembic_version={version}")
@@ -241,22 +294,28 @@ def main() -> int:
     print(f"missing_indexes={','.join(missing_indexes) if missing_indexes else 'none'}")
     print(f"missing_constraints={','.join(missing_constraints) if missing_constraints else 'none'}")
     print(f"missing_columns={','.join(missing_columns) if missing_columns else 'none'}")
-    print(f"missing_json_columns={','.join(missing_json_columns) if missing_json_columns else 'none'}")
+    print(
+        f"missing_json_columns={','.join(missing_json_columns) if missing_json_columns else 'none'}"
+    )
     print(f"extensions={','.join(extensions)}")
     print(f"timescale_hypertables={','.join(sorted(hypertables)) if hypertables else 'none'}")
     missing_extension = "timescaledb" not in extensions
     missing_bars_hypertable = "timescaledb" in extensions and "bars" not in hypertables
     wrong_revision = version != EXPECTED_REVISION
-    return 1 if (
-        missing
-        or missing_indexes
-        or missing_constraints
-        or missing_columns
-        or missing_json_columns
-        or missing_extension
-        or missing_bars_hypertable
-        or wrong_revision
-    ) else 0
+    return (
+        1
+        if (
+            missing
+            or missing_indexes
+            or missing_constraints
+            or missing_columns
+            or missing_json_columns
+            or missing_extension
+            or missing_bars_hypertable
+            or wrong_revision
+        )
+        else 0
+    )
 
 
 if __name__ == "__main__":

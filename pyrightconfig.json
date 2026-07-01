@@ -1,0 +1,8 @@
+{
+	"venvPath": "services/quant-engine",
+	"venv": ".venv",
+	"include": ["scripts", "services/quant-engine"],
+	"extraPaths": ["services/quant-engine"],
+	"reportAny": false,
+	"reportExplicitAny": false
+}
