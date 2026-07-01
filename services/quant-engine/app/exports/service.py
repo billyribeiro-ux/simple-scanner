@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import csv
 import json
+from collections.abc import Iterable
 from datetime import date, datetime
-from zipfile import ZIP_DEFLATED, ZipFile
+from pathlib import Path
 from xml.sax.saxutils import escape
+from zipfile import ZIP_DEFLATED, ZipFile
 
 from app.utils.time import UTC
-from pathlib import Path
-from typing import Iterable
 
 try:
     from openpyxl import Workbook
@@ -17,7 +17,6 @@ except ModuleNotFoundError:  # pragma: no cover - compatibility path for no-venv
 
 from app.config import get_settings
 from app.schemas.market import Signal
-
 
 SIGNAL_COLUMNS = [
     "timestamp",

@@ -1,14 +1,12 @@
 from __future__ import annotations
 
 from datetime import datetime
-
-from app.utils.time import UTC
 from typing import Any
 
 from app.regimes.classifier import RegimeClassifier
-from app.schemas.market import Bar, Signal, Side
+from app.schemas.market import Bar, Side, Signal
 from app.signals.rules import SetupRuleEngine
-
+from app.utils.time import UTC
 
 HOSTILE_REGIMES = {"chop", "liquidity_trap", "mixed_uncertain"}
 

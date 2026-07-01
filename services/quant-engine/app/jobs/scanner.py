@@ -12,7 +12,7 @@ from app.db.repositories import get_repository_registry
 from app.features.engine import FeatureEngine
 from app.models.engine import ModelEngine
 from app.regimes.classifier import RegimeClassifier
-from app.schemas.market import Bar, Quote, Signal, Side
+from app.schemas.market import Bar, Quote, Side, Signal
 from app.signals.engine import SignalEngine
 from app.utils.time import UTC
 

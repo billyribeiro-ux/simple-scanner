@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.labels.engine import LabelSettings, LabelingEngine
+from app.labels.engine import LabelingEngine, LabelSettings
 from app.schemas.market import Outcome, Side
 
 

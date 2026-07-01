@@ -1,19 +1,20 @@
 from __future__ import annotations
 
+import json
+import sqlite3
+from collections.abc import Iterable
 from dataclasses import asdict, is_dataclass
 from datetime import date, datetime
 from enum import Enum
 from functools import lru_cache
 from hashlib import sha256
-import json
 from pathlib import Path
-import sqlite3
 from threading import RLock
-from typing import Any, Iterable
+from typing import Any
 
 from app.config import Settings, get_settings
 from app.data.symbols import normalize_symbol
-from app.schemas.market import Bar, Label, Outcome, Signal, Side, SignalStatus
+from app.schemas.market import Bar, Label, Outcome, Side, Signal, SignalStatus
 from app.utils.time import UTC
 
 
@@ -1431,10 +1432,49 @@ class DailyReviewRepository:
                 connection.close()
 
 
+def database_url_kind(settings: Settings | None = None) -> str:
+    configured = getattr(settings or get_settings(), "database_url", "") or ""
+    if not configured:
+        return "unset"
+    if configured.startswith("sqlite:///"):
+        return "sqlite"
+    if configured.startswith("postgresql://") or configured.startswith("postgresql+"):
+        return "postgresql"
+    return configured.split(":", maxsplit=1)[0] or "unknown"
+
+
+def persistence_backend_info(
+    settings: Settings | None = None,
+    db_path: Path | str | None = None,
+) -> dict[str, Any]:
+    settings = settings or get_settings()
+    kind = database_url_kind(settings)
+    path = Path(db_path) if db_path is not None else default_sqlite_path(settings)
+    if kind == "postgresql":
+        runtime = "sqlite-fallback"
+        reason = "postgresql_url_configured_but_sqlite_repository_active"
+    elif kind == "sqlite":
+        runtime = "sqlite-configured"
+        reason = "sqlite_database_url_configured"
+    else:
+        runtime = "sqlite-local"
+        reason = "database_url_not_configured"
+    return {
+        "backend": "sqlite",
+        "runtime": runtime,
+        "reason": reason,
+        "database_url_configured": kind != "unset",
+        "database_url_kind": kind,
+        "path": str(path),
+    }
+
+
 class RepositoryRegistry:
     def __init__(self, db_path: Path | str | None = None, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
         self.db_path = Path(db_path) if db_path is not None else default_sqlite_path(self.settings)
+        self.backend = "sqlite"
+        self.runtime = persistence_backend_info(self.settings, self.db_path)
         self.store = SQLiteStore(self.db_path)
         self.symbols = SymbolRepository(self.store)
         self.bars = BarRepository(self.store, self.symbols)
@@ -1449,6 +1489,9 @@ class RepositoryRegistry:
         self.provider_requests = ProviderRequestRepository(self.store)
         self.exports = ExportRepository(self.store)
         self.daily_reviews = DailyReviewRepository(self.store)
+
+    def info(self) -> dict[str, Any]:
+        return dict(self.runtime)
 
 
 def default_sqlite_path(settings: Settings | None = None) -> Path:

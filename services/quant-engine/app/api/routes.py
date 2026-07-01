@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from datetime import date, datetime
 import json
+from datetime import date, datetime
 
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
@@ -12,7 +12,13 @@ from app.data.symbols import normalize_symbols
 from app.db.repositories import get_repository_registry
 from app.jobs.scanner import scanner_state
 from app.models.engine import ModelEngine
-from app.schemas.market import BacktestRequest, ExportRequest, IngestRequest, ScannerStartRequest, TrainRequest
+from app.schemas.market import (
+    BacktestRequest,
+    ExportRequest,
+    IngestRequest,
+    ScannerStartRequest,
+    TrainRequest,
+)
 from app.services.workflows import (
     BacktestService,
     DailyReviewService,
@@ -25,7 +31,6 @@ from app.services.workflows import (
     ValidationWorkflowService,
 )
 from app.utils.time import UTC
-
 
 router = APIRouter()
 
@@ -46,20 +51,21 @@ async def health() -> dict[str, object]:
     return {
         "status": "ok",
         "time": datetime.now(UTC).isoformat(),
-        "persistence": "sqlite-local" if str(repository.db_path) else "configured",
+        "persistence": repository.info(),
     }
 
 
 @router.get("/config")
 async def config() -> dict[str, object]:
     settings = get_settings()
+    repository = repos()
     return {
         "app_name": settings.app_name,
         "default_symbols": settings.symbol_list,
         "timezone": settings.timezone,
         "min_confidence": settings.min_confidence,
         "fmp_api_key_configured": bool(settings.fmp_api_key),
-        "persistence_path": str(repos().db_path),
+        "persistence": repository.info(),
     }
 
 

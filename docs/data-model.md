@@ -1,6 +1,6 @@
 # Data Model
 
-Core storage is designed around PostgreSQL with TimescaleDB when available. If the Timescale extension is not available, the same tables function as plain PostgreSQL tables. Phase 3 also adds a durable local SQLite fallback at `data/local_repo.sqlite3` for local API runtime and repository tests when Postgres is not configured.
+Core storage is designed around PostgreSQL with TimescaleDB when available. If the Timescale extension is not available, the same tables function as plain PostgreSQL tables. Phase 4 verified the Alembic migration against local Postgres/TimescaleDB with revision `0001_initial`, 17 expected tables, and `timescaledb` installed. The active API repository backend remains the durable local SQLite implementation at `data/local_repo.sqlite3`.
 
 ## Tables
 

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from app.backtesting.engine import BacktestEngine
 from app.models.engine import StatisticalEvidenceEngine

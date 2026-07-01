@@ -3,9 +3,9 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from app.utils.time import UTC
-from zoneinfo import ZoneInfo
 
 try:
     import httpx

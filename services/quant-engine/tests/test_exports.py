@@ -1,9 +1,8 @@
 from datetime import datetime
 
-from app.utils.time import UTC
-
 from app.exports.service import ExportService
-from app.schemas.market import Signal, Side
+from app.schemas.market import Side, Signal
+from app.utils.time import UTC
 
 
 def test_signal_export_csv_and_xlsx(tmp_path, monkeypatch) -> None:

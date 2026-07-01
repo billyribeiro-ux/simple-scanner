@@ -6,7 +6,6 @@ from typing import Any
 from app.quant.types import CandidateSignal
 from app.utils.time import UTC
 
-
 LONG = "LONG"
 SHORT = "SHORT"
 NO_TRADE = "NO_TRADE"

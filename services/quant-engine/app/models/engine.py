@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 from collections import defaultdict
 from datetime import datetime
@@ -12,7 +13,6 @@ from app.config import get_settings
 from app.schemas.market import Label, Outcome
 from app.utils.time import UTC
 from app.validation.engine import ActivationCriteria, ValidationEngine
-
 
 MODEL_SCHEMA_VERSION = "model.v2.baseline_evidence"
 
@@ -213,6 +213,12 @@ class ModelEngine:
 
     def _git_commit(self) -> str | None:
         try:
-            return subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], text=True).strip()
+            git = shutil.which("git")
+            if git is None:
+                return None
+            return subprocess.check_output(  # noqa: S603 - fixed git executable and fixed args.
+                [git, "rev-parse", "--short", "HEAD"],
+                text=True,
+            ).strip()
         except Exception:
             return None

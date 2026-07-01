@@ -1,11 +1,10 @@
 from datetime import datetime, timedelta
-
-from app.utils.time import UTC
 from zoneinfo import ZoneInfo
 
 from app.features.engine import FeatureEngine
 from app.labels.engine import LabelingEngine
 from app.schemas.market import Bar, Outcome, Side
+from app.utils.time import UTC
 
 
 def bar(index: int, close: float, volume: int = 1000) -> Bar:

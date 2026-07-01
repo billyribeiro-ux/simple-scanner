@@ -4,122 +4,89 @@ Report status date: 2026-07-01
 
 ## Executive State
 
-Phase 3 backend runtime and persistence hardening is complete for code scope. The API source of truth is now repository-backed instead of route-level `_MEMORY`, scanner runs and signals persist, validation/model activation artifacts persist, export metadata persists, and runtime docs/commands have been hardened.
+Phase 4 target runtime bring-up is complete for the local machine. Python `3.14.6` is installed through Homebrew, `services/quant-engine/.venv` exists on Python `3.14.6`, backend dependencies install, backend pytest/ruff/mypy pass through the venv, Docker Postgres/TimescaleDB plus Redis are healthy, Alembic upgrades the target database to `0001_initial`, and the persisted FastAPI vertical-slice smoke test passes with a mocked provider and no FMP key.
 
-Full target-runtime verification is still blocked because Python `3.14.6` and `services/quant-engine/.venv` are missing on this machine. Docker is reachable and Postgres/TimescaleDB plus Redis are currently healthy.
-
-This remains a local-first scanner, research, validation, backtest, signal, and export platform only. It is not a broker, auto-trader, order router, or profitability system.
+This remains a local-first scanner, research, validation, backtest, signal, and export platform only. It is not a broker, auto-trader, order router, self-learning system, or profitability system.
 
 ## Runtime Pins
 
 - Node target: `24.18.0`
 - Package manager: `pnpm@11.5.2` through Corepack
 - Python target: `3.14.6`, documented as the latest stable Python release for this project as of June 30, 2026
-- Current local Node: `25.3.0`, which triggers engine warnings
-- Current local Python: system `python3` is `3.9.6`; `python3.14` is not installed
-- Backend venv: missing
+- Current local Node: `25.3.0`, which triggers an expected target warning
+- Current local Python: `python3.14` and Homebrew `python3` report `3.14.6`
+- Backend venv: `services/quant-engine/.venv` on Python `3.14.6`
 
-## What Exists Now
-
-- SvelteKit/Svelte 5 frontend with Dashboard, Research, Backtest, Scanner, Exports, and Settings pages.
-- FastAPI quant engine with FMP provider abstraction, redacted client, feature builder, label builder, setup rules, regime classifier, statistical evidence model, signal scorer, scanner loop, backtest summary, and CSV/XLSX exports.
-- Repository-backed local SQLite persistence for API runtime when Postgres is not configured.
-- Aligned SQLAlchemy metadata and Alembic migration for PostgreSQL/TimescaleDB target.
-- Docker Compose for TimescaleDB/Postgres and Redis.
-- Validation/model activation guard based on persisted validation reports.
-- Scanner persistence for runs, context bars during real runs, provider requests, and live signals.
-- Export persistence for generated artifact metadata.
-
-## Current Persistence Contract
-
-See `docs/persistence-architecture.md`.
-
-Implemented repositories cover:
-
-- symbols
-- bars
-- features
-- candidate signals
-- labels
-- validation reports
-- model runs
-- active models
-- live signals
-- scanner runs
-- provider requests
-- exports
-- daily reviews
-
-The API no longer uses `_MEMORY` as workflow state. SSE queue state remains transient delivery plumbing only.
-
-## Runtime Commands
-
-Primary commands:
+## Exact Setup Commands
 
 ```bash
 make help
 make doctor
 make setup-backend
+corepack pnpm install
 make db-up
 make db-migrate
+make db-inspect
+```
+
+The local Postgres/Timescale container is mapped to host port `15432` because this machine already has another Postgres on `5432` and another Docker project on `55432`.
+
+## Exact Verification Commands
+
+```bash
 make quant-test
 make backend-test
 make backend-lint
 make backend-typecheck
-make api-dev
-make web-dev
-make dev
+make api-smoke
+make fmp-smoke
+corepack pnpm check
+corepack pnpm build
+corepack pnpm test
+corepack pnpm lint
+python3 -m compileall services/quant-engine/app services/quant-engine/tests
+git diff --check
 ```
 
-See `docs/runtime-setup.md` for the full runtime path.
+`make fmp-smoke` is optional and gated. It skips with a non-secret message when `FMP_API_KEY` is not configured.
 
-## Checks Run
+## Persistence Contract
 
-Passed:
+The active FastAPI repository backend is SQLite:
 
-- `make help`
-- `make doctor` with expected missing target runtime warnings
-- `docker compose config`
-- `docker compose up -d postgres redis`
-- `docker compose ps`: Postgres and Redis healthy
-- `make quant-test`: 44 passed with system Python fallback
-- `cd services/quant-engine && PYTHONPATH=. python3 -m pytest`: 51 passed
-- `corepack pnpm check`
-- `corepack pnpm build`
-- `corepack pnpm test`
-- `corepack pnpm lint`
-- `python3 -m compileall services/quant-engine/app services/quant-engine/tests`
-- `git diff --check`
-- Secret scan for the supplied FMP key without echoing it
+- Backend type: `sqlite`
+- Runtime mode without `DATABASE_URL`: `sqlite-local`
+- Default path: `data/local_repo.sqlite3`
+- Safe status fields: `GET /health`, `GET /config`, and `make doctor`
 
-Blocked:
+Postgres/TimescaleDB is migration-verified and remains the intended serious research/production target schema. The current repository implementation is still SQLite-only. If `DATABASE_URL` is set to Postgres, the API reports `sqlite-fallback` rather than pretending Postgres is the active API database.
 
-- `make setup-backend`: `python3.14` missing
-- `make db-migrate`: backend venv missing
-- `make backend-test`: backend venv missing
-- `make backend-lint`: backend venv missing
-- `make backend-typecheck`: backend venv missing
+## What Is Safe To Trust
 
-## FMP API Key Handling
+- Deterministic quant feature/label/backtest/model baseline tests.
+- Repository-backed API route state instead of route-level `_MEMORY`.
+- SQLite local API persistence and reinitialization survival for bars, features, labels, model runs, active model, scanner runs/signals, exports, and daily reviews.
+- Alembic migration success against local Postgres/TimescaleDB on host port `15432`.
+- CSV/XLSX export generation from persisted signals and daily reviews.
+- Activation guard requiring a persisted accepted validation report.
+- Secret redaction behavior and absence of the supplied FMP key from repo files.
 
-The supplied FMP API key was not written to repository files. The project expects it at runtime as `FMP_API_KEY` in the shell or an ignored local env file such as `.env.local`.
+## What Is Not Safe To Trust Yet
 
-Confirmed:
+- Postgres-backed FastAPI repository runtime. The migration exists; the repository implementation still writes to SQLite.
+- Live FMP entitlement coverage. The live smoke was not run because `FMP_API_KEY` is not loaded into the process environment or ignored env files.
+- Backtest realism. Current backtest remains label-derived evidence, not market replay execution.
+- Model calibration. V1 remains a statistical evidence baseline, not a calibrated ML classifier.
+- Live trading readiness. No broker execution or order routing exists.
 
-- `.env` and `.env.local` are ignored
-- `FMP_API_KEY` is absent from the shell used during the audit
-- secret scan found no occurrence of the supplied key in repository files
+## Current Blockers
 
-## Immediate Next Work
-
-1. Install Python `3.14.6`.
-2. Run `make setup-backend`.
-3. Run `make backend-test`, `make backend-lint`, and `make backend-typecheck`.
-4. Run `make db-migrate` against local Postgres/TimescaleDB.
-5. Smoke-test repository-backed API flows with mocked or controlled FMP inputs.
+- Local Node is `25.3.0`, while the project target is `24.18.0`. Corepack pnpm still runs, but frontend commands emit the expected engine warning.
+- Postgres repository runtime is not implemented yet.
+- Optional live FMP smoke requires `FMP_API_KEY` to be configured outside the committed repo.
 
 ## Exact Next Recommended Phase
 
-Phase 4: Target Runtime Bring-Up, Migration Verification, and API Smoke Testing.
+Phase 5: PostgreSQL repository runtime implementation and parity testing.
 
-Start Phase 4 by installing Python `3.14.6`, creating the backend venv, running full backend quality gates, applying migrations to the healthy local Postgres service, and smoke-testing the persisted API vertical slice.
+The next phase should implement a Postgres-backed repository adapter behind the existing repository contract, run the same API smoke suite against SQLite and Postgres, and keep REST polling as the live-data default. Do not add broker execution, WebSocket scope, options data, or ML calibration in that phase.

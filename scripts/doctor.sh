@@ -99,6 +99,18 @@ PY
   else
     warn "backend dependency import check failed; rerun make setup-backend"
   fi
+  persistence_backend="$(PYTHONPATH="$service_dir" "$venv_bin/python" - <<'PY' 2>/dev/null || true
+from app.db.repositories import persistence_backend_info
+
+info = persistence_backend_info()
+print(f"{info['backend']} {info['runtime']} database_url_kind={info['database_url_kind']}")
+PY
+)"
+  if [ -n "$persistence_backend" ]; then
+    ok "active API persistence backend $persistence_backend"
+  else
+    warn "could not inspect active API persistence backend"
+  fi
 fi
 
 if docker info >/dev/null 2>&1; then
@@ -137,4 +149,4 @@ else
   warn "one or more local runtime artifact paths are not git-ignored"
 fi
 
-printf "\nDoctor finished. Missing target runtime tools block full backend verification, not pure quant unit tests.\n"
+printf "\nDoctor finished. Review warnings for optional config, local version drift, or missing live-provider credentials.\n"

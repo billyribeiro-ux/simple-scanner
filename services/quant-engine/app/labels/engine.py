@@ -3,12 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from hashlib import sha256
-from typing import Any
 
 from app.quant.types import CandidateSignal, LabelRow
 from app.schemas.market import Bar, Label, Outcome, Side
 from app.signals.candidates import CandidateSignalEngine
-
 
 LABEL_CONFIG_VERSION = "labels.v2.no_leakage"
 
@@ -133,7 +131,9 @@ class LabelingEngine:
                 stop_hit_now = bar.high >= stop
                 target_hits_now = [bar.low <= target for target in targets]
 
-            hit_targets = [old or new for old, new in zip(hit_targets, target_hits_now)]
+            hit_targets = [
+                old or new for old, new in zip(hit_targets, target_hits_now, strict=True)
+            ]
             target_2_hit_now = target_hits_now[1]
             if stop_hit_now and (
                 target_2_hit_now

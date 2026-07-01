@@ -1,10 +1,9 @@
 from datetime import datetime
-
-from app.utils.time import UTC
 from zoneinfo import ZoneInfo
 
 from app.schemas.market import Bar, Side
 from app.signals.engine import SignalEngine
+from app.utils.time import UTC
 
 
 def test_signal_suppresses_hostile_regime() -> None:

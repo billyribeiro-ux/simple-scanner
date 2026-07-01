@@ -2,7 +2,7 @@ PYTHON ?= python3
 PYTHON314 ?= python3.14
 SERVICE_DIR := services/quant-engine
 
-.PHONY: help doctor setup setup-backend require-backend-venv quant-test backend-test backend-lint backend-typecheck dev api-dev web-dev db-up db-down db-migrate db-reset-dev ingest features labels train validate backtest scanner export test lint typecheck
+.PHONY: help doctor setup setup-backend require-backend-venv quant-test backend-test backend-lint backend-typecheck api-smoke fmp-smoke dev api-dev web-dev db-up db-down db-migrate db-inspect db-reset-dev ingest features labels train validate backtest scanner export test lint typecheck
 
 help:
 	@printf "Adaptive Market Decoder commands\n\n"
@@ -17,12 +17,15 @@ help:
 	@printf "  make db-up               Start local Postgres/Timescale and Redis\n"
 	@printf "  make db-down             Stop local database services\n"
 	@printf "  make db-migrate          Run Alembic migrations\n"
+	@printf "  make db-inspect          Inspect migrated Postgres/Timescale schema\n"
 	@printf "  make db-reset-dev        DEV ONLY: delete local database volumes, restart, and migrate\n\n"
 	@printf "Quality:\n"
 	@printf "  make quant-test          Run pure quant tests, with python3 fallback when venv is absent\n"
 	@printf "  make backend-test        Run full backend pytest in the target venv\n"
 	@printf "  make backend-lint        Run backend ruff checks\n"
 	@printf "  make backend-typecheck   Run backend mypy checks\n"
+	@printf "  make api-smoke           Run persisted FastAPI vertical-slice smoke test\n"
+	@printf "  make fmp-smoke           Run optional live FMP REST smoke if FMP_API_KEY is configured\n"
 	@printf "  make test lint typecheck Run backend and frontend quality gates\n"
 
 setup:
@@ -68,6 +71,12 @@ backend-lint: require-backend-venv
 backend-typecheck: require-backend-venv
 	cd $(SERVICE_DIR) && .venv/bin/mypy app
 
+api-smoke: require-backend-venv
+	cd $(SERVICE_DIR) && PYTHONPATH=. .venv/bin/python -m pytest tests/test_persisted_api_smoke.py
+
+fmp-smoke: require-backend-venv
+	PYTHONPATH=$(SERVICE_DIR) $(SERVICE_DIR)/.venv/bin/python scripts/fmp_smoke.py
+
 dev:
 	$(MAKE) db-up
 	$(MAKE) -j2 api-dev web-dev
@@ -86,6 +95,9 @@ db-down:
 
 db-migrate: require-backend-venv
 	cd $(SERVICE_DIR) && .venv/bin/alembic upgrade head
+
+db-inspect: require-backend-venv
+	PYTHONPATH=$(SERVICE_DIR) $(SERVICE_DIR)/.venv/bin/python scripts/inspect_db_schema.py
 
 db-reset-dev:
 	@printf "\nDEV ONLY: this deletes local Postgres/Redis containers and named volumes for this compose project.\n"

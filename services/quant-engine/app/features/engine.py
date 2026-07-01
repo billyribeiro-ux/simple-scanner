@@ -10,7 +10,6 @@ from zoneinfo import ZoneInfo
 
 from app.utils.time import UTC
 
-
 FEATURE_SET_VERSION = "features.v2.no_leakage"
 ET = ZoneInfo("America/New_York")
 RTH_START_MINUTE = 9 * 60 + 30
@@ -116,7 +115,7 @@ class FeatureEngine:
         output: list[dict[str, object]] = []
 
         sessions = sorted(grouped.items(), key=lambda item: (item[0][0], item[0][1], item[0][2]))
-        for (symbol, interval, session_date), session_bars in sessions:
+        for (symbol, interval, _session_date), session_bars in sessions:
             previous_stats = previous_session_stats.get((symbol, interval))
             rows = self._build_session_features(
                 session_bars,

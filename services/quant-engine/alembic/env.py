@@ -14,7 +14,8 @@ if config.config_file_name is not None:
 
 settings = get_settings()
 if settings.database_url:
-    config.set_main_option("sqlalchemy.url", settings.database_url.replace("+asyncpg", ""))
+    migration_url = settings.database_url.replace("+asyncpg", "+psycopg")
+    config.set_main_option("sqlalchemy.url", migration_url)
 
 target_metadata = metadata
 

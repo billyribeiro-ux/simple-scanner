@@ -4,14 +4,14 @@ Status date: 2026-07-01
 
 ## Summary
 
-Phase 3 replaces API route `_MEMORY` workflow state with repository-backed persistence. The local-first API runtime now uses a durable SQLite repository at `data/local_repo.sqlite3` when no PostgreSQL URL is configured. PostgreSQL/TimescaleDB remains the intended production database target, and the SQLAlchemy metadata plus Alembic migration have been aligned to the same table contract.
+The API route `_MEMORY` workflow state has been replaced with repository-backed persistence. The local-first API runtime currently uses a durable SQLite repository at `data/local_repo.sqlite3` when no SQLite URL override is provided. PostgreSQL/TimescaleDB remains the intended serious research/production database target, and Phase 4 verified that SQLAlchemy metadata plus Alembic migration upgrade the local TimescaleDB container to the same table contract.
 
 This is still a scanner, research, validation, backtest, model metadata, signal, and export platform. It is not a broker, not an order router, and not a profitability engine.
 
 ## Runtime Stores
 
 - Local API fallback: `data/local_repo.sqlite3`, ignored by git along with SQLite WAL sidecars.
-- Production target: PostgreSQL/TimescaleDB through Alembic.
+- Migration-verified target: PostgreSQL/TimescaleDB through Alembic on local host port `15432`.
 - Export artifacts: `exports/`, ignored except `.gitkeep`.
 - Model artifacts: `model_artifacts/`, ignored except `.gitkeep`.
 - FMP secrets: `FMP_API_KEY` from environment or ignored env files only.
@@ -37,6 +37,10 @@ It exposes concrete repositories for:
 - `daily_reviews`
 
 The implementation is synchronous and transaction-scoped for local SQLite. API routes may call it directly because the local workload is small and file-backed; async network I/O remains isolated in FMP provider calls.
+
+`RepositoryRegistry.info()` returns a safe backend descriptor used by `/health`, `/config`, and `make doctor`. It reports backend type, runtime mode, sanitized database URL kind, and local SQLite path without printing connection strings.
+
+If a Postgres `DATABASE_URL` is configured before a Postgres repository adapter exists, the runtime reports `sqlite-fallback` with reason `postgresql_url_configured_but_sqlite_repository_active`.
 
 ## API Source Of Truth
 
@@ -103,7 +107,7 @@ The aligned table set is:
 
 ## Current Limits
 
-- SQLite is the local fallback, not the final production persistence engine.
-- Alembic migrations were not run because the target Python `3.14.6` backend venv is missing.
-- No FMP live ingestion/scanner request was executed because `FMP_API_KEY` is not set in the shell.
+- SQLite is the active API repository backend, not the final production persistence engine.
+- Alembic migrations now pass against local Postgres/TimescaleDB, but API repository writes are not Postgres-backed yet.
+- No live FMP smoke was executed because `FMP_API_KEY` is not loaded in the process environment or ignored env files.
 - No broker execution, order routing, WebSocket entitlement path, options, gamma, Greeks, or internals were added.

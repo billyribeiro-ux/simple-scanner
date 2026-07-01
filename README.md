@@ -8,7 +8,7 @@ Adaptive Market Decoder is a local-first trading research and live signal platfo
 - pnpm via Corepack
 - Python `3.14.6`, the latest stable Python release as of June 30, 2026
 - Docker for PostgreSQL/TimescaleDB and Redis
-- FMP API key in `FMP_API_KEY`
+- Optional FMP API key in `FMP_API_KEY` for live provider smoke and live scanner use
 
 ## Setup
 
@@ -20,6 +20,8 @@ make setup-backend
 corepack pnpm install
 make db-up
 make db-migrate
+make db-inspect
+make api-smoke
 ```
 
 `make doctor` does not print secrets. It reports whether `FMP_API_KEY` and `DATABASE_URL` are present.
@@ -55,10 +57,23 @@ make validate
 make backtest
 make scanner
 make export
+make db-inspect
+make api-smoke
+make fmp-smoke
 make test
 ```
 
 `make quant-test` runs pure deterministic quant tests without FMP, Docker, Redis, Postgres, or internet. If the backend venv is missing, it falls back to `python3` for this pure test path only. Full backend runtime still targets Python `3.14.6`.
+
+`make api-smoke` runs a persisted FastAPI vertical slice with a mocked provider. It does not require FMP, internet, or secrets.
+
+`make fmp-smoke` is optional and runs live FMP REST checks only when `FMP_API_KEY` is configured. Otherwise it skips with a non-secret message.
+
+## Persistence Contract
+
+FastAPI currently uses the SQLite repository backend by default at `data/local_repo.sqlite3`. `GET /health`, `GET /config`, and `make doctor` report the active persistence backend without printing secrets or connection strings.
+
+PostgreSQL/TimescaleDB migrations are verified through Alembic on the local compose database mapped to host port `15432`, but the active API repository implementation is still SQLite-only. Postgres-backed repository runtime is the next major persistence task.
 
 ## Typical Workflow
 

@@ -11,13 +11,14 @@ Status date: 2026-07-01
 
 Local audit result:
 
-- Current Node: `25.3.0`, so pnpm commands warn about unsupported engine.
-- Current Python: system `python3` is `3.9.6`; `python3.14` is not installed.
-- Backend venv: missing.
+- Current Node: `25.3.0`; pnpm commands warn because the project target is Node `24.18.0`.
+- Current Python: `python3.14 --version` reports `3.14.6`.
+- Backend venv: `services/quant-engine/.venv` exists and reports Python `3.14.6`.
 - Docker: reachable.
 - Postgres/TimescaleDB and Redis: healthy after `docker compose up -d postgres redis`.
-- `FMP_API_KEY`: missing from shell.
-- `DATABASE_URL`: missing from shell.
+- Postgres host port: `15432`.
+- `FMP_API_KEY`: missing from this shell during Phase 4 verification.
+- `DATABASE_URL`: missing from this shell; API uses SQLite local fallback.
 
 ## First Checks
 
@@ -36,15 +37,37 @@ make doctor
 - backend venv
 - backend venv tools: `pytest`, `ruff`, `mypy`, `alembic`, `uvicorn`
 - backend dependency imports when the venv exists
-- Docker daemon
-- compose service status
+- active API persistence backend selection
+- Docker daemon and compose service status
 - `DATABASE_URL`
 - `FMP_API_KEY`
 - ignored env/runtime artifact paths
 
-## Backend Setup
+## Python 3.14.6 Install
 
-Install Python `3.14.6`, then:
+On this macOS machine, Python `3.14.6` was installed with Homebrew:
+
+```bash
+brew install python@3.14
+python3.14 --version
+```
+
+Other safe local options:
+
+```bash
+pyenv install 3.14.6
+pyenv local 3.14.6
+```
+
+```bash
+asdf plugin add python
+asdf install python 3.14.6
+asdf local python 3.14.6
+```
+
+Do not create the target backend venv with system Python `3.9`.
+
+## Backend Setup
 
 ```bash
 make setup-backend
@@ -67,10 +90,20 @@ Start local services:
 make db-up
 ```
 
-Run migrations after the backend venv exists:
+Run migrations:
 
 ```bash
 make db-migrate
+make db-inspect
+```
+
+`make db-inspect` confirms the Alembic revision, expected table count, missing tables, and installed extensions. The current local result is:
+
+```text
+alembic_version=0001_initial
+tables=17
+missing_tables=none
+extensions=plpgsql,timescaledb
 ```
 
 Stop local services:
@@ -86,6 +119,24 @@ make db-reset-dev
 ```
 
 `db-reset-dev` deletes local compose volumes after a visible delay. It is not a production command.
+
+## API Persistence Backend
+
+The current FastAPI repository implementation is SQLite-backed. With no `DATABASE_URL`, it writes to:
+
+```text
+data/local_repo.sqlite3
+```
+
+Safe runtime status is available from:
+
+```bash
+make doctor
+curl http://localhost:8000/health
+curl http://localhost:8000/config
+```
+
+If `DATABASE_URL` is set to Postgres before a Postgres repository adapter exists, the API reports `sqlite-fallback` and does not falsely claim Postgres is active.
 
 ## API And Web
 
@@ -109,18 +160,19 @@ make dev
 
 ## Tests And Quality
 
-Pure quant tests can run without Docker, FMP, or backend venv:
+Pure quant tests:
 
 ```bash
 make quant-test
 ```
 
-Full backend gates require the Python `3.14.6` venv:
+Full backend gates:
 
 ```bash
 make backend-test
 make backend-lint
 make backend-typecheck
+make api-smoke
 ```
 
 Frontend gates:
@@ -132,8 +184,10 @@ corepack pnpm test
 corepack pnpm lint
 ```
 
-## FMP Key
+Optional live FMP smoke:
 
-Set `FMP_API_KEY` only in the shell or ignored local env files such as `.env.local`.
+```bash
+make fmp-smoke
+```
 
-Never commit, log, print, export, or expose the key in frontend bundles.
+Set `FMP_API_KEY` only in the shell or ignored local env files such as `.env.local`. Never commit, log, print, export, or expose the key in frontend bundles.
