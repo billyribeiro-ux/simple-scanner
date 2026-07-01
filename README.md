@@ -15,10 +15,14 @@ Adaptive Market Decoder is a local-first trading research and live signal platfo
 ```bash
 cp .env.example .env.local
 # edit .env.local and set FMP_API_KEY
-make setup
+make doctor
+make setup-backend
+corepack pnpm install
 make db-up
 make db-migrate
 ```
+
+`make doctor` does not print secrets. It reports whether `FMP_API_KEY` and `DATABASE_URL` are present.
 
 ## Run
 
@@ -33,13 +37,16 @@ Backend: `http://localhost:8000`
 ## Commands
 
 ```bash
-pnpm install
-pnpm dev
-pnpm build
-pnpm check
-pnpm test
-pnpm lint
+corepack pnpm install
+corepack pnpm dev
+corepack pnpm build
+corepack pnpm check
+corepack pnpm test
+corepack pnpm lint
 
+make doctor
+make setup-backend
+make quant-test
 make ingest
 make features
 make labels
@@ -50,6 +57,8 @@ make scanner
 make export
 make test
 ```
+
+`make quant-test` runs pure deterministic quant tests without FMP, Docker, Redis, Postgres, or internet. If the backend venv is missing, it falls back to `python3` for this pure test path only. Full backend runtime still targets Python `3.14.6`.
 
 ## Typical Workflow
 
