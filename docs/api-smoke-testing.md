@@ -96,6 +96,23 @@ The test sets a non-secret sentinel `FMP_API_KEY` only to exercise scanner gatin
 - `POST /exports/calibration-drift-windows.xlsx`
 - `POST /exports/model-review.xlsx`
 - `POST /exports/model-review.json`
+- `POST /research/cycles`
+- `GET /research/cycles`
+- `GET /research/cycles/{research_cycle_id}`
+- `POST /research/cycles/{research_cycle_id}/dry-run`
+- `POST /research/cycles/{research_cycle_id}/run`
+- `GET /research/cycles/{research_cycle_id}/artifacts`
+- `GET /research/model-proposals`
+- `GET /research/model-proposals/{proposal_id}`
+- `POST /research/model-proposals/{proposal_id}/approve`
+- `POST /research/model-proposals/{proposal_id}/activate`
+- `GET /research/decision-ledger`
+- `GET /operations/research-status`
+- `POST /exports/research-cycle.xlsx`
+- `POST /exports/research-cycle.json`
+- `POST /exports/model-proposal.xlsx`
+- `POST /exports/model-proposal.json`
+- `POST /exports/champion-challenger-comparison.xlsx`
 - `POST /review/daily`
 - `GET /review/daily/{date}`
 - `POST /exports/daily-review.xlsx`
@@ -128,17 +145,24 @@ The smoke test:
 - trains a `replay_aware_baseline` model from the persisted replay run;
 - retrieves evidence cells, scores an inline candidate, persists a score audit, validates with `replay_aware_walk_forward`, and activates through the replay-aware validation guard;
 - creates a calibration drift report and model review report;
+- creates, dry-runs, and runs a controlled research cycle with explicit validation/calibration/drift/review evidence IDs;
+- verifies the cycle creates persisted artifacts and does not activate during cycle run;
+- creates a champion/challenger comparison and model proposal;
+- verifies proposal approval does not activate the model;
+- verifies proposal activation is blocked without `confirm_manual_activation=true`;
+- verifies explicit confirmed proposal activation uses the existing replay-aware activation guard;
+- verifies decision-ledger and operations research-status routes;
 - starts the scanner with mocked quotes/context;
 - persists a scanner run and live signals;
 - exports live signals CSV and XLSX from persisted signals;
 - exports replay summary XLSX plus metrics JSON and replay trades CSV/XLSX from persisted replay data;
 - exports replay sensitivity summary XLSX, scenarios CSV/XLSX, and metrics JSON;
 - exports replay-aware model summary XLSX, evidence cells CSV/XLSX, score audits CSV/XLSX, and replay-aware validation XLSX;
-- exports replay window set XLSX, calibration drift XLSX/JSON/windows CSV/XLSX, and model review XLSX/JSON;
+- exports replay window set XLSX, calibration drift XLSX/JSON/windows CSV/XLSX, model review XLSX/JSON, research cycle XLSX/JSON, model proposal XLSX/JSON, and champion/challenger comparison XLSX;
 - persists a daily review and exports JSON/CSV/XLSX review artifacts;
 - reinitializes the repository;
 - re-queries bars, features, labels, replay runs/trades, sensitivity runs, comparisons, active model, scanner run, signals, exports, and daily review from disk.
-- re-queries replay window sets/results, calibration drift reports/windows, and model review reports from disk.
+- re-queries replay window sets/results, calibration drift reports/windows, model review reports, research cycles/artifacts, model proposals, and decision-ledger rows from disk.
 
 ## Known Limits
 
@@ -163,3 +187,7 @@ The persisted API smoke now covers:
 ## Phase 10 Coverage
 
 The persisted API smoke now covers data quality reporting, replay window set orchestration, calibration drift reporting, model review reporting, Phase 10 exports, and reopened repository reads for all new Phase 10 tables.
+
+## Phase 11 Coverage
+
+The persisted API smoke now covers controlled research cycle create/dry-run/run/list/get/artifacts, explicit champion/challenger evidence IDs, proposal approve/activate flow, blocked activation without manual confirmation, operations research status, decision-ledger reads, Phase 11 exports, and reopened repository reads for research cycles, cycle artifacts, comparisons, proposals, and ledger rows.

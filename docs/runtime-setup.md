@@ -11,7 +11,7 @@ Status date: 2026-07-01
 
 Local audit result:
 
-- Current Node: `25.3.0`; pnpm commands warn because the project target is Node `24.18.0`.
+- Current Homebrew Node: `25.3.0`; on 2026-07-01 it aborts before Corepack can run because a `simdjson` dynamic library is missing. Install/use exact Node `24.18.0` before treating frontend gates as target-runtime verification.
 - Current Python: `python3.14 --version` reports `3.14.6`.
 - Backend venv: `services/quant-engine/.venv` exists and reports Python `3.14.6`.
 - Docker: reachable.

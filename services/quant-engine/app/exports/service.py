@@ -677,6 +677,127 @@ class ExportService:
         path.write_text(json.dumps(report, indent=2, default=str, allow_nan=False), encoding="utf-8")
         return path
 
+    def export_research_cycle_xlsx(
+        self,
+        cycle: dict[str, object],
+        artifacts: Iterable[dict[str, object]],
+    ) -> Path:
+        research_cycle_id = str(cycle.get("research_cycle_id") or "latest")
+        path = self.settings.exports_dir / f"research_cycle_{research_cycle_id}.xlsx"
+        artifact_rows = list(artifacts)
+        sheets = {
+            "Summary": [["metric", "value"], *[[key, self._cell_value(value)] for key, value in dict(cycle.get("summary") or {}).items()]],
+            "Cycle Config": [["key", "value"], *[[key, self._cell_value(value)] for key, value in dict(cycle.get("config") or {}).items()]],
+            "Data Quality": self._artifact_payload_table(artifact_rows, "data_quality"),
+            "Stale Windows": self._metric_sheet(cycle.get("stale_window_status")),
+            "Replay Windows": self._artifact_payload_table(artifact_rows, "replay_window_set"),
+            "Counterfactual Replay": self._id_sheet(cycle.get("counterfactual_replay_run_ids")),
+            "Portfolio Replay": self._id_sheet(cycle.get("portfolio_replay_run_ids")),
+            "Sensitivity": self._id_sheet(cycle.get("sensitivity_run_ids")),
+            "Calibration": self._id_sheet(cycle.get("calibration_audit_ids")),
+            "Drift": self._id_sheet(cycle.get("drift_report_ids")),
+            "Model Review": self._id_sheet(cycle.get("model_review_report_ids")),
+            "Champion vs Challenger": self._id_sheet(cycle.get("comparison_ids")),
+            "Proposal": self._id_sheet(cycle.get("proposal_ids")),
+            "Warnings": [["warning"], *[[warning] for warning in list(cycle.get("warnings") or [])]],
+            "Artifacts": self._dict_table(artifact_rows),
+            "Provenance": [
+                ["key", "value"],
+                ["research_cycle_id", research_cycle_id],
+                ["config_hash", cycle.get("config_hash")],
+                ["input_fingerprint", cycle.get("input_fingerprint")],
+                ["git_commit", cycle.get("git_commit")],
+                ["database_revision", cycle.get("database_revision")],
+                ["persistence_backend", cycle.get("persistence_backend")],
+                ["model_activation_unchanged", True],
+            ],
+        }
+        self._write_workbook(path, sheets)
+        return path
+
+    def export_research_cycle_json(
+        self,
+        cycle: dict[str, object],
+        artifacts: Iterable[dict[str, object]],
+    ) -> Path:
+        research_cycle_id = str(cycle.get("research_cycle_id") or "latest")
+        path = self.settings.exports_dir / f"research_cycle_{research_cycle_id}.json"
+        path.write_text(
+            json.dumps({"cycle": cycle, "artifacts": list(artifacts)}, indent=2, default=str, allow_nan=False),
+            encoding="utf-8",
+        )
+        return path
+
+    def export_model_proposal_xlsx(
+        self,
+        proposal: dict[str, object],
+        ledger: Iterable[dict[str, object]],
+    ) -> Path:
+        proposal_id = str(proposal.get("proposal_id") or "latest")
+        path = self.settings.exports_dir / f"model_proposal_{proposal_id}.xlsx"
+        sheets = {
+            "Summary": [["key", "value"], ["proposal_id", proposal_id], ["status", proposal.get("status")], ["approval_required", proposal.get("approval_required")]],
+            "Recommended Action": [["key", "value"], ["recommended_action", proposal.get("recommended_action")]],
+            "Readiness": [["key", "value"], ["readiness_status", proposal.get("readiness_status")]],
+            "Champion": [["key", "value"], ["model_version", proposal.get("champion_model_version")], *[[key, self._cell_value(value)] for key, value in dict(proposal.get("champion_metrics") or {}).items()]],
+            "Challenger": [["key", "value"], ["model_version", proposal.get("challenger_model_version")], *[[key, self._cell_value(value)] for key, value in dict(proposal.get("challenger_metrics") or {}).items()]],
+            "Delta Metrics": self._metric_sheet(proposal.get("delta_metrics")),
+            "Gates": self._metric_sheet(proposal.get("pass_fail_gates")),
+            "Rejection Reasons": [["reason"], *[[reason] for reason in list(proposal.get("rejection_reasons") or [])]],
+            "Approval History": self._dict_table(list(ledger)),
+            "Artifacts": [
+                ["artifact_type", "ids"],
+                ["validation_report_ids", self._cell_value(proposal.get("validation_report_ids") or [])],
+                ["calibration_audit_ids", self._cell_value(proposal.get("calibration_audit_ids") or [])],
+                ["drift_report_ids", self._cell_value(proposal.get("drift_report_ids") or [])],
+                ["model_review_report_ids", self._cell_value(proposal.get("model_review_report_ids") or [])],
+                ["comparison_ids", self._cell_value(proposal.get("comparison_ids") or [])],
+                ["replay_run_ids", self._cell_value(proposal.get("replay_run_ids") or [])],
+                ["window_set_ids", self._cell_value(proposal.get("window_set_ids") or [])],
+            ],
+            "Provenance": [
+                ["key", "value"],
+                ["research_cycle_id", proposal.get("research_cycle_id")],
+                ["created_at", proposal.get("created_at")],
+                ["updated_at", proposal.get("updated_at")],
+                ["activation_id", proposal.get("activation_id")],
+                ["explicit_activation_required", True],
+            ],
+        }
+        self._write_workbook(path, sheets)
+        return path
+
+    def export_model_proposal_json(self, proposal: dict[str, object], ledger: Iterable[dict[str, object]]) -> Path:
+        proposal_id = str(proposal.get("proposal_id") or "latest")
+        path = self.settings.exports_dir / f"model_proposal_{proposal_id}.json"
+        path.write_text(
+            json.dumps({"proposal": proposal, "ledger": list(ledger)}, indent=2, default=str, allow_nan=False),
+            encoding="utf-8",
+        )
+        return path
+
+    def export_champion_challenger_comparison_xlsx(self, comparison: dict[str, object]) -> Path:
+        comparison_id = str(comparison.get("comparison_id") or "latest")
+        path = self.settings.exports_dir / f"champion_challenger_comparison_{comparison_id}.xlsx"
+        sheets = {
+            "Summary": [
+                ["key", "value"],
+                ["comparison_id", comparison_id],
+                ["recommended_action", comparison.get("recommended_action")],
+                ["readiness_status", comparison.get("readiness_status")],
+                ["diagnostic_only", True],
+            ],
+            "Champion": [["key", "value"], ["model_version", comparison.get("champion_model_version")], *[[key, self._cell_value(value)] for key, value in dict(comparison.get("champion_metrics") or {}).items()]],
+            "Challenger": [["key", "value"], ["model_version", comparison.get("challenger_model_version")], *[[key, self._cell_value(value)] for key, value in dict(comparison.get("challenger_metrics") or {}).items()]],
+            "Delta Metrics": self._metric_sheet(comparison.get("delta_metrics")),
+            "Gates": self._metric_sheet(comparison.get("gate_results")),
+            "Better Flags": [["flag"], *[[flag] for flag in list(comparison.get("challenger_better_flags") or [])]],
+            "Worse Flags": [["flag"], *[[flag] for flag in list(comparison.get("challenger_worse_flags") or [])]],
+            "Warnings": [["warning"], *[[warning] for warning in list(comparison.get("warnings") or [])]],
+        }
+        self._write_workbook(path, sheets)
+        return path
+
     def _signal_row(self, signal: Signal) -> dict[str, object]:
         payload = signal.model_dump(mode="json")
         payload["side"] = signal.side.value
@@ -923,6 +1044,15 @@ class ExportService:
         sheet.append(columns)
         for row in rows:
             sheet.append([self._cell_value(row.get(column)) for column in columns])
+
+    def _id_sheet(self, payload: object) -> list[list[object]]:
+        values = list(payload) if isinstance(payload, list) else []
+        return [["id"], *[[self._cell_value(value)] for value in values]] if values else [["status", "message"], ["empty", "No IDs available."]]
+
+    def _artifact_payload_table(self, artifacts: list[dict[str, object]], artifact_type: str) -> list[list[object]]:
+        matches = [artifact for artifact in artifacts if artifact.get("artifact_type") == artifact_type]
+        payloads = [artifact.get("payload") or artifact for artifact in matches]
+        return self._dict_table(payloads)
 
     def _write_workbook(self, path: Path, sheets: dict[str, list[list[object]]]) -> None:
         if Workbook is None:

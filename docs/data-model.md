@@ -1,6 +1,6 @@
 # Data Model
 
-Core storage is designed around PostgreSQL with TimescaleDB when available. If the Timescale extension is not available, the same tables function as plain PostgreSQL tables. Phase 10 advances Alembic to revision `0007_phase10_review`, adding replay window orchestration, calibration drift, and model review persistence on top of Phase 9 counterfactual calibration. The API repository runtime supports both SQLite local storage and PostgreSQL.
+Core storage is designed around PostgreSQL with TimescaleDB when available. If the Timescale extension is not available, the same tables function as plain PostgreSQL tables. Phase 11 advances Alembic to revision `0008_phase11_research`, adding controlled research cycles, champion/challenger comparisons, model proposals, decision-ledger records, and cycle artifacts on top of Phase 10 review persistence. The API repository runtime supports both SQLite local storage and PostgreSQL.
 
 ## Tables
 
@@ -28,6 +28,11 @@ Core storage is designed around PostgreSQL with TimescaleDB when available. If t
 - `backtest_comparisons`: label-derived vs replay comparison summaries and JSON payload.
 - `simulated_trades`: taken and skipped candidate replay rows with signal timestamp, entry/exit assumptions, prices, R metrics, MFE/MAE, ambiguity policy, status, skip reason, and JSON payload.
 - `pipeline_build_windows`: stale/dirty metadata by artifact type, symbol, interval, session date, version, and affected timestamp range for features, candidates, labels, and replay awareness.
+- `research_cycles`: reproducible daily/manual/ad-hoc governance cycles with config hash, input fingerprint, data-quality/stale-window summaries, source IDs, status transitions, backend, database revision, and non-secret provenance.
+- `research_cycle_artifacts`: source references and payload snapshots created or reused during a research cycle.
+- `champion_challenger_comparisons`: diagnostic champion-vs-challenger deltas, gates, readiness, recommendation, warnings, and context.
+- `model_proposals`: proposal lifecycle state, champion/challenger IDs and metrics, evidence summaries, pass/fail gates, approval metadata, and explicit activation metadata.
+- `model_decision_ledger`: append-only model-governance decisions for cycles, proposals, activation requests, blocked activations, and activations.
 
 ## Signal Fields
 
@@ -56,3 +61,13 @@ Alembic is now `0007_phase10_review`. New persisted tables are `replay_window_se
 `model_calibration_drift_reports` stores advisory drift severity, drift flags, score/grade/action bin drift, stability metrics, linked calibration/window/replay IDs, warnings, and config. `model_calibration_drift_windows` stores per-window drift metrics and flags.
 
 `model_review_reports` stores advisory readiness status, validation/calibration/drift/sensitivity/comparison references, unresolved warnings, and `model_activation_unchanged=true` in summaries. Review reports never activate or deactivate models.
+
+## Phase 11 Update
+
+Alembic is now `0008_phase11_research`. New persisted tables are `research_cycles`, `research_cycle_artifacts`, `champion_challenger_comparisons`, `model_proposals`, and `model_decision_ledger`.
+
+Research cycles store controlled adaptation evidence, not autonomous learning state. A cycle can be `CREATED`, `RUNNING`, `COMPLETED`, `FAILED`, or `BLOCKED`; it records `config_hash`, `input_fingerprint`, explicit artifact IDs, `database_revision`, `persistence_backend`, and warnings without secrets.
+
+Model proposals separate review from activation. `APPROVED_FOR_ACTIVATION` is not active deployment; activation requires a separate explicit call with manual confirmation and the existing validation guard. Proposals with `KEEP_CHAMPION`, `REJECT_CHALLENGER`, or `BLOCK_ALL_CHANGES` recommendations cannot be approved for activation.
+
+The decision ledger is append-only for normal operation. It records evidence references and actor strings, but never API keys, database passwords, or provider secrets.

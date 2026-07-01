@@ -4,7 +4,7 @@ Status date: 2026-07-01
 
 ## Summary
 
-The API route `_MEMORY` workflow state has been replaced with repository-backed persistence. The local-first API runtime uses SQLite at `data/local_repo.sqlite3` when no database URL is configured, and it uses PostgreSQL/TimescaleDB when `DATABASE_URL` points at a migrated Postgres database. Phase 10 verifies the same persisted API vertical slice against both backends, including candidate market replay, counterfactual replay, sensitivity, calibration audits, replay window sets/results, calibration drift reports, and model review reports.
+The API route `_MEMORY` workflow state has been replaced with repository-backed persistence. The local-first API runtime uses SQLite at `data/local_repo.sqlite3` when no database URL is configured, and it uses PostgreSQL/TimescaleDB when `DATABASE_URL` points at a migrated Postgres database. Phase 11 verifies the same persisted API vertical slice against both backends, including candidate market replay, counterfactual replay, sensitivity, calibration audits, replay window sets/results, calibration drift reports, model review reports, research cycles, champion/challenger comparisons, model proposals, decision-ledger events, operations research status, and exports.
 
 This is still a scanner, research, validation, backtest, model metadata, signal, and export platform. It is not a broker, not an order router, and not a profitability engine.
 
@@ -12,7 +12,7 @@ This is still a scanner, research, validation, backtest, model metadata, signal,
 
 - Local default: `data/local_repo.sqlite3`, ignored by git along with SQLite WAL sidecars.
 - Configured SQLite: `sqlite:///...` paths, including `AMD_SQLITE_PATH` for local test/runtime overrides.
-- PostgreSQL runtime: sync SQLAlchemy/psycopg repository store against Alembic revision `0007_phase10_review` on local host port `15432`.
+- PostgreSQL runtime: sync SQLAlchemy/psycopg repository store against Alembic revision `0008_phase11_research` on local host port `15432`.
 - Export artifacts: `exports/`, ignored except `.gitkeep`.
 - Model artifacts: `model_artifacts/`, ignored except `.gitkeep`.
 - FMP secrets: `FMP_API_KEY` from environment or ignored env files only.
@@ -37,6 +37,10 @@ It exposes concrete repositories for:
 - `replay_windows`
 - `model_calibration_drift`
 - `model_review_reports`
+- `research_cycles`
+- `champion_challenger_comparisons`
+- `model_proposals`
+- `model_decision_ledger`
 - `active_models`
 - `live_signals`
 - `scanner_runs`
@@ -76,6 +80,12 @@ Backend selection is explicit:
 - `/models/{model_version}/calibration-audit` writes persisted calibration audits.
 - `/models/{model_version}/calibration-drift` writes persisted calibration drift reports.
 - `/models/{model_version}/review-report` writes persisted advisory model review reports.
+- `/research/cycles` writes persisted controlled research cycle records.
+- `/research/cycles/{research_cycle_id}/run` writes cycle artifacts, champion/challenger comparisons, proposals, and decision-ledger events without activating models.
+- `/research/model-proposals/{proposal_id}/approve` writes approval state and ledger entries without activation.
+- `/research/model-proposals/{proposal_id}/activate` is the explicit manual proposal activation path; it still calls the existing activation guard.
+- `/research/decision-ledger` reads append-only governance decisions.
+- `/operations/research-status` reads latest cycle/proposal/model-review/drift/stale/data-quality state without mutation.
 - `/data/quality-report` reads persisted bars, pipeline windows, and provider requests to report data quality.
 - `/models/validate` writes validation reports.
 - `/models/validate?validation_mode=replay_aware_walk_forward` writes replay-aware validation reports with purpose `replay_aware_validation`.
@@ -153,6 +163,11 @@ The aligned table set is:
 - `model_calibration_drift_reports`
 - `model_calibration_drift_windows`
 - `model_review_reports`
+- `research_cycles`
+- `research_cycle_artifacts`
+- `champion_challenger_comparisons`
+- `model_proposals`
+- `model_decision_ledger`
 
 ## Incremental Build Windows
 
@@ -180,3 +195,11 @@ New persisted API/export surfaces include calibration audit create/list/get/bins
 PostgreSQL now verifies Alembic revision `0007_phase10_review`. SQLite bootstrap and Postgres migrations include replay window sets/results, calibration drift reports/windows, and model review reports.
 
 New persisted API/export surfaces include replay window set create/list/get/run/export, data quality reporting, calibration drift create/list/get/windows, model review report create/list/get, replay window set XLSX, calibration drift XLSX/JSON/window CSV/XLSX, and model review XLSX/JSON.
+
+## Phase 11 Persistence Update
+
+PostgreSQL now verifies Alembic revision `0008_phase11_research`. SQLite bootstrap and Postgres migrations include `research_cycles`, `research_cycle_artifacts`, `champion_challenger_comparisons`, `model_proposals`, and `model_decision_ledger`.
+
+New persisted API/export surfaces include research cycle create/list/get/run/dry-run/artifacts/export, model proposal list/get/approve/reject/activate, decision ledger filters, operations research status, research cycle XLSX/JSON, model proposal XLSX/JSON, and champion/challenger comparison XLSX.
+
+Phase 11 adds explicit governance guardrails: a research cycle never silently activates; approval is persisted but not activation; proposal activation requires a separate confirmation flag; rejected, blocking, keep-champion, reject-challenger, and block-all-changes proposals cannot activate.

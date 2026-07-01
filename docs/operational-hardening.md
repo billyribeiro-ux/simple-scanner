@@ -4,22 +4,22 @@ Status date: 2026-07-01
 
 ## Scope
 
-Phase 10 hardens replay-aware model selection with multi-window replay orchestration, calibration drift reporting, model review reporting, data quality reporting, and export provenance. It does not add broker execution, order routing, options data, market internals, WebSockets, calibrated ML, self-learning behavior, or profitability claims.
+Phase 11 hardens replay-aware model selection with a controlled research cycle, champion/challenger comparison, model proposal lifecycle, decision ledger, operations research status, and export provenance. It does not add broker execution, order routing, options data, market internals, WebSockets, calibrated ML, self-learning behavior, or profitability claims.
 
 ## Database Revision
 
 Postgres/Timescale targets Alembic revision:
 
 ```text
-0007_phase10_review
+0008_phase11_research
 ```
 
-`make db-inspect` expects the Phase 10 table set, replay sensitivity/comparison indexes, replay-aware evidence/score-audit indexes, calibration/drift/window/review indexes, JSON columns, and `bars` as a Timescale hypertable when the extension is available.
+`make db-inspect` expects the Phase 11 table set, replay sensitivity/comparison indexes, replay-aware evidence/score-audit indexes, calibration/drift/window/review/research-governance indexes, JSON columns, and `bars` as a Timescale hypertable when the extension is available.
 
 Expected verified result after migration:
 
 ```text
-alembic_version=0007_phase10_review
+alembic_version=0008_phase11_research
 missing_tables=none
 missing_indexes=none
 missing_constraints=none
@@ -47,6 +47,18 @@ timescale_hypertables=bars
 
 The existing `replay_runs` table also stores audit fields such as `config_hash`, `input_fingerprint`, `candidate_fingerprint`, and `stale_window_status_json`.
 
+## Phase 11 Tables
+
+- `research_cycles`
+- `research_cycle_artifacts`
+- `champion_challenger_comparisons`
+- `model_proposals`
+- `model_decision_ledger`
+
+Research cycles are diagnostic governance records. They persist status transitions, stale/data-quality state, explicit evidence IDs, config hash, input fingerprint, database revision, backend, warnings, and non-secret provenance.
+
+Model proposals separate approval from activation. Approval writes proposal and ledger state only. Activation requires a separate explicit request with `confirm_manual_activation=true` and the existing validation guard. Rejected, blocking, keep-champion, reject-challenger, and block-all-changes proposals cannot activate.
+
 ## Diagnostics
 
 Use:
@@ -56,7 +68,7 @@ make db-diagnostics
 make db-query-diagnostics
 ```
 
-These run `scripts/db_query_diagnostics.py` and print non-secret row counts, dirty-window counts, recent replay hashes, replay window sets, calibration drift reports, model review reports, and Timescale hypertable status. The script assembles the local development database URL from component environment values instead of storing a literal password-shaped URL.
+These run `scripts/db_query_diagnostics.py` and print non-secret row counts, dirty-window counts, recent replay hashes, replay window sets, calibration drift reports, model review reports, research cycles, model proposals, decision-ledger rows, and Timescale hypertable status. The script assembles the local development database URL from component environment values instead of storing a literal password-shaped URL.
 
 ## Exports
 
@@ -78,6 +90,16 @@ Replay sensitivity exports:
 - `POST /exports/sensitivity-metrics.json`
 
 The sensitivity summary workbook includes `Summary`, `Scenario Metrics`, `Worst Case`, `Median Case`, `Best Case`, `Fragility Flags`, `Gate Results`, `Config`, and `Warnings`.
+
+Phase 11 exports:
+
+- `POST /exports/research-cycle.xlsx`
+- `POST /exports/research-cycle.json`
+- `POST /exports/model-proposal.xlsx`
+- `POST /exports/model-proposal.json`
+- `POST /exports/champion-challenger-comparison.xlsx`
+
+All Phase 11 exports read persisted source IDs, write to ignored export paths, persist export metadata with `file_sha256`, and must contain no secrets.
 
 Replay-aware exports:
 

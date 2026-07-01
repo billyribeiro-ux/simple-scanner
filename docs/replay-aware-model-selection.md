@@ -70,6 +70,12 @@ curl -s -X POST 'http://localhost:8000/models/activate?model_version={model_vers
 
 The validation report records selected vs suppressed candidates, selected replay metrics, per-symbol/setup/regime/time-bucket breakdowns, sensitivity summary, stale status, and rejection reasons.
 
+## Phase 11 Governance Use
+
+Replay-aware models can now be evaluated inside controlled research cycles. A cycle records the active champion, challenger, replay/counterfactual/portfolio run IDs, validation reports, calibration audits, drift reports, model review reports, and the resulting champion/challenger comparison. The comparison is diagnostic only; it may create a model proposal, but it cannot activate a model.
+
+Proposal activation remains explicit and manual. `APPROVED_FOR_ACTIVATION` records eligibility only; a separate proposal activation call with `confirm_manual_activation=true` is required, and the existing replay-aware validation guard still applies.
+
 ## Scoring And Audits
 
 Score persisted or inline candidates with:

@@ -4,7 +4,7 @@ Report status date: 2026-07-01
 
 ## Executive State
 
-Phase 10 calibration drift reporting, multi-window replay orchestration, model review reporting, and data quality reporting are complete in source. Python `3.14.6` is installed through Homebrew, `services/quant-engine/.venv` exists on Python `3.14.6`, Docker Postgres/TimescaleDB plus Redis are the required database runtime, Alembic upgrades the target database to `0007_phase10_review`, and the persisted FastAPI vertical-slice smoke test covers replay windows, calibration drift, model review reports, data quality, and exports with a mocked provider and no FMP key.
+Phase 11 controlled research governance is complete in source. Python `3.14.6` is installed through Homebrew, `services/quant-engine/.venv` exists on Python `3.14.6`, Docker Postgres/TimescaleDB plus Redis are the required database runtime, Alembic upgrades the target database to `0008_phase11_research`, and the persisted FastAPI vertical-slice smoke test covers research cycles, champion/challenger comparison, model proposals, decision ledger, research status, and exports with a mocked provider and no live FMP key.
 
 This remains a local-first scanner, research, validation, backtest, signal, and export platform only. It is not a broker, auto-trader, order router, self-learning system, or profitability system.
 
@@ -46,6 +46,8 @@ make replay-test
 make replay-sensitivity-test
 make replay-window-test
 make model-review-test
+make research-cycle-test
+make research-status-test
 make export-test
 make db-query-diagnostics
 make fmp-smoke
@@ -84,6 +86,11 @@ The persisted contract now includes replay audit, sensitivity, replay-aware mode
 - `replay_window_sets` and `replay_window_results`: generated multi-window replay orchestration boundaries, result IDs, metrics, warnings, and status.
 - `model_calibration_drift_reports` and `model_calibration_drift_windows`: advisory drift flags, severity, bin drift, stability metrics, and per-window rows.
 - `model_review_reports`: advisory readiness reports with validation/calibration/drift/window references and `model_activation_unchanged=true`.
+- `research_cycles`: controlled daily/manual/ad-hoc cycle records with config hash, input fingerprint, stale/data-quality state, explicit artifact IDs, summary, warnings, backend, database revision, and git commit when available.
+- `research_cycle_artifacts`: cycle-to-evidence references for data quality, replay windows, validation, reviews, comparisons, proposals, and exports.
+- `champion_challenger_comparisons`: diagnostic comparison records with gate results, delta metrics, recommended action, readiness, and warnings.
+- `model_proposals`: human-review proposal records with approval status, champion/challenger metrics, gates, rejection reasons, approval actor/time, and activation metadata when explicitly activated.
+- `model_decision_ledger`: append-only governance events for cycle creation/completion, proposal transitions, activation requests, blocked activations, and explicit activations.
 
 Safe status fields are exposed through `GET /health`, `GET /config`, and `make doctor`: `persistence_backend`, `runtime_mode`, `database_configured`, `database_reachable`, `fallback_enabled`, and `fallback_reason`. Full database URLs, passwords, and API keys are never returned.
 
@@ -93,9 +100,11 @@ Safe status fields are exposed through `GET /health`, `GET /config`, and `make d
 - Repository-backed API route state instead of route-level `_MEMORY`.
 - SQLite local API persistence and reinitialization survival for bars, features, labels, replay runs/trades, model runs, active model, scanner runs/signals, exports, and daily reviews.
 - Postgres API persistence and reinitialization survival for the same vertical slice after `make db-migrate`.
-- Alembic migration and schema inspection success against local Postgres/TimescaleDB on host port `15432` when the database is at revision `0007_phase10_review`; `bars` is verified as a Timescale hypertable when the extension is available.
+- Alembic migration and schema inspection success against local Postgres/TimescaleDB on host port `15432` when the database is at revision `0008_phase11_research`; `bars` is verified as a Timescale hypertable when the extension is available.
 - SQLite/Postgres repository parity for symbols, bars, features, labels, replay runs/trades, sensitivity runs/scenarios, comparisons, pipeline build windows, replay-aware evidence cells, candidate score audits, calibration audits, replay window sets/results, drift reports, model review reports, models, scanner runs, signals, provider requests, exports, and daily reviews.
 - CSV/XLSX/JSON export generation from persisted signals, replay runs/trades, replay sensitivity runs, replay-aware model summaries, evidence cells, score audits, replay-aware validation reports, calibration reports, replay window sets, calibration drift reports, model review reports, and daily reviews, with file hashes and workbook sheets recorded.
+- CSV/XLSX/JSON export generation for research cycles, model proposals, and champion/challenger comparisons from persisted source IDs, with file hashes and workbook sheet names recorded.
+- Approval of a model proposal is separate from activation. Explicit proposal activation requires `confirm_manual_activation=true`, accepted validation, non-blocking readiness, and a proposal recommendation that is eligible for activation.
 - Activation guard requiring a persisted accepted validation report; replay-aware models specifically require accepted `replay_aware_walk_forward` validation.
 - Secret redaction behavior and absence of the supplied FMP key from repo files.
 
@@ -105,6 +114,82 @@ Safe status fields are exposed through `GET /health`, `GET /config`, and `make d
 - Market replay as execution-grade reality. Replay is now auditable and sensitivity-tested, but fills are still simulated from OHLCV with conservative same-bar rules, configurable slippage/spread, and no true market depth.
 - Model calibration as a live probability. Calibration/drift reports are operational diagnostics, not calibrated probability estimates.
 - Live trading readiness. No broker execution or order routing exists.
+- Fully automated adaptation. Research cycles can compare and propose, but they do not silently activate models or mutate scanner behavior.
+
+## Phase 11 Research Cycle Operations
+
+Create a cycle:
+
+```bash
+curl -s -X POST http://localhost:8000/research/cycles \
+  -H 'content-type: application/json' \
+  -d '{"cycle_date":"2026-07-01","cycle_type":"daily","symbols":["AAPL","SPY"],"intervals":["1min"],"start":"2026-06-01T13:30:00Z","end":"2026-06-01T20:00:00Z","challenger_model_version":"{model_version}","allow_stale":false}'
+```
+
+Dry-run without training or activation:
+
+```bash
+curl -s -X POST http://localhost:8000/research/cycles/{research_cycle_id}/dry-run
+```
+
+Run the controlled cycle:
+
+```bash
+curl -s -X POST http://localhost:8000/research/cycles/{research_cycle_id}/run \
+  -H 'content-type: application/json' \
+  -d '{"allow_stale":true}'
+```
+
+Inspect cycle state and artifacts:
+
+```bash
+curl -s http://localhost:8000/research/cycles
+curl -s http://localhost:8000/research/cycles/{research_cycle_id}
+curl -s 'http://localhost:8000/research/cycles/{research_cycle_id}/artifacts?limit=500'
+curl -s -X POST http://localhost:8000/research/cycles/{research_cycle_id}/export
+```
+
+Review a proposal:
+
+```bash
+curl -s http://localhost:8000/research/model-proposals
+curl -s http://localhost:8000/research/model-proposals/{proposal_id}
+```
+
+Approve a proposal without activating it:
+
+```bash
+curl -s -X POST http://localhost:8000/research/model-proposals/{proposal_id}/approve \
+  -H 'content-type: application/json' \
+  -d '{"actor":"research_lead"}'
+```
+
+Explicitly activate an approved proposal:
+
+```bash
+curl -s -X POST http://localhost:8000/research/model-proposals/{proposal_id}/activate \
+  -H 'content-type: application/json' \
+  -d '{"actor":"research_lead","confirm_manual_activation":true,"validation_mode":"replay_aware_walk_forward"}'
+```
+
+Reject a proposal:
+
+```bash
+curl -s -X POST http://localhost:8000/research/model-proposals/{proposal_id}/reject \
+  -H 'content-type: application/json' \
+  -d '{"actor":"research_lead","reason_codes":["manual_rejection"]}'
+```
+
+Query the decision ledger and operations status:
+
+```bash
+curl -s 'http://localhost:8000/research/decision-ledger?proposal_id={proposal_id}'
+curl -s http://localhost:8000/operations/research-status
+```
+
+Safe to trust in Phase 11: persisted cycle IDs, artifact references, config hashes, input fingerprints, stale/data-quality blocks, explicit approval records, explicit activation records, and SQLite/Postgres parity for the controlled governance flow.
+
+Not safe to trust in Phase 11: proposal recommendations as profitability claims, automatic deployment decisions, live fill assumptions, or any claim that the platform is self-learning.
 
 ## Backtest Modes
 
@@ -167,12 +252,12 @@ curl -s -X POST http://localhost:8000/exports/sensitivity-summary.xlsx \
 
 ## Current Blockers
 
-- Local Node is `25.3.0`, while the project target is `24.18.0`. Corepack pnpm still runs, but frontend commands emit the expected engine warning.
+- Local Homebrew Node is `25.3.0`, while the project target is `24.18.0`, and this local Node currently aborts before Corepack can run because a `simdjson` dynamic library is missing. Fallback frontend checks passed under the bundled Codex Node `24.14.0`, but that is not the target runtime and is not an acceptance substitute for Node `24.18.0`.
 - Optional live FMP smoke requires `FMP_API_KEY` to be configured outside the committed repo.
 
 ## Exact Next Recommended Phase
 
-Phase 11 should focus on UI surfacing and operator ergonomics for the now-persisted Phase 9/10 artifacts, plus optional Timescale compression/retention policy work if data volume requires it. Do not add broker execution, WebSocket scope, options data, self-learning language, or profitability claims.
+Phase 12 should focus on a thin operator UI for controlled research cycles, proposals, and decision-ledger review, plus optional queue/scheduler work for bounded daily cycle execution. Do not add broker execution, WebSocket scope, options data, self-learning language, or profitability claims.
 
 ## Phase 8 Replay-Aware Model Selection Historical Notes
 
@@ -220,7 +305,7 @@ curl -s -X POST http://localhost:8000/exports/replay-aware-validation.xlsx \
   -d '{"kind":"replay-aware-validation","run_id":"{report_id}"}'
 ```
 
-Safe to trust: deterministic replay outcome dataset rules, persisted evidence cells, shrinkage/backoff hierarchy, score audits, replay-aware activation guard, and SQLite/Postgres persistence once migrations are applied through `0007_phase10_review`.
+Safe to trust: deterministic replay outcome dataset rules, persisted evidence cells, shrinkage/backoff hierarchy, score audits, replay-aware activation guard, and SQLite/Postgres persistence once migrations are applied through `0008_phase11_research`.
 
 Not safe to trust: `signal_quality_score` as a calibrated probability, replay as live fill proof, portfolio-overlap skipped candidates as losses, or any output as a profitability claim.
 

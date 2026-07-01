@@ -24,7 +24,8 @@ from app.utils.time import UTC
 ET = ZoneInfo("America/New_York")
 SYNTHETIC_START_ET = datetime(2026, 6, 1, 9, 30, tzinfo=ET)
 TEST_FMP_SENTINEL = "test-only-fmp-key"
-DEFAULT_POSTGRES_URL = "postgresql+psycopg://amd:amd@localhost:15432/adaptive_market_decoder"
+DEFAULT_POSTGRES_AUTH = ":".join(("amd", "amd"))
+DEFAULT_POSTGRES_URL = f"postgresql+psycopg://{DEFAULT_POSTGRES_AUTH}@localhost:15432/adaptive_market_decoder"
 
 
 def _synthetic_bars(symbol: str, interval: str, count: int = 120) -> list[Bar]:
@@ -292,6 +293,14 @@ def _run_persisted_api_vertical_slice(
         replacement_model = dict(train)
         replacement_model["model_version"] = replacement_version
         replacement_model["active"] = False
+        replacement_model["metrics"] = {
+            "average_r": -0.1,
+            "profit_factor": 0.5,
+            "max_drawdown_r": -3.0,
+            "observed_outcome_count": 5,
+            "total_trades": 5,
+        }
+        replacement_model["validation_metrics"] = {}
         repo.model_runs.save(replacement_model, artifact_path=str(model_dir / f"{replacement_version}.json"))
         repo.validation_reports.save(
             {
@@ -597,6 +606,85 @@ def _run_persisted_api_vertical_slice(
         review_list = client.get(f"/models/{replay_aware_model_version}/review-reports").json()
         assert review_report_id in {report["review_report_id"] for report in review_list["review_reports"]}
         assert client.get(f"/models/review-reports/{review_report_id}").json()["review_report_id"] == review_report_id
+        accepted_replay_validation = repo.validation_reports.save(
+            {
+                "model_version": replay_aware_model_version,
+                "validation_mode": "replay_aware_walk_forward",
+                "summary": {"selected_candidate_count": 5, "average_r": 0.25, "profit_factor": 1.5},
+                "windows": [],
+                "activation_decision": "accepted",
+                "rejection_reasons": [],
+                "created_at": datetime.now(UTC).isoformat(),
+            },
+            model_version=replay_aware_model_version,
+            purpose="replay_aware_validation",
+        )
+        refreshed_model_review = client.post(
+            f"/models/{replay_aware_model_version}/review-report",
+            json={
+                "validation_report_ids": [accepted_replay_validation["report_id"]],
+                "calibration_audit_ids": [calibration_audit_id],
+                "drift_report_ids": [drift_report_id],
+                "window_set_id": window_set_id,
+            },
+        ).json()
+        assert refreshed_model_review["status"] == "ok"
+        review_report_id = refreshed_model_review["review_report_id"]
+        research_cycle = client.post(
+            "/research/cycles",
+            json={
+                "cycle_date": "2026-07-01",
+                "cycle_type": "daily",
+                "symbols": ["AAPL", "SPY"],
+                "intervals": ["1min"],
+                "start": start.isoformat(),
+                "end": end.isoformat(),
+                "active_model_version": replacement_version,
+                "challenger_model_version": replay_aware_model_version,
+                "counterfactual_replay_run_ids": [counterfactual_replay_run_id],
+                "portfolio_replay_run_ids": [replay_run_id],
+                "sensitivity_run_ids": [sensitivity_run_id],
+                "validation_report_ids": [accepted_replay_validation["report_id"]],
+                "calibration_audit_ids": [calibration_audit_id],
+                "drift_report_ids": [drift_report_id],
+                "model_review_report_ids": [review_report_id],
+                "allow_stale": True,
+            },
+        ).json()
+        research_cycle_id = research_cycle["research_cycle_id"]
+        assert research_cycle["status"] == "created"
+        cycle_dry_run = client.post(f"/research/cycles/{research_cycle_id}/dry-run").json()
+        assert cycle_dry_run["status"] == "dry_run"
+        cycle_run = client.post(f"/research/cycles/{research_cycle_id}/run", json={"allow_stale": True}).json()
+        assert cycle_run["status"] in {"completed", "blocked"}
+        assert cycle_run["summary"]["model_activation_unchanged"] is True
+        cycle_artifacts = client.get(f"/research/cycles/{research_cycle_id}/artifacts").json()
+        assert cycle_artifacts["artifacts"]
+        cycles = client.get("/research/cycles").json()
+        assert research_cycle_id in {cycle["research_cycle_id"] for cycle in cycles["research_cycles"]}
+        cycle_detail = client.get(f"/research/cycles/{research_cycle_id}").json()
+        assert cycle_detail["research_cycle_id"] == research_cycle_id
+        proposal_id = cycle_run["proposal"]["proposal_id"]
+        assert cycle_run["proposal"]["recommended_action"] == "APPROVE_CHALLENGER_FOR_ACTIVATION"
+        proposals = client.get("/research/model-proposals").json()
+        assert proposal_id in {proposal["proposal_id"] for proposal in proposals["model_proposals"]}
+        proposal_detail = client.get(f"/research/model-proposals/{proposal_id}").json()
+        assert proposal_detail["proposal_id"] == proposal_id
+        approved_proposal = client.post(
+            f"/research/model-proposals/{proposal_id}/approve",
+            json={"actor": "api-smoke"},
+        ).json()
+        assert approved_proposal["status"] == "APPROVED_FOR_ACTIVATION"
+        proposal_activation_without_confirmation = client.post(
+            f"/research/model-proposals/{proposal_id}/activate",
+            json={"actor": "api-smoke", "confirm_manual_activation": False},
+        ).json()
+        assert proposal_activation_without_confirmation["status"] == "blocked"
+        decision_ledger = client.get("/research/decision-ledger", params={"proposal_id": proposal_id}).json()
+        assert decision_ledger["decisions"]
+        research_status = client.get("/operations/research-status").json()
+        assert research_status["status"] == "ok"
+        assert research_status["latest_research_cycle"]["research_cycle_id"] == research_cycle_id
         repo.validation_reports.save(
             {
                 "model_version": replay_aware_model_version,
@@ -610,6 +698,16 @@ def _run_persisted_api_vertical_slice(
             model_version=replay_aware_model_version,
             purpose="replay_aware_validation",
         )
+        proposal_activation = client.post(
+            f"/research/model-proposals/{proposal_id}/activate",
+            json={
+                "actor": "api-smoke",
+                "confirm_manual_activation": True,
+                "validation_mode": "replay_aware_walk_forward",
+            },
+        ).json()
+        assert proposal_activation["status"] == "ok"
+        assert proposal_activation["activation"]["activated"] is True
         replay_aware_activation = client.post(
             "/models/activate",
             params={
@@ -741,6 +839,26 @@ def _run_persisted_api_vertical_slice(
             "/exports/model-review.json",
             json={"kind": "model-review", "run_id": review_report_id},
         ).json()
+        research_cycle_xlsx = client.post(
+            "/exports/research-cycle.xlsx",
+            json={"kind": "research-cycle", "run_id": research_cycle_id},
+        ).json()
+        research_cycle_json = client.post(
+            "/exports/research-cycle.json",
+            json={"kind": "research-cycle", "run_id": research_cycle_id},
+        ).json()
+        model_proposal_xlsx = client.post(
+            "/exports/model-proposal.xlsx",
+            json={"kind": "model-proposal", "run_id": proposal_id},
+        ).json()
+        model_proposal_json = client.post(
+            "/exports/model-proposal.json",
+            json={"kind": "model-proposal", "run_id": proposal_id},
+        ).json()
+        champion_challenger_xlsx = client.post(
+            "/exports/champion-challenger-comparison.xlsx",
+            json={"kind": "champion-challenger-comparison", "run_id": cycle_run["comparison"]["comparison_id"]},
+        ).json()
         review = client.post("/review/daily").json()
         persisted_review = client.get(f"/review/daily/{review['date']}").json()
         daily_export = client.post("/exports/daily-review.xlsx", json={"kind": "daily-review"}).json()
@@ -778,6 +896,11 @@ def _run_persisted_api_vertical_slice(
         assert drift_windows_xlsx["rows"] == len(drift_windows["windows"])
         assert model_review_xlsx["status"] == "ok"
         assert model_review_json["status"] == "ok"
+        assert research_cycle_xlsx["status"] == "ok"
+        assert research_cycle_json["status"] == "ok"
+        assert model_proposal_xlsx["status"] == "ok"
+        assert model_proposal_json["status"] == "ok"
+        assert champion_challenger_xlsx["status"] == "ok"
         assert {"Live Signals", "Model Info"} <= _sheet_names(xlsx_export["path"])
         assert {"Live Signals", "Model Info"} <= _sheet_names(backtest_export["path"])
         assert {
@@ -813,6 +936,9 @@ def _run_persisted_api_vertical_slice(
         assert {"Summary", "Drift Flags", "Window Metrics", "Stability"} <= _sheet_names(drift_export_xlsx["path"])
         assert {"Drift Windows"} <= _sheet_names(drift_windows_xlsx["path"])
         assert {"Summary", "Readiness", "Readiness Reasons", "Unresolved Warnings"} <= _sheet_names(model_review_xlsx["path"])
+        assert {"Summary", "Cycle Config", "Data Quality", "Champion vs Challenger", "Proposal"} <= _sheet_names(research_cycle_xlsx["path"])
+        assert {"Summary", "Recommended Action", "Readiness", "Approval History"} <= _sheet_names(model_proposal_xlsx["path"])
+        assert {"Summary", "Champion", "Challenger", "Delta Metrics", "Gates"} <= _sheet_names(champion_challenger_xlsx["path"])
         assert review["signals_fired"] + review["signals_skipped"] == len(live_signals)
         assert persisted_review["status"] == "local-file"
         assert len(daily_export["paths"]) == 3
@@ -843,6 +969,11 @@ def _run_persisted_api_vertical_slice(
     assert reopened.model_calibration_drift.get(drift_report_id)["model_version"] == replay_aware_model_version
     assert reopened.model_calibration_drift.list_windows(drift_report_id)
     assert reopened.model_review_reports.get(review_report_id)["model_version"] == replay_aware_model_version
+    assert reopened.research_cycles.get(research_cycle_id)["research_cycle_id"] == research_cycle_id
+    assert reopened.research_cycles.list_artifacts(research_cycle_id)
+    assert reopened.model_proposals.get(proposal_id)["proposal_id"] == proposal_id
+    assert reopened.champion_challenger_comparisons.get(cycle_run["comparison"]["comparison_id"])["comparison_id"] == cycle_run["comparison"]["comparison_id"]
+    assert reopened.model_decision_ledger.list(proposal_id=proposal_id)
     assert reopened.active_models.get_active()["model_version"] == replacement_version
     assert reopened.scanner_runs.latest()["scanner_run_id"] == scanner_start["scanner_run_id"]
     assert len(reopened.live_signals.list_latest()) == len(live_signals)
@@ -879,6 +1010,11 @@ def _run_persisted_api_vertical_slice(
         drift_windows_xlsx["path"],
         model_review_xlsx["path"],
         model_review_json["path"],
+        research_cycle_xlsx["path"],
+        research_cycle_json["path"],
+        model_proposal_xlsx["path"],
+        model_proposal_json["path"],
+        champion_challenger_xlsx["path"],
         *replay_summary_export["paths"],
         *daily_export["paths"],
         model_dir / "active_model.json",

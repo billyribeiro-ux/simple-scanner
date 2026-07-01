@@ -340,6 +340,64 @@ class ModelReviewRequest(BaseModel):
     calibration_required: bool = False
 
 
+class ResearchCycleRequest(BaseModel):
+    cycle_date: str | None = None
+    cycle_type: str = "daily"
+    symbols: list[str] | None = None
+    intervals: list[Literal["1min", "5min", "15min"]] = ["1min"]
+    start: datetime | None = None
+    end: datetime | None = None
+    session: str = "rth"
+    data_cutoff_timestamp: datetime | None = None
+    active_model_version: str | None = None
+    challenger_model_version: str | None = None
+    replay_run_ids: list[str] | None = None
+    counterfactual_replay_run_ids: list[str] | None = None
+    portfolio_replay_run_ids: list[str] | None = None
+    sensitivity_run_ids: list[str] | None = None
+    validation_report_ids: list[str] | None = None
+    calibration_audit_ids: list[str] | None = None
+    drift_report_ids: list[str] | None = None
+    model_review_report_ids: list[str] | None = None
+    window_set_config: dict[str, Any] | None = None
+    challenger_training_config: dict[str, Any] = Field(default_factory=dict)
+    train_challenger: bool = False
+    validate_challenger: bool = False
+    require_counterfactual: bool = False
+    require_portfolio_validation: bool = False
+    require_sensitivity: bool = False
+    require_calibration: bool = False
+    require_model_review: bool = False
+    allow_stale: bool = False
+    max_window_count: int = 20
+    dry_run: bool = False
+    refresh_data: bool = False
+    export_reports: bool = False
+    run_now: bool = False
+
+
+class ResearchCycleRunRequest(BaseModel):
+    train_challenger: bool | None = None
+    validate_challenger: bool | None = None
+    allow_stale: bool | None = None
+    refresh_data: bool | None = None
+    export_reports: bool | None = None
+    window_set_config: dict[str, Any] | None = None
+    challenger_training_config: dict[str, Any] | None = None
+
+
+class ProposalDecisionRequest(BaseModel):
+    actor: str | None = None
+    reason_codes: list[str] | None = None
+
+
+class ProposalActivationRequest(BaseModel):
+    actor: str | None = None
+    confirm_manual_activation: bool = False
+    validation_mode: str | None = None
+    calibration_audit_required: bool = False
+
+
 class ScoreCandidatesRequest(BaseModel):
     candidate_ids: list[str] | None = None
     candidates: list[dict[str, Any]] | None = None

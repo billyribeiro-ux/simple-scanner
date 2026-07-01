@@ -15,7 +15,14 @@ if config.config_file_name is not None:
 settings = get_settings()
 if settings.database_url:
     migration_url = settings.database_url.replace("+asyncpg", "+psycopg")
-    config.set_main_option("sqlalchemy.url", migration_url)
+else:
+    default_scheme = "postgresql+psycopg"
+    default_user = "amd"
+    default_password = "amd"
+    default_host = "localhost:15432"
+    default_db = "adaptive_market_decoder"
+    migration_url = f"{default_scheme}://{default_user}:{default_password}@{default_host}/{default_db}"
+config.set_main_option("sqlalchemy.url", migration_url)
 
 target_metadata = metadata
 

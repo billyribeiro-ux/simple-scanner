@@ -76,3 +76,9 @@ The meta-score is not a fill model, not a broker instruction, and not a proof of
 Meta-score audits now carry `outcome_source`, and score calibration audits can evaluate whether `signal_quality_score`, grade buckets, and TAKE/WATCH/SUPPRESS actions rank replay outcomes monotonically. The audit is ranking validation only; the score is still not a calibrated probability.
 
 Activation can require a calibration audit. Scanner output reports calibration status through reasons/warnings and suppresses TAKE when a calibration-required active model is missing or failing calibration.
+
+## Phase 11 Governance Use
+
+Champion/challenger comparisons use meta-score-derived model metrics as one diagnostic input alongside validation, calibration, drift, review, data quality, stale windows, concentration, and stability gates. A better meta-score alone is never enough to activate a challenger.
+
+Model proposals preserve champion metrics, challenger metrics, delta metrics, and pass/fail gates. Recommendations are human-review artifacts, not scanner mutations. Proposals with `KEEP_CHAMPION`, `REJECT_CHALLENGER`, or `BLOCK_ALL_CHANGES` recommendations cannot be approved for activation.

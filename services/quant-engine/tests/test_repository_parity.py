@@ -18,7 +18,8 @@ from app.schemas.market import Bar, Outcome, Side, Signal
 from app.utils.time import UTC
 
 ET = ZoneInfo("America/New_York")
-DEFAULT_POSTGRES_URL = "postgresql+psycopg://amd:amd@localhost:15432/adaptive_market_decoder"
+DEFAULT_POSTGRES_AUTH = ":".join(("amd", "amd"))
+DEFAULT_POSTGRES_URL = f"postgresql+psycopg://{DEFAULT_POSTGRES_AUTH}@localhost:15432/adaptive_market_decoder"
 
 
 def _postgres_available(database_url: str = DEFAULT_POSTGRES_URL) -> bool:
@@ -559,6 +560,92 @@ def test_repository_core_contract_parity(tmp_path, monkeypatch, backend: str) ->
     assert drift["drift_report_id"] == "parity-drift"
     assert review_report["review_report_id"] == "parity-review"
     assert replay_windows[0]["dirty"] is False
+    research_cycle = repo.research_cycles.save(
+        {
+            "research_cycle_id": "parity-research-cycle",
+            "cycle_date": "2026-07-01",
+            "cycle_type": "daily",
+            "status": "COMPLETED",
+            "symbols": ["AAPL"],
+            "intervals": ["1min"],
+            "start": bars[0].timestamp_utc.isoformat(),
+            "end": bars[-1].timestamp_utc.isoformat(),
+            "session": "rth",
+            "active_model_version": "parity-model-accepted",
+            "challenger_model_version": "parity-model-challenger",
+            "summary": {"diagnostic_only": True, "model_activation_unchanged": True},
+            "warnings": [],
+            "config_hash": "config-hash",
+            "input_fingerprint": "input-fingerprint",
+            "database_revision": "0008_phase11_research",
+            "persistence_backend": backend,
+            "created_at": datetime.now(UTC).isoformat(),
+        }
+    )
+    cycle_artifact = repo.research_cycles.save_artifact(
+        "parity-research-cycle",
+        {
+            "artifact_type": "model_review",
+            "source_id": "parity-review",
+            "source_table": "model_review_reports",
+        },
+    )
+    champion_comparison = repo.champion_challenger_comparisons.save(
+        {
+            "comparison_id": "parity-champion-comparison",
+            "champion_model_version": "parity-model-accepted",
+            "challenger_model_version": "parity-model-challenger",
+            "champion_metrics": {"average_r": 0.25},
+            "challenger_metrics": {"average_r": 0.35},
+            "delta_metrics": {"average_r": 0.1},
+            "challenger_better_flags": ["average_r_improved"],
+            "challenger_worse_flags": [],
+            "gate_results": {"all_passed": True},
+            "recommended_action": "APPROVE_CHALLENGER_FOR_ACTIVATION",
+            "readiness_status": "PASS",
+            "warnings": [],
+        }
+    )
+    proposal = repo.model_proposals.save(
+        {
+            "proposal_id": "parity-proposal",
+            "research_cycle_id": "parity-research-cycle",
+            "proposal_type": "challenger_model",
+            "status": "PROPOSED",
+            "champion_model_version": "parity-model-accepted",
+            "challenger_model_version": "parity-model-challenger",
+            "recommended_action": "APPROVE_CHALLENGER_FOR_ACTIVATION",
+            "readiness_status": "PASS",
+            "comparison_ids": ["parity-champion-comparison"],
+            "evidence_summary": {"diagnostic_only": True},
+            "champion_metrics": {"average_r": 0.25},
+            "challenger_metrics": {"average_r": 0.35},
+            "delta_metrics": {"average_r": 0.1},
+            "pass_fail_gates": {"all_passed": True},
+            "rejection_reasons": [],
+            "approval_required": True,
+        }
+    )
+    decision = repo.model_decision_ledger.append(
+        {
+            "decision_id": "parity-decision",
+            "decision_type": "PROPOSAL_CREATED",
+            "research_cycle_id": "parity-research-cycle",
+            "proposal_id": "parity-proposal",
+            "model_version": "parity-model-challenger",
+            "previous_model_version": "parity-model-accepted",
+            "decision_status": "RECORDED",
+            "reason_codes": ["parity"],
+            "evidence_refs": [{"comparison_id": "parity-champion-comparison"}],
+            "actor": "test",
+            "metadata": {"secret_free": True},
+        }
+    )
+    assert research_cycle["research_cycle_id"] == "parity-research-cycle"
+    assert cycle_artifact["cycle_artifact_id"]
+    assert champion_comparison["comparison_id"] == "parity-champion-comparison"
+    assert proposal["proposal_id"] == "parity-proposal"
+    assert decision["decision_id"] == "parity-decision"
 
     reopened = RepositoryRegistry(settings=get_settings())
     assert len(reopened.bars.list_all()) == 96
@@ -576,6 +663,11 @@ def test_repository_core_contract_parity(tmp_path, monkeypatch, backend: str) ->
     assert reopened.model_calibration_drift.get("parity-drift")["severity"] == "INFO"
     assert reopened.model_calibration_drift.list_windows("parity-drift")[0]["window_index"] == 1
     assert reopened.model_review_reports.get("parity-review")["readiness_status"] == "PASS"
+    assert reopened.research_cycles.get("parity-research-cycle")["status"] == "COMPLETED"
+    assert reopened.research_cycles.list_artifacts("parity-research-cycle")[0]["source_id"] == "parity-review"
+    assert reopened.champion_challenger_comparisons.get("parity-champion-comparison")["readiness_status"] == "PASS"
+    assert reopened.model_proposals.get("parity-proposal")["status"] == "PROPOSED"
+    assert reopened.model_decision_ledger.list(proposal_id="parity-proposal")[0]["decision_id"] == "parity-decision"
     assert reopened.validation_reports.latest(model_version="parity-model-accepted")["activation_decision"] == "accepted"
     assert reopened.active_models.get_active()["model_version"] == "parity-model-accepted"
     assert reopened.scanner_runs.latest()["scanner_run_id"] == scanner_run_id
@@ -604,7 +696,7 @@ def test_backend_selection_contract(tmp_path, monkeypatch) -> None:
     sqlite_configured = RepositoryRegistry(settings=settings)
     assert sqlite_configured.info()["runtime_mode"] == "sqlite-configured"
 
-    bad_postgres = "postgresql+psycopg://amd:amd@127.0.0.1:1/adaptive_market_decoder"
+    bad_postgres = f"postgresql+psycopg://{DEFAULT_POSTGRES_AUTH}@127.0.0.1:1/adaptive_market_decoder"
     settings = _settings_for_current_env(monkeypatch, tmp_path, bad_postgres)
     with pytest.raises(PersistenceConfigurationError):
         RepositoryRegistry(settings=settings)

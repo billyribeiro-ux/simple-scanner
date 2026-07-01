@@ -2982,6 +2982,84 @@ class ExportWorkflowService:
         )
         return {"status": "ok", "kind": kind, "path": str(path), "rows": 1, "export": record}
 
+    def export_research_cycle(self, research_cycle_id: str, kind: str = "xlsx") -> dict[str, Any]:
+        cycle = self.repos.research_cycles.get(research_cycle_id)
+        if cycle is None:
+            return {"status": "not_found", "research_cycle_id": research_cycle_id}
+        artifacts = self.repos.research_cycles.list_artifacts(research_cycle_id, limit=100_000)
+        if kind == "xlsx":
+            path = self.exporter.export_research_cycle_xlsx(cycle, artifacts)
+        elif kind == "json":
+            path = self.exporter.export_research_cycle_json(cycle, artifacts)
+        else:
+            raise ValueError("research cycle export kind must be xlsx or json")
+        record = self.repos.exports.record(
+            "research_cycle",
+            kind,
+            path,
+            len(artifacts),
+            research_cycle_id,
+            {
+                "research_cycle_id": research_cycle_id,
+                "status": cycle.get("status"),
+                "source_ids": {
+                    "comparison_ids": cycle.get("comparison_ids") or [],
+                    "proposal_ids": cycle.get("proposal_ids") or [],
+                    "window_set_ids": cycle.get("window_set_ids") or [],
+                },
+                "model_activation_unchanged": True,
+            },
+        )
+        return {"status": "ok", "kind": kind, "path": str(path), "rows": len(artifacts), "export": record}
+
+    def export_model_proposal(self, proposal_id: str, kind: str = "xlsx") -> dict[str, Any]:
+        proposal = self.repos.model_proposals.get(proposal_id)
+        if proposal is None:
+            return {"status": "not_found", "proposal_id": proposal_id}
+        ledger = self.repos.model_decision_ledger.list(proposal_id=proposal_id, limit=100_000)
+        if kind == "xlsx":
+            path = self.exporter.export_model_proposal_xlsx(proposal, ledger)
+        elif kind == "json":
+            path = self.exporter.export_model_proposal_json(proposal, ledger)
+        else:
+            raise ValueError("model proposal export kind must be xlsx or json")
+        record = self.repos.exports.record(
+            "model_proposal",
+            kind,
+            path,
+            len(ledger),
+            proposal_id,
+            {
+                "proposal_id": proposal_id,
+                "research_cycle_id": proposal.get("research_cycle_id"),
+                "recommended_action": proposal.get("recommended_action"),
+                "readiness_status": proposal.get("readiness_status"),
+                "approval_required": proposal.get("approval_required", True),
+            },
+        )
+        return {"status": "ok", "kind": kind, "path": str(path), "rows": len(ledger), "export": record}
+
+    def export_champion_challenger_comparison(self, comparison_id: str) -> dict[str, Any]:
+        comparison = self.repos.champion_challenger_comparisons.get(comparison_id)
+        if comparison is None:
+            return {"status": "not_found", "comparison_id": comparison_id}
+        path = self.exporter.export_champion_challenger_comparison_xlsx(comparison)
+        record = self.repos.exports.record(
+            "champion_challenger_comparison",
+            "xlsx",
+            path,
+            1,
+            comparison_id,
+            {
+                "comparison_id": comparison_id,
+                "champion_model_version": comparison.get("champion_model_version"),
+                "challenger_model_version": comparison.get("challenger_model_version"),
+                "recommended_action": comparison.get("recommended_action"),
+                "diagnostic_only": True,
+            },
+        )
+        return {"status": "ok", "path": str(path), "rows": 1, "export": record}
+
     def _sensitivity_export_payload(self, sensitivity: dict[str, Any], export_scope: str) -> dict[str, Any]:
         return {
             "simulation_type": SIMULATION_TYPE_REPLAY,

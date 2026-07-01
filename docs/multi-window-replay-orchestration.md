@@ -35,3 +35,9 @@ curl -s -X POST http://localhost:8000/exports/replay-window-set.xlsx \
 ```
 
 The workbook includes `Summary`, `Generated Windows`, `Window Results`, `Replay Runs`, `Warnings`, and `Config`. Export records include file SHA-256 and workbook sheet names.
+
+## Phase 11 Governance Use
+
+Research cycles can create or reference replay window sets through `window_set_config` and persist the resulting `window_set_ids`. The cycle stores these IDs as evidence for the challenger review and comparison.
+
+Cycle dry-run estimates stale windows and suggested rebuild steps before running expensive replay work. V1 reuses persisted artifacts when explicit IDs are supplied; a future scheduler/queue should add stronger cache lookup and force-rerun controls for large window sets.

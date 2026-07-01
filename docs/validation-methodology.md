@@ -57,3 +57,9 @@ Still partial:
 `replay_aware_walk_forward` now accepts explicit training, validation, and test replay run IDs plus optional train/validation/test timestamp windows and `embargo_minutes`. It can require counterfactual training data, require portfolio validation data, and require a calibration audit.
 
 Validation scores candidates with training-only evidence and persists replay run IDs, candidate counts, embargo metadata, and calibration requirements in the validation report. Weak score ordering can be rejected through calibration audit gates.
+
+## Phase 11 Proposal Gate
+
+Champion/challenger comparison requires an accepted validation report for the challenger before a proposal can be recommended for activation. Research cycles can pass explicit `validation_report_ids` so the comparison is reproducible from persisted IDs instead of whatever report is latest at query time.
+
+Proposal activation still calls the existing model activation service. `APPROVED_FOR_ACTIVATION` is not enough; the activation request must include `confirm_manual_activation=true`, the challenger model must exist, and the accepted validation guard must pass for the selected validation mode.

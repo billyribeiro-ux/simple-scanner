@@ -36,3 +36,9 @@ Severity is `INFO`, `WATCH`, `REVIEW`, or `BLOCKING`. `BLOCKING` means the model
 - `POST /exports/calibration-drift-windows.xlsx`
 
 Drift exports record source IDs, severity, row count, file hash, and workbook sheets.
+
+## Phase 11 Governance Use
+
+Research cycles can attach explicit `drift_report_ids` to a challenger proposal. Champion/challenger comparison gates treat `BLOCKING` drift as a blocking readiness condition, while `WATCH` and `REVIEW` remain visible warnings that require human judgment.
+
+Drift reports do not activate, deactivate, or retrain models. They are evidence references in model proposals and decision-ledger entries.

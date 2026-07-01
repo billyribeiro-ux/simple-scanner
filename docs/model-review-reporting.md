@@ -22,3 +22,9 @@ The service never calls model activation and sets `model_activation_unchanged=tr
 - `POST /exports/model-review.json`
 
 The workbook includes `Summary`, `Readiness`, `Readiness Reasons`, `Unresolved Warnings`, `Validation Reports`, `Calibration Audits`, `Drift Reports`, and `Model Summary`.
+
+## Phase 11 Governance Use
+
+Controlled research cycles can attach explicit `model_review_report_ids` to a challenger. Champion/challenger comparison gates use the attached report when provided; otherwise they fall back to the latest review for the challenger.
+
+`BLOCK` readiness blocks approval and activation. `PASS`, `WATCH`, and `REVIEW` remain advisory states that still require proposal approval and a separate explicit activation request. Model review reports remain diagnostic and never activate models.

@@ -51,6 +51,11 @@ def main() -> int:
             "model_calibration_drift_reports",
             "model_calibration_drift_windows",
             "model_review_reports",
+            "research_cycles",
+            "research_cycle_artifacts",
+            "champion_challenger_comparisons",
+            "model_proposals",
+            "model_decision_ledger",
             "backtest_comparisons",
             "validation_reports",
             "exports",
@@ -129,6 +134,48 @@ def main() -> int:
             print(
                 f"model_review={row['review_report_id']} model_version={row['model_version']} "
                 + f"readiness_status={row['readiness_status']} created_at={row['created_at']}"
+            )
+        research_cycles = _rows(
+            connection,
+            """
+            select research_cycle_id, status, cycle_date, created_at
+            from research_cycles
+            order by created_at desc
+            limit 5
+            """,
+        )
+        for row in research_cycles:
+            print(
+                f"research_cycle={row['research_cycle_id']} status={row['status']} "
+                + f"cycle_date={row['cycle_date']} created_at={row['created_at']}"
+            )
+        proposals = _rows(
+            connection,
+            """
+            select proposal_id, status, recommended_action, readiness_status, created_at
+            from model_proposals
+            order by created_at desc
+            limit 5
+            """,
+        )
+        for row in proposals:
+            print(
+                f"model_proposal={row['proposal_id']} status={row['status']} "
+                + f"recommended_action={row['recommended_action']} readiness_status={row['readiness_status']} created_at={row['created_at']}"
+            )
+        ledger = _rows(
+            connection,
+            """
+            select decision_id, decision_type, decision_status, created_at
+            from model_decision_ledger
+            order by created_at desc
+            limit 5
+            """,
+        )
+        for row in ledger:
+            print(
+                f"decision={row['decision_id']} decision_type={row['decision_type']} "
+                + f"decision_status={row['decision_status']} created_at={row['created_at']}"
             )
         try:
             hypertables = _rows(

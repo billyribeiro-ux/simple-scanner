@@ -7,7 +7,7 @@ LOCAL_POSTGRES_HOST ?= localhost
 LOCAL_POSTGRES_PORT ?= 15432
 LOCAL_POSTGRES_DB ?= adaptive_market_decoder
 
-.PHONY: help doctor setup setup-backend require-backend-venv quant-test backend-test backend-lint backend-typecheck api-smoke api-smoke-sqlite api-smoke-postgres repository-parity-test replay-test replay-sensitivity-test replay-window-test model-review-test export-test fmp-smoke dev api-dev web-dev db-up db-down db-migrate db-inspect db-diagnostics db-query-diagnostics db-reset-dev ingest features labels train validate backtest scanner export test lint typecheck
+.PHONY: help doctor setup setup-backend require-backend-venv quant-test backend-test backend-lint backend-typecheck api-smoke api-smoke-sqlite api-smoke-postgres repository-parity-test replay-test replay-sensitivity-test replay-window-test model-review-test research-cycle-test research-status-test export-test fmp-smoke dev api-dev web-dev db-up db-down db-migrate db-inspect db-diagnostics db-query-diagnostics db-reset-dev ingest features labels train validate backtest scanner export test lint typecheck
 
 help:
 	@printf "Adaptive Market Decoder commands\n\n"
@@ -39,6 +39,8 @@ help:
 	@printf "  make replay-sensitivity-test Run replay audit and sensitivity tests\n"
 	@printf "  make replay-window-test Run multi-window replay orchestration tests\n"
 	@printf "  make model-review-test  Run calibration drift and model review tests\n"
+	@printf "  make research-cycle-test Run controlled research cycle/proposal lifecycle tests\n"
+	@printf "  make research-status-test Run operations research status and decision ledger tests\n"
 	@printf "  make export-test        Run export workbook/CSV tests\n"
 	@printf "  make fmp-smoke           Run optional live FMP REST smoke if FMP_API_KEY is configured\n"
 	@printf "  make test lint typecheck Run backend and frontend quality gates\n"
@@ -120,6 +122,12 @@ replay-window-test: require-backend-venv
 
 model-review-test: require-backend-venv
 	cd $(SERVICE_DIR) && PYTHONPATH=. .venv/bin/python -m pytest tests/quant/test_phase10_orchestration_drift_review.py -k "drift or review or quality"
+
+research-cycle-test: require-backend-venv
+	cd $(SERVICE_DIR) && PYTHONPATH=. .venv/bin/python -m pytest tests/quant/test_phase11_research_governance.py -k "research_cycle or proposal or comparison"
+
+research-status-test: require-backend-venv
+	cd $(SERVICE_DIR) && PYTHONPATH=. .venv/bin/python -m pytest tests/quant/test_phase11_research_governance.py -k "status or ledger or export"
 
 export-test: require-backend-venv
 	cd $(SERVICE_DIR) && PYTHONPATH=. .venv/bin/python -m pytest tests/test_exports.py

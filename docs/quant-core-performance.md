@@ -55,3 +55,14 @@ The Phase 2 quant core favors deterministic, testable Python loops over prematur
 - Candidate overlap context is computed in memory by symbol/interval. This is acceptable for local V1, but high-volume candidate sets should move overlap-density calculations to grouped vectorized code.
 - Calibration audit joins score audits to outcome rows in memory, then groups into score, grade, action, symbol, setup, regime, and time buckets. This is linear in loaded audits/outcomes plus small fixed bin counts.
 - Model comparison loads persisted model/report/audit payloads and sorts model summaries; it is diagnostic-only and not on the scanner hot path.
+
+## Phase 11 Performance Notes
+
+- Research cycle planning calls data-quality reporting, stale-window status, and latest-bar scans. This is acceptable for the default small symbol universe, but `_latest_bars` is currently one repository query per symbol/interval and should become a grouped query before larger universes.
+- Champion/challenger comparison loads persisted model, validation, calibration, drift, and model-review payloads. It is not on the scanner hot path and should remain bounded by explicit artifact IDs.
+- Proposal creation and decision-ledger writes are constant-size metadata operations.
+- Research-cycle XLSX exports read persisted artifacts and write multiple sheets. They are operator reports, not hot-path scanner work.
+- Dry-run should be used before expensive windows. It estimates dirty-window/rebuild work and can block stale data before training or replay.
+- V1 artifact reuse is explicit-ID based. Future optimization should add config-hash lookup for replay/window/calibration/review artifacts and a `force=true` override rather than rerunning matching expensive work.
+- Future scheduler/queue work should run cycles off the request path, enforce max window counts, and preserve the same proposal/ledger semantics.
+- Future live data refresh should remain gated by `FMP_API_KEY` and should write provider request accounting without secrets.

@@ -26,14 +26,19 @@ from app.schemas.market import (
     IngestRequest,
     ModelComparisonRequest,
     ModelReviewRequest,
+    ProposalActivationRequest,
+    ProposalDecisionRequest,
     ReplayBacktestRequest,
     ReplayWindowRunRequest,
     ReplayWindowSetRequest,
+    ResearchCycleRequest,
+    ResearchCycleRunRequest,
     ScannerStartRequest,
     ScoreCandidatesRequest,
     SensitivityRequest,
     TrainRequest,
 )
+from app.services.research import ModelProposalService, ResearchCycleService, ResearchStatusService
 from app.services.workflows import (
     BacktestService,
     CalibrationAuditService,
@@ -500,6 +505,125 @@ async def pipeline_status() -> dict[str, object]:
     return BacktestService(repos()).pipeline_status()
 
 
+@router.post("/research/cycles")
+async def create_research_cycle(request: ResearchCycleRequest) -> dict[str, object]:
+    return ResearchCycleService(repos()).create(request.model_dump(mode="json"))
+
+
+@router.get("/research/cycles")
+async def list_research_cycles(limit: int = 100, offset: int = 0, status: str | None = None) -> dict[str, object]:
+    return ResearchCycleService(repos()).list(limit=limit, offset=offset, status=status)
+
+
+@router.get("/research/cycles/{research_cycle_id}")
+async def get_research_cycle(research_cycle_id: str) -> dict[str, object]:
+    return ResearchCycleService(repos()).get(research_cycle_id)
+
+
+@router.post("/research/cycles/{research_cycle_id}/run")
+async def run_research_cycle(
+    research_cycle_id: str,
+    request: ResearchCycleRunRequest | None = None,
+) -> dict[str, object]:
+    payload = {key: value for key, value in request.model_dump(mode="json").items() if value is not None} if request else {}
+    return ResearchCycleService(repos()).run(research_cycle_id, payload)
+
+
+@router.post("/research/cycles/{research_cycle_id}/dry-run")
+async def dry_run_research_cycle(research_cycle_id: str) -> dict[str, object]:
+    return ResearchCycleService(repos()).dry_run(research_cycle_id)
+
+
+@router.get("/research/cycles/{research_cycle_id}/artifacts")
+async def research_cycle_artifacts(
+    research_cycle_id: str,
+    limit: int = 500,
+    offset: int = 0,
+) -> dict[str, object]:
+    return ResearchCycleService(repos()).artifacts(research_cycle_id, limit=limit, offset=offset)
+
+
+@router.post("/research/cycles/{research_cycle_id}/export")
+async def export_research_cycle_report(research_cycle_id: str) -> dict[str, object]:
+    return ResearchCycleService(repos()).export(research_cycle_id)
+
+
+@router.get("/research/model-proposals")
+async def list_model_proposals(limit: int = 100, offset: int = 0, status: str | None = None) -> dict[str, object]:
+    return ModelProposalService(repos()).list(limit=limit, offset=offset, status=status)
+
+
+@router.get("/research/model-proposals/{proposal_id}")
+async def get_model_proposal(proposal_id: str) -> dict[str, object]:
+    return ModelProposalService(repos()).get(proposal_id)
+
+
+@router.post("/research/model-proposals/{proposal_id}/approve")
+async def approve_model_proposal(
+    proposal_id: str,
+    request: ProposalDecisionRequest | None = None,
+) -> dict[str, object]:
+    return ModelProposalService(repos()).approve(proposal_id, actor=request.actor if request else None)
+
+
+@router.post("/research/model-proposals/{proposal_id}/reject")
+async def reject_model_proposal(
+    proposal_id: str,
+    request: ProposalDecisionRequest | None = None,
+) -> dict[str, object]:
+    return ModelProposalService(repos()).reject(
+        proposal_id,
+        actor=request.actor if request else None,
+        reason_codes=request.reason_codes if request else None,
+    )
+
+
+@router.post("/research/model-proposals/{proposal_id}/activate")
+async def activate_model_proposal(
+    proposal_id: str,
+    request: ProposalActivationRequest,
+) -> dict[str, object]:
+    return ModelProposalService(repos()).activate(
+        proposal_id,
+        actor=request.actor,
+        confirm_manual_activation=request.confirm_manual_activation,
+        validation_mode=request.validation_mode,
+        calibration_audit_required=request.calibration_audit_required,
+    )
+
+
+@router.get("/research/decision-ledger")
+async def decision_ledger(
+    model_version: str | None = None,
+    proposal_id: str | None = None,
+    research_cycle_id: str | None = None,
+    decision_type: str | None = None,
+    start: datetime | None = None,
+    end: datetime | None = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> dict[str, object]:
+    return {
+        "decisions": repos().model_decision_ledger.list(
+            model_version=model_version,
+            proposal_id=proposal_id,
+            research_cycle_id=research_cycle_id,
+            decision_type=decision_type,
+            start=start,
+            end=end,
+            limit=limit,
+            offset=offset,
+        ),
+        "limit": limit,
+        "offset": offset,
+    }
+
+
+@router.get("/operations/research-status")
+async def operations_research_status() -> dict[str, object]:
+    return ResearchStatusService(repos()).status()
+
+
 @router.post("/backtest/replay/{replay_run_id}/sensitivity")
 async def run_replay_sensitivity(
     replay_run_id: str,
@@ -815,6 +939,41 @@ async def export_model_review_json(request: ExportRequest) -> dict[str, object]:
     if not request.run_id:
         return {"status": "error", "reason": "run_id_required"}
     return ExportWorkflowService(repos()).export_model_review(request.run_id, "json")
+
+
+@router.post("/exports/research-cycle.xlsx")
+async def export_research_cycle_xlsx(request: ExportRequest) -> dict[str, object]:
+    if not request.run_id:
+        return {"status": "error", "reason": "run_id_required"}
+    return ExportWorkflowService(repos()).export_research_cycle(request.run_id, "xlsx")
+
+
+@router.post("/exports/research-cycle.json")
+async def export_research_cycle_json(request: ExportRequest) -> dict[str, object]:
+    if not request.run_id:
+        return {"status": "error", "reason": "run_id_required"}
+    return ExportWorkflowService(repos()).export_research_cycle(request.run_id, "json")
+
+
+@router.post("/exports/model-proposal.xlsx")
+async def export_model_proposal_xlsx(request: ExportRequest) -> dict[str, object]:
+    if not request.run_id:
+        return {"status": "error", "reason": "run_id_required"}
+    return ExportWorkflowService(repos()).export_model_proposal(request.run_id, "xlsx")
+
+
+@router.post("/exports/model-proposal.json")
+async def export_model_proposal_json(request: ExportRequest) -> dict[str, object]:
+    if not request.run_id:
+        return {"status": "error", "reason": "run_id_required"}
+    return ExportWorkflowService(repos()).export_model_proposal(request.run_id, "json")
+
+
+@router.post("/exports/champion-challenger-comparison.xlsx")
+async def export_champion_challenger_comparison_xlsx(request: ExportRequest) -> dict[str, object]:
+    if not request.run_id:
+        return {"status": "error", "reason": "run_id_required"}
+    return ExportWorkflowService(repos()).export_champion_challenger_comparison(request.run_id)
 
 
 @router.get("/exports/{export_id}")

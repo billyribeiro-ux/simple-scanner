@@ -39,6 +39,7 @@ EXPECTED_TABLES = {
     "backtest_comparisons",
     "candidate_signals",
     "candidate_score_audits",
+    "champion_challenger_comparisons",
     "closed_signals",
     "daily_reviews",
     "exports",
@@ -56,6 +57,10 @@ EXPECTED_TABLES = {
     "model_runs",
     "pipeline_build_windows",
     "provider_requests",
+    "model_decision_ledger",
+    "model_proposals",
+    "research_cycle_artifacts",
+    "research_cycles",
     "replay_runs",
     "replay_sensitivity_runs",
     "replay_sensitivity_scenarios",
@@ -67,7 +72,7 @@ EXPECTED_TABLES = {
     "validation_reports",
     "validation_windows",
 }
-EXPECTED_ALEMBIC_REVISION = "0007_phase10_review"
+EXPECTED_ALEMBIC_REVISION = "0008_phase11_research"
 
 
 def _now_iso() -> str:
@@ -693,6 +698,153 @@ class SQLiteStore:
 
                     CREATE INDEX IF NOT EXISTS ix_model_review_reports_model_created
                         ON model_review_reports(model_version, created_at);
+
+                    CREATE TABLE IF NOT EXISTS research_cycles (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        research_cycle_id TEXT NOT NULL UNIQUE,
+                        cycle_date TEXT NOT NULL,
+                        cycle_type TEXT NOT NULL,
+                        status TEXT NOT NULL,
+                        symbols_json TEXT DEFAULT '[]',
+                        intervals_json TEXT DEFAULT '[]',
+                        start TEXT,
+                        "end" TEXT,
+                        session TEXT NOT NULL DEFAULT 'rth',
+                        data_cutoff_timestamp TEXT,
+                        active_model_version TEXT,
+                        challenger_model_version TEXT,
+                        window_set_ids_json TEXT DEFAULT '[]',
+                        replay_run_ids_json TEXT DEFAULT '[]',
+                        counterfactual_replay_run_ids_json TEXT DEFAULT '[]',
+                        portfolio_replay_run_ids_json TEXT DEFAULT '[]',
+                        sensitivity_run_ids_json TEXT DEFAULT '[]',
+                        calibration_audit_ids_json TEXT DEFAULT '[]',
+                        drift_report_ids_json TEXT DEFAULT '[]',
+                        model_review_report_ids_json TEXT DEFAULT '[]',
+                        comparison_ids_json TEXT DEFAULT '[]',
+                        proposal_ids_json TEXT DEFAULT '[]',
+                        data_quality_report_id TEXT,
+                        stale_window_status_json TEXT DEFAULT '{}',
+                        summary_json TEXT DEFAULT '{}',
+                        warnings_json TEXT DEFAULT '[]',
+                        config_hash TEXT,
+                        input_fingerprint TEXT,
+                        git_commit TEXT,
+                        database_revision TEXT,
+                        persistence_backend TEXT,
+                        failed_reason TEXT,
+                        payload_json TEXT NOT NULL,
+                        created_at TEXT NOT NULL,
+                        started_at TEXT,
+                        completed_at TEXT,
+                        updated_at TEXT NOT NULL
+                    );
+
+                    CREATE INDEX IF NOT EXISTS ix_research_cycles_status_created
+                        ON research_cycles(status, created_at);
+
+                    CREATE INDEX IF NOT EXISTS ix_research_cycles_cycle_date
+                        ON research_cycles(cycle_date);
+
+                    CREATE TABLE IF NOT EXISTS research_cycle_artifacts (
+                        cycle_artifact_id TEXT PRIMARY KEY,
+                        research_cycle_id TEXT NOT NULL,
+                        artifact_type TEXT NOT NULL,
+                        source_id TEXT,
+                        source_table TEXT,
+                        export_id TEXT,
+                        payload_json TEXT DEFAULT '{}',
+                        created_at TEXT NOT NULL
+                    );
+
+                    CREATE INDEX IF NOT EXISTS ix_research_cycle_artifacts_cycle
+                        ON research_cycle_artifacts(research_cycle_id, artifact_type);
+
+                    CREATE TABLE IF NOT EXISTS champion_challenger_comparisons (
+                        comparison_id TEXT PRIMARY KEY,
+                        champion_model_version TEXT,
+                        challenger_model_version TEXT,
+                        delta_metrics_json TEXT DEFAULT '{}',
+                        challenger_better_flags_json TEXT DEFAULT '[]',
+                        challenger_worse_flags_json TEXT DEFAULT '[]',
+                        gate_results_json TEXT DEFAULT '{}',
+                        recommended_action TEXT NOT NULL,
+                        readiness_status TEXT NOT NULL,
+                        warnings_json TEXT DEFAULT '[]',
+                        payload_json TEXT NOT NULL,
+                        created_at TEXT NOT NULL
+                    );
+
+                    CREATE INDEX IF NOT EXISTS ix_champion_challenger_comparisons_created
+                        ON champion_challenger_comparisons(created_at);
+
+                    CREATE TABLE IF NOT EXISTS model_proposals (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        proposal_id TEXT NOT NULL UNIQUE,
+                        research_cycle_id TEXT,
+                        proposal_type TEXT NOT NULL,
+                        status TEXT NOT NULL,
+                        champion_model_version TEXT,
+                        challenger_model_version TEXT,
+                        recommended_action TEXT NOT NULL,
+                        readiness_status TEXT NOT NULL,
+                        validation_report_ids_json TEXT DEFAULT '[]',
+                        calibration_audit_ids_json TEXT DEFAULT '[]',
+                        drift_report_ids_json TEXT DEFAULT '[]',
+                        model_review_report_ids_json TEXT DEFAULT '[]',
+                        comparison_ids_json TEXT DEFAULT '[]',
+                        replay_run_ids_json TEXT DEFAULT '[]',
+                        window_set_ids_json TEXT DEFAULT '[]',
+                        evidence_summary_json TEXT DEFAULT '{}',
+                        champion_metrics_json TEXT DEFAULT '{}',
+                        challenger_metrics_json TEXT DEFAULT '{}',
+                        delta_metrics_json TEXT DEFAULT '{}',
+                        pass_fail_gates_json TEXT DEFAULT '{}',
+                        rejection_reasons_json TEXT DEFAULT '[]',
+                        approval_required INTEGER NOT NULL DEFAULT 1,
+                        approved_by TEXT,
+                        approved_at TEXT,
+                        activation_model_version TEXT,
+                        activation_id TEXT,
+                        payload_json TEXT NOT NULL,
+                        created_at TEXT NOT NULL,
+                        updated_at TEXT NOT NULL
+                    );
+
+                    CREATE INDEX IF NOT EXISTS ix_model_proposals_status_created
+                        ON model_proposals(status, created_at);
+
+                    CREATE INDEX IF NOT EXISTS ix_model_proposals_cycle
+                        ON model_proposals(research_cycle_id);
+
+                    CREATE TABLE IF NOT EXISTS model_decision_ledger (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        decision_id TEXT NOT NULL UNIQUE,
+                        decision_type TEXT NOT NULL,
+                        research_cycle_id TEXT,
+                        proposal_id TEXT,
+                        model_version TEXT,
+                        previous_model_version TEXT,
+                        decision_status TEXT NOT NULL,
+                        reason_codes_json TEXT DEFAULT '[]',
+                        evidence_refs_json TEXT DEFAULT '[]',
+                        actor TEXT,
+                        metadata_json TEXT DEFAULT '{}',
+                        payload_json TEXT NOT NULL,
+                        created_at TEXT NOT NULL
+                    );
+
+                    CREATE INDEX IF NOT EXISTS ix_model_decision_ledger_type_created
+                        ON model_decision_ledger(decision_type, created_at);
+
+                    CREATE INDEX IF NOT EXISTS ix_model_decision_ledger_cycle
+                        ON model_decision_ledger(research_cycle_id);
+
+                    CREATE INDEX IF NOT EXISTS ix_model_decision_ledger_proposal
+                        ON model_decision_ledger(proposal_id);
+
+                    CREATE INDEX IF NOT EXISTS ix_model_decision_ledger_model
+                        ON model_decision_ledger(model_version);
 
                     CREATE TABLE IF NOT EXISTS active_models (
                         active_model_id TEXT PRIMARY KEY,
@@ -2674,6 +2826,478 @@ class ModelReviewReportRepository:
                 connection.close()
 
 
+class ResearchCycleRepository:
+    def __init__(self, store: SQLiteStore) -> None:
+        self.store = store
+
+    def save(self, cycle: dict[str, Any]) -> dict[str, Any]:
+        payload = _payload(cycle)
+        now = _now_iso()
+        created_at = str(payload.get("created_at") or now)
+        updated_at = str(payload.get("updated_at") or now)
+        cycle_date = _date_text(payload.get("cycle_date") or payload.get("start") or datetime.now(UTC)) or datetime.now(UTC).date().isoformat()
+        research_cycle_id = str(payload.get("research_cycle_id") or _stable_id("research_cycle", cycle_date, created_at, payload.get("config_hash")))
+        row_payload = payload | {
+            "research_cycle_id": research_cycle_id,
+            "cycle_date": cycle_date,
+            "created_at": created_at,
+            "updated_at": updated_at,
+        }
+        with self.store._lock:
+            connection = self.store.connect()
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO research_cycles(
+                        research_cycle_id, cycle_date, cycle_type, status, symbols_json, intervals_json,
+                        start, "end", session, data_cutoff_timestamp, active_model_version, challenger_model_version,
+                        window_set_ids_json, replay_run_ids_json, counterfactual_replay_run_ids_json,
+                        portfolio_replay_run_ids_json, sensitivity_run_ids_json, calibration_audit_ids_json,
+                        drift_report_ids_json, model_review_report_ids_json, comparison_ids_json, proposal_ids_json,
+                        data_quality_report_id, stale_window_status_json, summary_json, warnings_json,
+                        config_hash, input_fingerprint, git_commit, database_revision, persistence_backend,
+                        failed_reason, payload_json, created_at, started_at, completed_at, updated_at
+                    )
+                    VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(research_cycle_id) DO UPDATE SET
+                        status=excluded.status,
+                        challenger_model_version=excluded.challenger_model_version,
+                        window_set_ids_json=excluded.window_set_ids_json,
+                        replay_run_ids_json=excluded.replay_run_ids_json,
+                        counterfactual_replay_run_ids_json=excluded.counterfactual_replay_run_ids_json,
+                        portfolio_replay_run_ids_json=excluded.portfolio_replay_run_ids_json,
+                        sensitivity_run_ids_json=excluded.sensitivity_run_ids_json,
+                        calibration_audit_ids_json=excluded.calibration_audit_ids_json,
+                        drift_report_ids_json=excluded.drift_report_ids_json,
+                        model_review_report_ids_json=excluded.model_review_report_ids_json,
+                        comparison_ids_json=excluded.comparison_ids_json,
+                        proposal_ids_json=excluded.proposal_ids_json,
+                        data_quality_report_id=excluded.data_quality_report_id,
+                        stale_window_status_json=excluded.stale_window_status_json,
+                        summary_json=excluded.summary_json,
+                        warnings_json=excluded.warnings_json,
+                        input_fingerprint=excluded.input_fingerprint,
+                        failed_reason=excluded.failed_reason,
+                        payload_json=excluded.payload_json,
+                        started_at=excluded.started_at,
+                        completed_at=excluded.completed_at,
+                        updated_at=excluded.updated_at
+                    """,
+                    (
+                        research_cycle_id,
+                        cycle_date,
+                        str(row_payload.get("cycle_type") or "daily"),
+                        str(row_payload.get("status") or "CREATED"),
+                        _json_dumps(row_payload.get("symbols") or []),
+                        _json_dumps(row_payload.get("intervals") or []),
+                        row_payload.get("start"),
+                        row_payload.get("end"),
+                        str(row_payload.get("session") or "rth"),
+                        row_payload.get("data_cutoff_timestamp"),
+                        row_payload.get("active_model_version"),
+                        row_payload.get("challenger_model_version"),
+                        _json_dumps(row_payload.get("window_set_ids") or []),
+                        _json_dumps(row_payload.get("replay_run_ids") or []),
+                        _json_dumps(row_payload.get("counterfactual_replay_run_ids") or []),
+                        _json_dumps(row_payload.get("portfolio_replay_run_ids") or []),
+                        _json_dumps(row_payload.get("sensitivity_run_ids") or []),
+                        _json_dumps(row_payload.get("calibration_audit_ids") or []),
+                        _json_dumps(row_payload.get("drift_report_ids") or []),
+                        _json_dumps(row_payload.get("model_review_report_ids") or []),
+                        _json_dumps(row_payload.get("comparison_ids") or []),
+                        _json_dumps(row_payload.get("proposal_ids") or []),
+                        row_payload.get("data_quality_report_id"),
+                        _json_dumps(row_payload.get("stale_window_status") or {}),
+                        _json_dumps(row_payload.get("summary") or {}),
+                        _json_dumps(row_payload.get("warnings") or []),
+                        row_payload.get("config_hash"),
+                        row_payload.get("input_fingerprint"),
+                        row_payload.get("git_commit"),
+                        row_payload.get("database_revision"),
+                        row_payload.get("persistence_backend"),
+                        row_payload.get("failed_reason"),
+                        _json_dumps(row_payload),
+                        created_at,
+                        row_payload.get("started_at"),
+                        row_payload.get("completed_at"),
+                        updated_at,
+                    ),
+                )
+                connection.commit()
+            finally:
+                if str(self.store.path) != ":memory:":
+                    connection.close()
+        return row_payload
+
+    def get(self, research_cycle_id: str) -> dict[str, Any] | None:
+        connection = self.store.connect()
+        try:
+            row = connection.execute(
+                "SELECT payload_json FROM research_cycles WHERE research_cycle_id = ?",
+                (research_cycle_id,),
+            ).fetchone()
+            return _json_loads(row["payload_json"]) if row else None
+        finally:
+            if str(self.store.path) != ":memory:":
+                connection.close()
+
+    def list(self, limit: int = 100, offset: int = 0, status: str | None = None) -> builtins.list[dict[str, Any]]:
+        sql = "SELECT payload_json FROM research_cycles"
+        params: builtins.list[Any] = []
+        if status:
+            sql += " WHERE status = ?"
+            params.append(status)
+        sql += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
+        connection = self.store.connect()
+        try:
+            rows = connection.execute(sql, params).fetchall()
+            return [_json_loads(row["payload_json"]) for row in rows]
+        finally:
+            if str(self.store.path) != ":memory:":
+                connection.close()
+
+    def latest(self) -> dict[str, Any] | None:
+        rows = self.list(limit=1)
+        return rows[0] if rows else None
+
+    def save_artifact(self, research_cycle_id: str, artifact: dict[str, Any]) -> dict[str, Any]:
+        payload = _payload(artifact)
+        created_at = str(payload.get("created_at") or _now_iso())
+        source_id = payload.get("source_id") or payload.get("artifact_id")
+        artifact_type = str(payload.get("artifact_type") or "artifact")
+        cycle_artifact_id = str(payload.get("cycle_artifact_id") or _stable_id("cycle_artifact", research_cycle_id, artifact_type, source_id, created_at))
+        row_payload = payload | {
+            "cycle_artifact_id": cycle_artifact_id,
+            "research_cycle_id": research_cycle_id,
+            "created_at": created_at,
+        }
+        with self.store._lock:
+            connection = self.store.connect()
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO research_cycle_artifacts(
+                        cycle_artifact_id, research_cycle_id, artifact_type, source_id,
+                        source_table, export_id, payload_json, created_at
+                    )
+                    VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(cycle_artifact_id) DO UPDATE SET
+                        payload_json=excluded.payload_json,
+                        export_id=excluded.export_id
+                    """,
+                    (
+                        cycle_artifact_id,
+                        research_cycle_id,
+                        artifact_type,
+                        source_id,
+                        payload.get("source_table"),
+                        payload.get("export_id"),
+                        _json_dumps(row_payload),
+                        created_at,
+                    ),
+                )
+                connection.commit()
+            finally:
+                if str(self.store.path) != ":memory:":
+                    connection.close()
+        return row_payload
+
+    def list_artifacts(self, research_cycle_id: str, limit: int = 500, offset: int = 0) -> builtins.list[dict[str, Any]]:
+        connection = self.store.connect()
+        try:
+            rows = connection.execute(
+                """
+                SELECT payload_json FROM research_cycle_artifacts
+                WHERE research_cycle_id = ?
+                ORDER BY created_at, artifact_type
+                LIMIT ? OFFSET ?
+                """,
+                (research_cycle_id, limit, offset),
+            ).fetchall()
+            return [_json_loads(row["payload_json"]) for row in rows]
+        finally:
+            if str(self.store.path) != ":memory:":
+                connection.close()
+
+
+class ChampionChallengerComparisonRepository:
+    def __init__(self, store: SQLiteStore) -> None:
+        self.store = store
+
+    def save(self, comparison: dict[str, Any]) -> dict[str, Any]:
+        payload = _payload(comparison)
+        created_at = str(payload.get("created_at") or _now_iso())
+        comparison_id = str(payload.get("comparison_id") or _stable_id("champion_challenger", payload.get("champion_model_version"), payload.get("challenger_model_version"), created_at))
+        row_payload = payload | {"comparison_id": comparison_id, "created_at": created_at}
+        with self.store._lock:
+            connection = self.store.connect()
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO champion_challenger_comparisons(
+                        comparison_id, champion_model_version, challenger_model_version, delta_metrics_json,
+                        challenger_better_flags_json, challenger_worse_flags_json, gate_results_json,
+                        recommended_action, readiness_status, warnings_json, payload_json, created_at
+                    )
+                    VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(comparison_id) DO UPDATE SET
+                        delta_metrics_json=excluded.delta_metrics_json,
+                        challenger_better_flags_json=excluded.challenger_better_flags_json,
+                        challenger_worse_flags_json=excluded.challenger_worse_flags_json,
+                        gate_results_json=excluded.gate_results_json,
+                        recommended_action=excluded.recommended_action,
+                        readiness_status=excluded.readiness_status,
+                        warnings_json=excluded.warnings_json,
+                        payload_json=excluded.payload_json
+                    """,
+                    (
+                        comparison_id,
+                        row_payload.get("champion_model_version"),
+                        row_payload.get("challenger_model_version"),
+                        _json_dumps(row_payload.get("delta_metrics") or {}),
+                        _json_dumps(row_payload.get("challenger_better_flags") or []),
+                        _json_dumps(row_payload.get("challenger_worse_flags") or []),
+                        _json_dumps(row_payload.get("gate_results") or {}),
+                        str(row_payload.get("recommended_action") or "REVIEW_CHALLENGER"),
+                        str(row_payload.get("readiness_status") or "REVIEW"),
+                        _json_dumps(row_payload.get("warnings") or []),
+                        _json_dumps(row_payload),
+                        created_at,
+                    ),
+                )
+                connection.commit()
+            finally:
+                if str(self.store.path) != ":memory:":
+                    connection.close()
+        return row_payload
+
+    def get(self, comparison_id: str) -> dict[str, Any] | None:
+        connection = self.store.connect()
+        try:
+            row = connection.execute(
+                "SELECT payload_json FROM champion_challenger_comparisons WHERE comparison_id = ?",
+                (comparison_id,),
+            ).fetchone()
+            return _json_loads(row["payload_json"]) if row else None
+        finally:
+            if str(self.store.path) != ":memory:":
+                connection.close()
+
+    def list(self, limit: int = 100, offset: int = 0) -> builtins.list[dict[str, Any]]:
+        connection = self.store.connect()
+        try:
+            rows = connection.execute(
+                "SELECT payload_json FROM champion_challenger_comparisons ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                (limit, offset),
+            ).fetchall()
+            return [_json_loads(row["payload_json"]) for row in rows]
+        finally:
+            if str(self.store.path) != ":memory:":
+                connection.close()
+
+
+class ModelProposalRepository:
+    def __init__(self, store: SQLiteStore) -> None:
+        self.store = store
+
+    def save(self, proposal: dict[str, Any]) -> dict[str, Any]:
+        payload = _payload(proposal)
+        now = _now_iso()
+        created_at = str(payload.get("created_at") or now)
+        updated_at = str(payload.get("updated_at") or now)
+        proposal_id = str(payload.get("proposal_id") or _stable_id("proposal", payload.get("research_cycle_id"), payload.get("challenger_model_version"), created_at))
+        row_payload = payload | {"proposal_id": proposal_id, "created_at": created_at, "updated_at": updated_at}
+        with self.store._lock:
+            connection = self.store.connect()
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO model_proposals(
+                        proposal_id, research_cycle_id, proposal_type, status, champion_model_version,
+                        challenger_model_version, recommended_action, readiness_status, validation_report_ids_json,
+                        calibration_audit_ids_json, drift_report_ids_json, model_review_report_ids_json,
+                        comparison_ids_json, replay_run_ids_json, window_set_ids_json, evidence_summary_json,
+                        champion_metrics_json, challenger_metrics_json, delta_metrics_json, pass_fail_gates_json,
+                        rejection_reasons_json, approval_required, approved_by, approved_at,
+                        activation_model_version, activation_id, payload_json, created_at, updated_at
+                    )
+                    VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(proposal_id) DO UPDATE SET
+                        status=excluded.status,
+                        recommended_action=excluded.recommended_action,
+                        readiness_status=excluded.readiness_status,
+                        evidence_summary_json=excluded.evidence_summary_json,
+                        delta_metrics_json=excluded.delta_metrics_json,
+                        pass_fail_gates_json=excluded.pass_fail_gates_json,
+                        rejection_reasons_json=excluded.rejection_reasons_json,
+                        approved_by=excluded.approved_by,
+                        approved_at=excluded.approved_at,
+                        activation_model_version=excluded.activation_model_version,
+                        activation_id=excluded.activation_id,
+                        payload_json=excluded.payload_json,
+                        updated_at=excluded.updated_at
+                    """,
+                    (
+                        proposal_id,
+                        row_payload.get("research_cycle_id"),
+                        str(row_payload.get("proposal_type") or "challenger_model"),
+                        str(row_payload.get("status") or "DRAFT"),
+                        row_payload.get("champion_model_version"),
+                        row_payload.get("challenger_model_version"),
+                        str(row_payload.get("recommended_action") or "REVIEW_CHALLENGER"),
+                        str(row_payload.get("readiness_status") or "REVIEW"),
+                        _json_dumps(row_payload.get("validation_report_ids") or []),
+                        _json_dumps(row_payload.get("calibration_audit_ids") or []),
+                        _json_dumps(row_payload.get("drift_report_ids") or []),
+                        _json_dumps(row_payload.get("model_review_report_ids") or []),
+                        _json_dumps(row_payload.get("comparison_ids") or []),
+                        _json_dumps(row_payload.get("replay_run_ids") or []),
+                        _json_dumps(row_payload.get("window_set_ids") or []),
+                        _json_dumps(row_payload.get("evidence_summary") or {}),
+                        _json_dumps(row_payload.get("champion_metrics") or {}),
+                        _json_dumps(row_payload.get("challenger_metrics") or {}),
+                        _json_dumps(row_payload.get("delta_metrics") or {}),
+                        _json_dumps(row_payload.get("pass_fail_gates") or {}),
+                        _json_dumps(row_payload.get("rejection_reasons") or []),
+                        bool(row_payload.get("approval_required", True)),
+                        row_payload.get("approved_by"),
+                        row_payload.get("approved_at"),
+                        row_payload.get("activation_model_version"),
+                        row_payload.get("activation_id"),
+                        _json_dumps(row_payload),
+                        created_at,
+                        updated_at,
+                    ),
+                )
+                connection.commit()
+            finally:
+                if str(self.store.path) != ":memory:":
+                    connection.close()
+        return row_payload
+
+    def get(self, proposal_id: str) -> dict[str, Any] | None:
+        connection = self.store.connect()
+        try:
+            row = connection.execute(
+                "SELECT payload_json FROM model_proposals WHERE proposal_id = ?",
+                (proposal_id,),
+            ).fetchone()
+            return _json_loads(row["payload_json"]) if row else None
+        finally:
+            if str(self.store.path) != ":memory:":
+                connection.close()
+
+    def list(self, limit: int = 100, offset: int = 0, status: str | None = None) -> builtins.list[dict[str, Any]]:
+        sql = "SELECT payload_json FROM model_proposals"
+        params: builtins.list[Any] = []
+        if status:
+            sql += " WHERE status = ?"
+            params.append(status)
+        sql += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
+        connection = self.store.connect()
+        try:
+            rows = connection.execute(sql, params).fetchall()
+            return [_json_loads(row["payload_json"]) for row in rows]
+        finally:
+            if str(self.store.path) != ":memory:":
+                connection.close()
+
+    def latest(self) -> dict[str, Any] | None:
+        rows = self.list(limit=1)
+        return rows[0] if rows else None
+
+
+class ModelDecisionLedgerRepository:
+    def __init__(self, store: SQLiteStore) -> None:
+        self.store = store
+
+    def append(self, decision: dict[str, Any]) -> dict[str, Any]:
+        payload = _payload(decision)
+        created_at = str(payload.get("created_at") or _now_iso())
+        decision_id = str(payload.get("decision_id") or _stable_id("decision", payload.get("decision_type"), payload.get("proposal_id"), payload.get("research_cycle_id"), created_at))
+        row_payload = payload | {"decision_id": decision_id, "created_at": created_at}
+        with self.store._lock:
+            connection = self.store.connect()
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO model_decision_ledger(
+                        decision_id, decision_type, research_cycle_id, proposal_id, model_version,
+                        previous_model_version, decision_status, reason_codes_json, evidence_refs_json,
+                        actor, metadata_json, payload_json, created_at
+                    )
+                    VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        decision_id,
+                        str(row_payload.get("decision_type")),
+                        row_payload.get("research_cycle_id"),
+                        row_payload.get("proposal_id"),
+                        row_payload.get("model_version"),
+                        row_payload.get("previous_model_version"),
+                        str(row_payload.get("decision_status") or "RECORDED"),
+                        _json_dumps(row_payload.get("reason_codes") or []),
+                        _json_dumps(row_payload.get("evidence_refs") or []),
+                        row_payload.get("actor"),
+                        _json_dumps(row_payload.get("metadata") or {}),
+                        _json_dumps(row_payload),
+                        created_at,
+                    ),
+                )
+                connection.commit()
+            finally:
+                if str(self.store.path) != ":memory:":
+                    connection.close()
+        return row_payload
+
+    def list(
+        self,
+        *,
+        model_version: str | None = None,
+        proposal_id: str | None = None,
+        research_cycle_id: str | None = None,
+        decision_type: str | None = None,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> builtins.list[dict[str, Any]]:
+        clauses: builtins.list[str] = []
+        params: builtins.list[Any] = []
+        if model_version:
+            clauses.append("model_version = ?")
+            params.append(model_version)
+        if proposal_id:
+            clauses.append("proposal_id = ?")
+            params.append(proposal_id)
+        if research_cycle_id:
+            clauses.append("research_cycle_id = ?")
+            params.append(research_cycle_id)
+        if decision_type:
+            clauses.append("decision_type = ?")
+            params.append(decision_type)
+        if start:
+            clauses.append("created_at >= ?")
+            params.append(start.isoformat())
+        if end:
+            clauses.append("created_at <= ?")
+            params.append(end.isoformat())
+        sql = "SELECT payload_json FROM model_decision_ledger"
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
+        sql += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
+        connection = self.store.connect()
+        try:
+            rows = connection.execute(sql, params).fetchall()
+            return [_json_loads(row["payload_json"]) for row in rows]
+        finally:
+            if str(self.store.path) != ":memory:":
+                connection.close()
+
+
 class ActiveModelRepository:
     def __init__(self, store: SQLiteStore, model_runs: ModelRunRepository) -> None:
         self.store = store
@@ -3714,6 +4338,10 @@ class RepositoryRegistry:
         self.replay_windows = ReplayWindowRepository(self.store)
         self.model_calibration_drift = CalibrationDriftRepository(self.store)
         self.model_review_reports = ModelReviewReportRepository(self.store)
+        self.research_cycles = ResearchCycleRepository(self.store)
+        self.champion_challenger_comparisons = ChampionChallengerComparisonRepository(self.store)
+        self.model_proposals = ModelProposalRepository(self.store)
+        self.model_decision_ledger = ModelDecisionLedgerRepository(self.store)
         self.active_models = ActiveModelRepository(self.store, self.model_runs)
         self.live_signals = LiveSignalRepository(self.store)
         self.scanner_runs = ScannerRunRepository(self.store)

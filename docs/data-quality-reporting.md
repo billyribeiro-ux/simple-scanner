@@ -21,3 +21,9 @@ Query parameters:
 - `session=rth`
 
 The report is intentionally conservative. Missing-bar detection is interval-gap based in V1 and does not claim exchange-calendar completeness.
+
+## Phase 11 Governance Use
+
+Research cycles call the data-quality report before comparison. Invalid price/volume findings and stale build windows become proposal gate evidence and cycle warnings.
+
+`refresh_data=false` is the default and allows cycles to run with persisted data. If `refresh_data=true` and `FMP_API_KEY` is not configured, the cycle is blocked with a non-secret reason. Live provider credentials are never stored in cycle, proposal, ledger, status, or export payloads.

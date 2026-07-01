@@ -68,6 +68,8 @@ make replay-test
 make replay-sensitivity-test
 make replay-window-test
 make model-review-test
+make research-cycle-test
+make research-status-test
 make db-query-diagnostics
 make export-test
 make fmp-smoke
@@ -79,6 +81,8 @@ make test
 `make api-smoke` runs the default SQLite persisted FastAPI vertical slice with a mocked provider. `make api-smoke-postgres` runs the same API workflow against the migrated local Postgres/TimescaleDB compose database. Neither smoke path requires FMP, internet, or secrets.
 
 `make replay-test` runs the candidate-to-trade market replay unit tests. `make replay-sensitivity-test` runs replay audit/sensitivity tests. `make replay-window-test` runs multi-window replay orchestration tests. `make model-review-test` runs calibration drift, model review, and data quality tests. `make export-test` verifies replay, sensitivity, signal, calibration, drift, review, and window-set export generation.
+
+`make research-cycle-test` runs the controlled research cycle, champion/challenger, proposal lifecycle, and activation guard tests. `make research-status-test` runs the operations research-status, decision-ledger, and Phase 11 export subset.
 
 `make fmp-smoke` is optional and runs live FMP REST checks only when `FMP_API_KEY` is configured. Otherwise it skips with a non-secret message.
 
@@ -223,6 +227,29 @@ Phase 10 exports:
 - `POST /exports/model-review.json`
 
 These artifacts are advisory research and operational review outputs. They do not activate models, route orders, or make profitability claims.
+
+## Phase 11 Controlled Research Governance
+
+Phase 11 adds a controlled daily research review loop:
+
+- `POST /research/cycles` creates a reproducible research cycle.
+- `POST /research/cycles/{research_cycle_id}/dry-run` computes stale/data-quality/rebuild warnings without activation.
+- `POST /research/cycles/{research_cycle_id}/run` records data quality, stale-window state, explicit evidence artifacts, champion/challenger comparison, and a model proposal.
+- `GET /research/model-proposals` and `GET /research/model-proposals/{proposal_id}` inspect proposals.
+- `POST /research/model-proposals/{proposal_id}/approve` marks an eligible challenger proposal as approved for activation, but does not activate it.
+- `POST /research/model-proposals/{proposal_id}/activate` requires `confirm_manual_activation=true` and the existing activation guard.
+- `GET /research/decision-ledger` returns append-only governance decisions.
+- `GET /operations/research-status` returns read-only operational research status.
+
+Phase 11 exports:
+
+- `POST /exports/research-cycle.xlsx`
+- `POST /exports/research-cycle.json`
+- `POST /exports/model-proposal.xlsx`
+- `POST /exports/model-proposal.json`
+- `POST /exports/champion-challenger-comparison.xlsx`
+
+Research cycles and proposals are diagnostic governance artifacts. They do not silently retrain, silently activate, route orders, call broker APIs, claim profitability, or make the system self-learning.
 
 ## Default Universe
 
