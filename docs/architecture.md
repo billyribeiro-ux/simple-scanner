@@ -7,6 +7,7 @@ Adaptive Market Decoder is a local-first research and signal platform. It is int
 - `apps/web`: SvelteKit dashboard for scanner status, model metrics, research controls, backtests, exports, and settings.
 - `services/quant-engine`: FastAPI service for data provider access, ingestion, feature building, labels, models, backtests, signals, reviews, and exports.
 - `packages/shared`: TypeScript schemas shared by the web app.
+- Repository layer: local durable SQLite fallback for API runtime plus aligned PostgreSQL/TimescaleDB schema and Alembic migration.
 - PostgreSQL/TimescaleDB: durable relational and time-series storage.
 - Redis: future queue/cache backend.
 - DuckDB/Parquet: local research cache and portable datasets.
@@ -17,9 +18,10 @@ Adaptive Market Decoder is a local-first research and signal platform. It is int
 2. Ingestion validates payloads, normalizes timestamps to UTC and America/New_York, and stores raw/normalized records.
 3. Feature builder computes price structure, VWAP, ATR, relative volume, market context, ticker personality inputs, and regime features without future data.
 4. Label builder evaluates candidate bars using future bars only after the candidate execution timestamp.
-5. Model engine combines transparent setup rules, statistical evidence, an ML classifier when available, regime classification, and a meta-scorer.
-6. Scanner polls quotes/bars, suppresses weak or hostile-regime trades, emits typed trade plans, and streams them over SSE.
-7. Export service writes CSV and XLSX workbooks.
+5. Validation and backtest services persist leakage warnings, chronological reports, and rejection reasons.
+6. Model engine writes statistical evidence model runs, while activation requires an accepted persisted validation report.
+7. Scanner polls quotes/bars, hydrates context from persisted bars first, suppresses weak or hostile-regime trades, persists typed trade plans, and streams them over SSE.
+8. Export service reads persisted signals and writes CSV/XLSX workbooks plus export metadata.
 
 ## Safety Boundaries
 
@@ -28,3 +30,4 @@ Adaptive Market Decoder is a local-first research and signal platform. It is int
 - No frontend secrets.
 - No silent model activation.
 - No random time-series shuffle.
+- No route-level in-memory workflow source of truth.

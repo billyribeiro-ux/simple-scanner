@@ -1,19 +1,22 @@
 # Data Model
 
-Core storage is designed around PostgreSQL with TimescaleDB when available. If the Timescale extension is not available, the same tables function as plain PostgreSQL tables.
+Core storage is designed around PostgreSQL with TimescaleDB when available. If the Timescale extension is not available, the same tables function as plain PostgreSQL tables. Phase 3 also adds a durable local SQLite fallback at `data/local_repo.sqlite3` for local API runtime and repository tests when Postgres is not configured.
 
 ## Tables
 
 - `symbols`: normalized symbol metadata and active flag.
 - `bars`: interval OHLCV bars with UTC/ET timestamps, source, ingestion time, and quality flags.
-- `quotes`: latest and historical quote snapshots.
-- `features`: per-symbol timestamp feature payloads.
+- `features`: per-symbol timestamp feature payloads with feature-set version and data-quality flags.
+- `candidate_signals`: deterministic setup candidates emitted before labeling/scoring.
 - `labels`: leakage-safe hypothetical trade outcomes.
-- `regimes`: market and ticker regime snapshots.
+- `validation_reports`: validation or backtest report summaries, leakage warnings, activation decision, and rejection reasons.
+- `validation_windows`: walk-forward or chronological validation windows tied to a validation report.
 - `model_runs`: model versions, training windows, feature set, label config, activation state.
-- `model_metrics`: validation and backtest metrics by symbol/setup/regime/window.
+- `model_artifacts`: model artifact metadata and local path tracking.
+- `active_models`: the current active model pointer by model type and strategy scope.
 - `live_signals`: current signal/trade-plan rows with all required live output fields.
 - `closed_signals`: completed signal outcomes and realized R.
+- `scanner_runs`: scanner start/stop status, symbols, threshold, active model version, and run stats.
 - `daily_reviews`: end-of-day review artifacts and recommendations.
 - `provider_requests`: redacted request accounting and provider health.
 - `exports`: generated CSV/XLSX artifact metadata.
