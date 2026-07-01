@@ -21,11 +21,11 @@ corepack pnpm test
 corepack pnpm lint
 ```
 
-Backend target runtime:
+Backend target runtime is Python `3.14.6`, the latest stable Python release as of June 30, 2026:
 
 ```bash
 cd services/quant-engine
-python3.13 -m venv .venv
+python3.14 -m venv .venv
 .venv/bin/python -m pip install --upgrade pip
 .venv/bin/python -m pip install -e ".[dev,ml]"
 .venv/bin/uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
@@ -75,7 +75,7 @@ The current dashboard exposes the workflow controls and calls the backend when t
 - `python3 -m compileall services/quant-engine/app services/quant-engine/tests` passed.
 - Secret scan found no occurrence of the provided FMP key substring.
 
-Backend pytest/ruff/mypy were not run because the machine only exposes Python `3.9.6`; the project targets Python `3.13.14` and requires Python `>=3.11`.
+Backend pytest/ruff/mypy were not run because the machine only exposes Python `3.9.6`; the project targets Python `3.14.6`.
 
 ## Known Limitations
 
@@ -87,7 +87,7 @@ Backend pytest/ruff/mypy were not run because the machine only exposes Python `3
 
 ## Next Recommended Work
 
-1. Run backend tests with Python `3.13.14`.
+1. Run backend tests with Python `3.14.6`.
 2. Persist the in-memory route workflow into PostgreSQL repositories.
 3. Add live FMP entitlement checks using your local `FMP_API_KEY`.
 4. Expand walk-forward validation and calibration reports.

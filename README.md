@@ -6,7 +6,7 @@ Adaptive Market Decoder is a local-first trading research and live signal platfo
 
 - Node.js `24.18.0`
 - pnpm via Corepack
-- Python `3.13.14` recommended for quant packages
+- Python `3.14.6`, the latest stable Python release as of June 30, 2026
 - Docker for PostgreSQL/TimescaleDB and Redis
 - FMP API key in `FMP_API_KEY`
 
