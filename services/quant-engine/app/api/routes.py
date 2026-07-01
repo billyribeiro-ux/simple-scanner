@@ -20,6 +20,7 @@ from app.schemas.market import (
     BacktestRequest,
     ExportRequest,
     IngestRequest,
+    ReplayBacktestRequest,
     ScannerStartRequest,
     TrainRequest,
 )
@@ -134,6 +135,9 @@ async def build_features() -> dict[str, object]:
         "status": "ok",
         "bars_read": result["bars_read"],
         "features": result["features_written"],
+        "features_written": result["features_written"],
+        "stale_ranges": result["stale_ranges"],
+        "build_windows": result["build_windows"],
     }
 
 
@@ -145,7 +149,11 @@ async def build_labels() -> dict[str, object]:
         "bars_read": result["bars_read"],
         "features_read": result["features_read"],
         "candidates": result["candidates_written"],
+        "candidates_written": result["candidates_written"],
         "labels": result["labels_written"],
+        "labels_written": result["labels_written"],
+        "stale_ranges": result["stale_ranges"],
+        "build_windows": result["build_windows"],
     }
 
 
@@ -170,13 +178,13 @@ async def train_model(request: TrainRequest) -> dict[str, object]:
 
 
 @router.post("/models/validate")
-async def validate_model(model_version: str | None = None) -> dict[str, object]:
-    return ValidationWorkflowService(repos()).validate(model_version=model_version)
+async def validate_model(model_version: str | None = None, validation_mode: str = "label_derived") -> dict[str, object]:
+    return ValidationWorkflowService(repos()).validate(model_version=model_version, validation_mode=validation_mode)
 
 
 @router.post("/models/activate")
-async def activate_model(model_version: str) -> dict[str, object]:
-    return ModelActivationService(repos()).activate(model_version)
+async def activate_model(model_version: str, validation_mode: str = "label_derived") -> dict[str, object]:
+    return ModelActivationService(repos()).activate(model_version, validation_mode=validation_mode)
 
 
 @router.get("/models")
@@ -197,6 +205,28 @@ async def run_backtest(request: BacktestRequest) -> dict[str, object]:
     return BacktestService(repos()).run(request.symbols, request.start, request.end, request.model_version)
 
 
+@router.post("/backtest/replay")
+async def run_replay_backtest(request: ReplayBacktestRequest) -> dict[str, object]:
+    return BacktestService(repos()).run_replay(request.model_dump(mode="json"))
+
+
+@router.get("/backtest/replay/{replay_run_id}")
+async def replay_backtest(replay_run_id: str) -> dict[str, object]:
+    replay = BacktestService(repos()).get_replay(replay_run_id)
+    return replay or {"replay_run_id": replay_run_id, "status": "not_found"}
+
+
+@router.get("/backtest/replay/{replay_run_id}/trades")
+async def replay_backtest_trades(
+    replay_run_id: str,
+    limit: int = 500,
+    offset: int = 0,
+    status: str | None = None,
+) -> dict[str, object]:
+    trades = BacktestService(repos()).replay_trades(replay_run_id, limit=limit, offset=offset, status=status)
+    return {"replay_run_id": replay_run_id, "limit": limit, "offset": offset, "trades": trades}
+
+
 @router.get("/backtest/runs")
 async def backtest_runs() -> list[dict[str, object]]:
     return BacktestService(repos()).list_runs()
@@ -204,9 +234,9 @@ async def backtest_runs() -> list[dict[str, object]]:
 
 @router.get("/backtest/runs/{run_id}")
 async def backtest_run(run_id: str) -> dict[str, object]:
-    for run in BacktestService(repos()).list_runs():
-        if run.get("report_id") == run_id:
-            return run
+    run = BacktestService(repos()).get_run(run_id)
+    if run is not None:
+        return run
     return {"run_id": run_id, "status": "not_found"}
 
 
@@ -272,6 +302,27 @@ async def export_daily_review_xlsx(request: ExportRequest | None = None) -> dict
     payload = DailyReviewService(repos()).build(_request_date(request))["payload"]
     result = ExportWorkflowService(repos()).export_daily_review(payload, _request_date(request))
     return {"status": "ok", **result}
+
+
+@router.post("/exports/replay-summary.xlsx")
+async def export_replay_summary_xlsx(request: ExportRequest) -> dict[str, object]:
+    if not request.run_id:
+        return {"status": "error", "reason": "run_id_required"}
+    return ExportWorkflowService(repos()).export_replay_summary(request.run_id)
+
+
+@router.post("/exports/replay-trades.csv")
+async def export_replay_trades_csv(request: ExportRequest) -> dict[str, object]:
+    if not request.run_id:
+        return {"status": "error", "reason": "run_id_required"}
+    return ExportWorkflowService(repos()).export_replay_trades(request.run_id, "csv")
+
+
+@router.post("/exports/replay-trades.xlsx")
+async def export_replay_trades_xlsx(request: ExportRequest) -> dict[str, object]:
+    if not request.run_id:
+        return {"status": "error", "reason": "run_id_required"}
+    return ExportWorkflowService(repos()).export_replay_trades(request.run_id, "xlsx")
 
 
 @router.get("/exports/{export_id}")

@@ -18,24 +18,35 @@ EXPECTED_TABLES = {
     "live_signals",
     "model_artifacts",
     "model_runs",
+    "pipeline_build_windows",
     "provider_requests",
+    "replay_runs",
     "scanner_runs",
+    "simulated_trades",
     "symbols",
     "validation_reports",
     "validation_windows",
 }
 
 DEFAULT_URL = "postgresql+psycopg://amd:amd@localhost:15432/adaptive_market_decoder"
-EXPECTED_REVISION = "0002_phase5_indexes"
+EXPECTED_REVISION = "0003_phase6_replay"
 EXPECTED_INDEXES = {
+    "ix_candidate_signals_replay_lookup",
     "ix_bars_lookup",
     "ix_features_lookup",
     "ix_features_lookup_version",
     "ix_labels_symbol_ts_setup_side_outcome",
     "ix_live_signals_latest",
+    "ix_live_signals_symbol_ts_status_model",
     "ix_live_signals_ticker_ts_status",
+    "ix_pipeline_windows_lookup",
+    "ix_replay_runs_created_type",
+    "ix_replay_runs_simulation_type",
     "ix_validation_reports_model_purpose_created",
     "ix_scanner_runs_started",
+    "ix_simulated_trades_run_status",
+    "ix_simulated_trades_run_symbol_setup_side",
+    "ix_simulated_trades_signal_ts",
 }
 EXPECTED_UNIQUE_CONSTRAINTS = {
     "uq_active_models_type_scope",
@@ -43,6 +54,7 @@ EXPECTED_UNIQUE_CONSTRAINTS = {
     "uq_candidate_signal_key",
     "uq_features_symbol_interval_ts_version",
     "uq_label_key",
+    "uq_pipeline_window",
 }
 EXPECTED_COLUMNS = {
     "bars": {"symbol", "interval", "timestamp_utc", "source", "payload_json"},
@@ -50,6 +62,9 @@ EXPECTED_COLUMNS = {
     "labels": {"symbol", "timestamp_utc", "setup_type", "side", "outcome", "payload_json"},
     "live_signals": {"ticker", "timestamp_utc", "status", "payload_json"},
     "model_runs": {"model_version", "active", "payload_json"},
+    "pipeline_build_windows": {"artifact_type", "symbol", "interval", "session_date", "dirty", "payload_json"},
+    "replay_runs": {"replay_run_id", "simulation_type", "config_json", "summary_metrics_json", "payload_json"},
+    "simulated_trades": {"trade_id", "replay_run_id", "symbol", "setup_type", "status", "payload_json"},
     "validation_reports": {"report_id", "model_version", "payload_json"},
     "active_models": {"model_type", "strategy_scope", "payload_json"},
     "exports": {"export_id", "payload_json"},
@@ -64,9 +79,23 @@ EXPECTED_JSON_COLUMNS = {
     ("model_runs", "payload_json"),
     ("active_models", "payload_json"),
     ("live_signals", "payload_json"),
+    ("pipeline_build_windows", "payload_json"),
     ("scanner_runs", "symbols_json"),
     ("scanner_runs", "stats_json"),
     ("provider_requests", "metadata_json"),
+    ("replay_runs", "symbols_json"),
+    ("replay_runs", "intervals_json"),
+    ("replay_runs", "config_json"),
+    ("replay_runs", "summary_metrics_json"),
+    ("replay_runs", "per_symbol_metrics_json"),
+    ("replay_runs", "per_setup_metrics_json"),
+    ("replay_runs", "per_regime_metrics_json"),
+    ("replay_runs", "per_time_bucket_metrics_json"),
+    ("replay_runs", "skip_breakdown_json"),
+    ("replay_runs", "warnings_json"),
+    ("replay_runs", "payload_json"),
+    ("simulated_trades", "metadata_json"),
+    ("simulated_trades", "payload_json"),
     ("exports", "payload_json"),
     ("daily_reviews", "payload_json"),
 }

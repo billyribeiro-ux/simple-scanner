@@ -175,6 +175,11 @@ def test_repository_core_contract_parity(tmp_path, monkeypatch, backend: str) ->
     assert repo.bars.upsert_many(bars) == 96
     assert repo.bars.upsert_many(bars[:4]) == 4
     assert len(repo.bars.query(symbols=["AAPL"], start=bars[0].timestamp_utc, end=bars[-1].timestamp_utc)) == 24
+    dirty_artifacts = {
+        row["artifact_type"]
+        for row in repo.pipeline_windows.list_dirty(symbols=["AAPL"], intervals=["1min"])
+    }
+    assert {"features", "candidates", "labels", "replay"} <= dirty_artifacts
 
     features = [_feature(bar) for bar in bars]
     assert repo.features.upsert_many(features) == 96
@@ -256,6 +261,99 @@ def test_repository_core_contract_parity(tmp_path, monkeypatch, backend: str) ->
     )
     export = repo.exports.record("live_signals", "csv", tmp_path / "signals.csv", row_count=1)
     review = repo.daily_reviews.save(date(2026, 6, 1), {"date": "2026-06-01", "signals_reviewed": 1})
+    replay_run = {
+        "replay_run_id": "parity-replay",
+        "simulation_type": "candidate_market_replay",
+        "start": bars[0].timestamp_utc.isoformat(),
+        "end": bars[-1].timestamp_utc.isoformat(),
+        "symbols": ["AAPL"],
+        "intervals": ["1min"],
+        "config": {
+            "symbols": ["AAPL"],
+            "intervals": ["1min"],
+            "entry_mode": "next_bar_open",
+            "same_bar_stop_target_policy": "conservative_stop_first",
+        },
+        "summary_metrics": {
+            "total_candidates": 2,
+            "candidates_taken": 1,
+            "candidates_skipped": 1,
+            "total_trades": 1,
+            "expectancy_r": 1.5,
+            "skip_breakdown": {"missing_entry_bar": 1},
+            "per_symbol_metrics": {"AAPL": {"total_trades": 1, "expectancy_r": 1.5}},
+            "per_setup_metrics": {"VWAP reclaim long": {"total_trades": 1, "expectancy_r": 1.5}},
+            "per_regime_metrics": {"trend_long": {"total_trades": 1}},
+            "per_time_bucket_metrics": {"opening_drive": {"total_trades": 1}},
+            "daily_r_series": [{"date": "2026-06-01", "r": 1.5}],
+            "drawdown_series": [0.0],
+        },
+        "warnings": [],
+        "created_at": datetime.now(UTC).isoformat(),
+    }
+    signal_timestamp = bars[0].timestamp_utc
+    replay_trades = [
+        {
+            "trade_id": "parity-trade-taken",
+            "replay_run_id": "parity-replay",
+            "candidate_id": "candidate-AAPL",
+            "symbol": "AAPL",
+            "interval": "1min",
+            "side": Side.LONG.value,
+            "setup_type": "VWAP reclaim long",
+            "signal_timestamp_utc": signal_timestamp,
+            "entry_timestamp_utc": signal_timestamp + timedelta(minutes=1),
+            "exit_timestamp_utc": signal_timestamp + timedelta(minutes=6),
+            "entry_price": 100,
+            "stop_price": 99,
+            "target_1": 101,
+            "target_2": 101.5,
+            "target_3": 102.5,
+            "exit_price": 101.5,
+            "exit_reason": "target_2",
+            "realized_r": 1.5,
+            "mfe_r": 1.7,
+            "mae_r": -0.2,
+            "bars_held": 5,
+            "minutes_held": 5,
+            "same_bar_ambiguous": False,
+            "ambiguity_policy": "conservative_stop_first",
+            "slippage_bps": 0,
+            "spread_bps": 0,
+            "commission": 0,
+            "market_regime": "trend_long",
+            "time_bucket": "opening_drive",
+            "signal_score": 0.8,
+            "expected_r": 1.5,
+            "status": "TAKEN",
+            "metadata": {"contract": "parity"},
+        },
+        {
+            "trade_id": "parity-trade-skipped",
+            "replay_run_id": "parity-replay",
+            "candidate_id": "candidate-AAPL-missing-entry",
+            "symbol": "AAPL",
+            "interval": "1min",
+            "side": Side.LONG.value,
+            "setup_type": "VWAP reclaim long",
+            "signal_timestamp_utc": signal_timestamp + timedelta(minutes=30),
+            "status": "SKIPPED",
+            "skip_reason": "missing_entry_bar",
+            "metadata": {"contract": "parity"},
+        },
+    ]
+    saved_replay = repo.replays.save(replay_run, replay_trades)
+    replay_windows = repo.pipeline_windows.mark_built(
+        "replay",
+        ["AAPL"],
+        ["1min"],
+        bars[0].timestamp_utc,
+        bars[-1].timestamp_utc,
+        "candidate_market_replay",
+        {"replay_run_id": "parity-replay"},
+    )
+    assert saved_replay["trades_written"] == 2
+    assert replay_windows[0]["dirty"] is False
 
     reopened = RepositoryRegistry(settings=get_settings())
     assert len(reopened.bars.list_all()) == 96
@@ -269,6 +367,12 @@ def test_repository_core_contract_parity(tmp_path, monkeypatch, backend: str) ->
     assert len(reopened.live_signals.history()) == 1
     assert reopened.exports.list_all()[0]["export_id"] == export["export_id"]
     assert reopened.daily_reviews.get(date(2026, 6, 1))["review_id"] == review["review_id"]
+    assert reopened.replays.get("parity-replay")["simulation_type"] == "candidate_market_replay"
+    assert len(reopened.replays.list_trades("parity-replay")) == 2
+    skipped_replay_trades = reopened.replays.list_trades("parity-replay", status="SKIPPED")
+    assert skipped_replay_trades[0]["skip_reason"] == "missing_entry_bar"
+    replay_builds = reopened.pipeline_windows.list_dirty("replay", symbols=["AAPL"], intervals=["1min"])
+    assert all(row["artifact_type"] == "replay" for row in replay_builds)
     assert "apikey" not in str(reopened.provider_requests.list_all()).lower()
 
 

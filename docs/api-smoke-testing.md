@@ -39,6 +39,9 @@ The test sets a non-secret sentinel `FMP_API_KEY` only to exercise scanner gatin
 - `GET /models`
 - `GET /models/{model_version}`
 - `POST /backtest/run`
+- `POST /backtest/replay`
+- `GET /backtest/replay/{replay_run_id}`
+- `GET /backtest/replay/{replay_run_id}/trades`
 - `GET /backtest/runs`
 - `GET /backtest/runs/{run_id}`
 - `POST /scanner/start`
@@ -49,6 +52,9 @@ The test sets a non-secret sentinel `FMP_API_KEY` only to exercise scanner gatin
 - `POST /exports/signals.csv`
 - `POST /exports/signals.xlsx`
 - `POST /exports/backtest.xlsx`
+- `POST /exports/replay-summary.xlsx`
+- `POST /exports/replay-trades.csv`
+- `POST /exports/replay-trades.xlsx`
 - `POST /review/daily`
 - `GET /review/daily/{date}`
 - `POST /exports/daily-review.xlsx`
@@ -70,13 +76,16 @@ The smoke test:
 - persists validation reports;
 - verifies accepted validation can activate the model;
 - verifies a replacement active model leaves one active model per scope;
-- runs and persists a label-derived backtest report;
+- runs and persists a label-derived backtest report with `simulation_type = label_derived`;
+- runs and persists a candidate market replay with `simulation_type = candidate_market_replay`;
+- re-queries replay summary and paginated simulated trades;
 - starts the scanner with mocked quotes/context;
 - persists a scanner run and live signals;
 - exports live signals CSV and XLSX from persisted signals;
+- exports replay summary XLSX plus metrics JSON and replay trades CSV/XLSX from persisted replay data;
 - persists a daily review and exports JSON/CSV/XLSX review artifacts;
 - reinitializes the repository;
-- re-queries bars, features, labels, active model, scanner run, signals, exports, and daily review from disk.
+- re-queries bars, features, labels, replay runs/trades, active model, scanner run, signals, exports, and daily review from disk.
 
 ## Known Limits
 
@@ -84,3 +93,4 @@ The smoke test:
 - Postgres smoke requires a reachable migrated database or skips honestly when run through pytest.
 - It does not prove live FMP entitlement.
 - It does not validate profitability or execution quality.
+- Replay smoke is still mocked-provider OHLCV simulation; it verifies persistence and API/export wiring, not live fill realism.

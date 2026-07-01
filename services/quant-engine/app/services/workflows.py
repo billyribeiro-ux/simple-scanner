@@ -5,13 +5,19 @@ from datetime import date, datetime, timedelta
 from typing import Any
 
 from app.backtesting.engine import BacktestEngine
+from app.backtesting.replay import (
+    SIMULATION_TYPE_LABEL_DERIVED,
+    SIMULATION_TYPE_REPLAY,
+    CandidateMarketReplayEngine,
+    ReplayConfig,
+)
 from app.config import Settings, get_settings
 from app.data.provider import MarketDataProvider
 from app.data.symbols import normalize_symbols
 from app.db.repositories import RepositoryRegistry
 from app.exports.service import ExportService
-from app.features.engine import FeatureEngine
-from app.labels.engine import LabelingEngine
+from app.features.engine import FEATURE_SET_VERSION, FeatureEngine
+from app.labels.engine import LABEL_CONFIG_VERSION, LabelingEngine
 from app.models.engine import ModelEngine
 from app.regimes.classifier import RegimeClassifier
 from app.schemas.market import Bar, Signal
@@ -84,6 +90,7 @@ class DataIngestionService:
             "start": start.isoformat(),
             "end": end.isoformat(),
             "bars_written": rows_written,
+            "dirty_ranges": self.repos.pipeline_windows.list_dirty(symbols=selected_symbols, intervals=intervals),
             "errors": errors,
         }
 
@@ -101,6 +108,7 @@ class FeatureBuildService:
         start: datetime | None = None,
         end: datetime | None = None,
     ) -> dict[str, Any]:
+        stale_ranges = self.repos.pipeline_windows.list_dirty("features", symbols=symbols, intervals=intervals)
         bars = self.repos.bars.query(symbols=symbols, intervals=intervals, start=start, end=end)
         features = self.engine.build_features(bars)
         bars_by_key: dict[tuple[str, str], list[Bar]] = {}
@@ -112,7 +120,26 @@ class FeatureBuildService:
             feature["market_regime"] = self.regimes.classify_market(history)
             feature["ticker_regime"] = self.regimes.classify_ticker(feature)
         written = self.repos.features.upsert_many(features)
-        return {"bars_read": len(bars), "features_written": written, "features": features}
+        selected_symbols = normalize_symbols(symbols or sorted({bar.symbol for bar in bars}))
+        selected_intervals = intervals or sorted({bar.interval for bar in bars}) or ["1min"]
+        build_start = start or (min((bar.timestamp_utc for bar in bars), default=None))
+        build_end = end or (max((bar.timestamp_utc for bar in bars), default=None))
+        build_windows = self.repos.pipeline_windows.mark_built(
+            "features",
+            selected_symbols,
+            selected_intervals,
+            build_start,
+            build_end,
+            FEATURE_SET_VERSION,
+            {"features_written": written},
+        ) if selected_symbols else []
+        return {
+            "bars_read": len(bars),
+            "features_written": written,
+            "features": features,
+            "stale_ranges": stale_ranges,
+            "build_windows": build_windows,
+        }
 
 
 class LabelBuildService:
@@ -129,6 +156,10 @@ class LabelBuildService:
         start: datetime | None = None,
         end: datetime | None = None,
     ) -> dict[str, Any]:
+        stale_ranges = {
+            "candidates": self.repos.pipeline_windows.list_dirty("candidates", symbols=symbols, intervals=intervals),
+            "labels": self.repos.pipeline_windows.list_dirty("labels", symbols=symbols, intervals=intervals),
+        }
         bars = self.repos.bars.query(symbols=symbols, intervals=intervals, start=start, end=end)
         features = self.repos.features.query(symbols=symbols, intervals=intervals, start=start, end=end)
         candidates = []
@@ -138,12 +169,42 @@ class LabelBuildService:
         labels = self.labels.build_labels(bars, features)
         self.repos.candidate_signals.upsert_many(candidates)
         written = self.repos.labels.upsert_many(label_rows)
+        selected_symbols = normalize_symbols(symbols or sorted({bar.symbol for bar in bars}))
+        selected_intervals = intervals or sorted({bar.interval for bar in bars}) or ["1min"]
+        build_start = start or (min((bar.timestamp_utc for bar in bars), default=None))
+        build_end = end or (max((bar.timestamp_utc for bar in bars), default=None))
+        build_windows = []
+        if selected_symbols:
+            build_windows.extend(
+                self.repos.pipeline_windows.mark_built(
+                    "candidates",
+                    selected_symbols,
+                    selected_intervals,
+                    build_start,
+                    build_end,
+                    "candidate_signals.v1",
+                    {"candidates_written": len(candidates)},
+                )
+            )
+            build_windows.extend(
+                self.repos.pipeline_windows.mark_built(
+                    "labels",
+                    selected_symbols,
+                    selected_intervals,
+                    build_start,
+                    build_end,
+                    LABEL_CONFIG_VERSION,
+                    {"labels_written": written},
+                )
+            )
         return {
             "bars_read": len(bars),
             "features_read": len(features),
             "candidates_written": len(candidates),
             "labels_written": written,
             "labels": labels,
+            "stale_ranges": stale_ranges,
+            "build_windows": build_windows,
         }
 
 
@@ -159,13 +220,50 @@ class ValidationWorkflowService:
         symbols: list[str] | None = None,
         start: datetime | None = None,
         end: datetime | None = None,
+        validation_mode: str = SIMULATION_TYPE_LABEL_DERIVED,
     ) -> dict[str, Any]:
+        if validation_mode == SIMULATION_TYPE_REPLAY:
+            replay_runs = self.repos.replays.list_runs()
+            replay = replay_runs[0] if replay_runs else None
+            if replay is None:
+                report = {
+                    "report_id": None,
+                    "model_version": model_version,
+                    "validation_mode": SIMULATION_TYPE_REPLAY,
+                    "summary": self.backtest.summarize_trades([]),
+                    "windows": [],
+                    "activation_decision": "rejected",
+                    "rejection_reasons": ["no_replay_run_available"],
+                    "leakage_warnings": [],
+                    "created_at": datetime.now(UTC).isoformat(),
+                }
+                return self.repos.validation_reports.save(report, model_version=model_version, purpose="replay_validation")
+            metrics = dict(replay.get("summary_metrics") or {})
+            decision = self.validation.activation_decision(metrics, [], [])
+            payload = {
+                "model_version": model_version,
+                "validation_mode": SIMULATION_TYPE_REPLAY,
+                "replay_run_id": replay["replay_run_id"],
+                "summary": metrics,
+                "windows": [],
+                "per_symbol": metrics.get("per_symbol_metrics") or {},
+                "per_setup": metrics.get("per_setup_metrics") or {},
+                "per_regime": metrics.get("per_regime_metrics") or {},
+                "per_time_bucket": metrics.get("per_time_bucket_metrics") or {},
+                "leakage_warnings": [],
+                "activation_decision": decision["activation_decision"],
+                "rejection_reasons": decision["rejection_reasons"],
+                "created_at": datetime.now(UTC).isoformat(),
+            }
+            return self.repos.validation_reports.save(payload, model_version=model_version, purpose="replay_validation")
+
         labels = self.repos.labels.query(symbols=symbols, start=start, end=end)
         features = self.repos.features.query(symbols=symbols, start=start, end=end)
         if not labels:
             report = {
                 "report_id": None,
                 "model_version": model_version,
+                "validation_mode": SIMULATION_TYPE_LABEL_DERIVED,
                 "summary": self.backtest.summarize_labels([]),
                 "windows": [],
                 "activation_decision": "rejected",
@@ -183,9 +281,11 @@ class ValidationWorkflowService:
             split = self.validation.chronological_split(start_time, end_time, embargo_minutes=0)
             report = self.validation.validate_trades(trades, [split], leakage_warnings)
             payload = _model_report_payload(report, model_version=model_version)
+            payload["validation_mode"] = SIMULATION_TYPE_LABEL_DERIVED
         except ValueError as exc:
             payload = {
                 "model_version": model_version,
+                "validation_mode": SIMULATION_TYPE_LABEL_DERIVED,
                 "summary": self.backtest.summarize_trades(trades),
                 "windows": [],
                 "per_symbol": {},
@@ -236,27 +336,31 @@ class ModelActivationService:
         self.repos = repos
         self.settings = settings or get_settings()
 
-    def activate(self, model_version: str) -> dict[str, Any]:
+    def activate(self, model_version: str, validation_mode: str = SIMULATION_TYPE_LABEL_DERIVED) -> dict[str, Any]:
         model = self.repos.model_runs.get(model_version) or ModelEngine().load(model_version)
         if not model or model.get("model_version") == "untrained-baseline":
             return {"activated": False, "reason": "model_not_found", "model_version": model_version}
-        report = self.repos.validation_reports.latest(model_version=model_version, purpose="validation")
+        purpose = "replay_validation" if validation_mode == SIMULATION_TYPE_REPLAY else "validation"
+        report = self.repos.validation_reports.latest(model_version=model_version, purpose=purpose)
         if not report:
             return {
                 "activated": False,
                 "reason": "accepted_validation_report_required",
                 "model_version": model_version,
+                "validation_mode": validation_mode,
             }
         if report.get("activation_decision") != "accepted":
             return {
                 "activated": False,
                 "reason": "validation_gate_failed",
                 "model_version": model_version,
+                "validation_mode": validation_mode,
                 "rejection_reasons": report.get("rejection_reasons") or [],
                 "report_id": report.get("report_id"),
             }
         model["active"] = True
         model["activation_decision"] = "accepted"
+        model["activation_validation_mode"] = validation_mode
         active = self.repos.active_models.activate(model, validation_report_id=report.get("report_id"))
         self.settings.model_artifacts_dir.mkdir(parents=True, exist_ok=True)
         (self.settings.model_artifacts_dir / "active_model.json").write_text(
@@ -267,6 +371,7 @@ class ModelActivationService:
             "activated": True,
             "model_version": model_version,
             "report_id": report.get("report_id"),
+            "validation_mode": validation_mode,
             "active_model": active,
         }
 
@@ -275,6 +380,7 @@ class BacktestService:
     def __init__(self, repos: RepositoryRegistry) -> None:
         self.repos = repos
         self.engine = BacktestEngine()
+        self.replay_engine = CandidateMarketReplayEngine()
 
     def run(
         self,
@@ -295,14 +401,78 @@ class BacktestService:
             "leakage_warnings": [],
             "activation_decision": "not_applicable",
             "rejection_reasons": [],
-            "simulation_type": "label_derived_trade_simulation",
+            "simulation_type": SIMULATION_TYPE_LABEL_DERIVED,
             "created_at": datetime.now(UTC).isoformat(),
         }
         persisted = self.repos.validation_reports.save(report, model_version=model_version, purpose="backtest")
+        persisted["simulation_type"] = SIMULATION_TYPE_LABEL_DERIVED
         return persisted
 
+    def run_replay(self, payload: dict[str, Any]) -> dict[str, Any]:
+        config = ReplayConfig.from_payload(payload)
+        bars = self.repos.bars.query(
+            symbols=list(config.symbols),
+            intervals=list(config.intervals),
+            start=config.start,
+            end=config.end,
+        )
+        features = self.repos.features.query(
+            symbols=list(config.symbols),
+            intervals=list(config.intervals),
+            start=config.start,
+            end=config.end,
+        )
+        candidates = self.repos.candidate_signals.query(
+            symbols=list(config.symbols),
+            intervals=list(config.intervals),
+            start=config.start,
+            end=config.end,
+            sides=list(config.sides),
+            setup_types=list(config.candidate_setup_types),
+        )
+        run = self.replay_engine.replay(bars, features, candidates, config)
+        persisted = self.repos.replays.save(run.to_dict(), [trade.to_dict() for trade in run.trades])
+        self.repos.pipeline_windows.mark_built(
+            "replay",
+            list(config.symbols) or sorted({bar.symbol for bar in bars}),
+            list(config.intervals) or sorted({bar.interval for bar in bars}) or ["1min"],
+            config.start,
+            config.end,
+            SIMULATION_TYPE_REPLAY,
+            {
+                "replay_run_id": run.replay_run_id,
+                "total_candidates": run.metrics.get("total_candidates"),
+                "total_trades": run.metrics.get("total_trades"),
+            },
+        )
+        return persisted
+
+    def get_replay(self, replay_run_id: str) -> dict[str, Any] | None:
+        return self.repos.replays.get(replay_run_id)
+
+    def replay_trades(self, replay_run_id: str, limit: int = 500, offset: int = 0, status: str | None = None) -> list[dict[str, Any]]:
+        return self.repos.replays.list_trades(replay_run_id, limit=limit, offset=offset, status=status)
+
     def list_runs(self) -> list[dict[str, Any]]:
-        return self.repos.validation_reports.list_all(purpose="backtest")
+        label_runs = [
+            run | {"simulation_type": run.get("simulation_type") or SIMULATION_TYPE_LABEL_DERIVED}
+            for run in self.repos.validation_reports.list_all(purpose="backtest")
+        ]
+        replay_runs = self.repos.replays.list_runs()
+        return sorted(
+            [*label_runs, *replay_runs],
+            key=lambda run: str(run.get("created_at") or ""),
+            reverse=True,
+        )
+
+    def get_run(self, run_id: str) -> dict[str, Any] | None:
+        replay = self.repos.replays.get(run_id)
+        if replay is not None:
+            return replay
+        for run in self.repos.validation_reports.list_all(purpose="backtest"):
+            if run.get("report_id") == run_id:
+                return run | {"simulation_type": run.get("simulation_type") or SIMULATION_TYPE_LABEL_DERIVED}
+        return None
 
 
 class ExportWorkflowService:
@@ -329,6 +499,62 @@ class ExportWorkflowService:
             for path in paths
         ]
         return {"paths": [str(path) for path in paths], "exports": records}
+
+    def export_replay_trades(self, replay_run_id: str, kind: str) -> dict[str, Any]:
+        replay = self.repos.replays.get(replay_run_id)
+        if replay is None:
+            return {"status": "not_found", "replay_run_id": replay_run_id}
+        trades = self.repos.replays.list_trades(replay_run_id, limit=100_000)
+        if kind == "csv":
+            path = self.exporter.export_replay_trades_csv(replay_run_id, trades)
+            record = self.repos.exports.record(
+                "replay_trades",
+                "csv",
+                path,
+                len(trades),
+                replay_run_id,
+                {"simulation_type": SIMULATION_TYPE_REPLAY, "created_at": datetime.now(UTC).isoformat(), "filters": replay.get("config") or {}},
+            )
+            return {"status": "ok", "kind": kind, "path": str(path), "rows": len(trades), "export": record}
+        if kind == "xlsx":
+            path = self.exporter.export_replay_trades_xlsx(replay_run_id, trades)
+            record = self.repos.exports.record(
+                "replay_trades",
+                "xlsx",
+                path,
+                len(trades),
+                replay_run_id,
+                {"simulation_type": SIMULATION_TYPE_REPLAY, "created_at": datetime.now(UTC).isoformat(), "filters": replay.get("config") or {}},
+            )
+            return {"status": "ok", "kind": kind, "path": str(path), "rows": len(trades), "export": record}
+        raise ValueError("replay trade export kind must be csv or xlsx")
+
+    def export_replay_summary(self, replay_run_id: str) -> dict[str, Any]:
+        replay = self.repos.replays.get(replay_run_id)
+        if replay is None:
+            return {"status": "not_found", "replay_run_id": replay_run_id}
+        trades = self.repos.replays.list_trades(replay_run_id, limit=100_000)
+        summary_path = self.exporter.export_replay_summary_xlsx(replay, trades)
+        metrics_path = self.exporter.export_replay_metrics_json(replay)
+        records = [
+            self.repos.exports.record(
+                "replay_summary",
+                "xlsx",
+                summary_path,
+                1,
+                replay_run_id,
+                {"simulation_type": SIMULATION_TYPE_REPLAY, "created_at": datetime.now(UTC).isoformat(), "filters": replay.get("config") or {}},
+            ),
+            self.repos.exports.record(
+                "replay_metrics",
+                "json",
+                metrics_path,
+                1,
+                replay_run_id,
+                {"simulation_type": SIMULATION_TYPE_REPLAY, "created_at": datetime.now(UTC).isoformat(), "filters": replay.get("config") or {}},
+            ),
+        ]
+        return {"status": "ok", "paths": [str(summary_path), str(metrics_path)], "exports": records}
 
 
 class DailyReviewService:

@@ -64,6 +64,8 @@ make api-smoke
 make api-smoke-sqlite
 make api-smoke-postgres
 make repository-parity-test
+make replay-test
+make export-test
 make fmp-smoke
 make test
 ```
@@ -71,6 +73,8 @@ make test
 `make quant-test` runs pure deterministic quant tests without FMP, Docker, Redis, Postgres, or internet. If the backend venv is missing, it falls back to `python3` for this pure test path only. Full backend runtime still targets Python `3.14.6`.
 
 `make api-smoke` runs the default SQLite persisted FastAPI vertical slice with a mocked provider. `make api-smoke-postgres` runs the same API workflow against the migrated local Postgres/TimescaleDB compose database. Neither smoke path requires FMP, internet, or secrets.
+
+`make replay-test` runs the candidate-to-trade market replay unit tests. `make export-test` verifies replay and signal CSV/XLSX export generation.
 
 `make fmp-smoke` is optional and runs live FMP REST checks only when `FMP_API_KEY` is configured. Otherwise it skips with a non-secret message.
 
@@ -94,8 +98,16 @@ FastAPI selects the repository backend explicitly:
 4. Build features and labels.
 5. Train and validate a model.
 6. Activate only a passing model.
-7. Start the scanner.
-8. Export live signals, history, backtests, or daily reviews.
+7. Run `POST /backtest/run` for label-derived evidence, or `POST /backtest/replay` for candidate-to-trade market replay.
+8. Start the scanner.
+9. Export live signals, replay summaries/trades, history, backtests, or daily reviews.
+
+## Backtest Modes
+
+- `label_derived`: the existing fast evidence mode that simulates from leakage-safe labels.
+- `candidate_market_replay`: the Phase 6 replay mode that starts from persisted candidates, enters at next-bar open, replays raw bars chronologically, records skipped candidates, and computes metrics from simulated trades.
+
+Replay exports are available through `POST /exports/replay-summary.xlsx`, `POST /exports/replay-trades.csv`, and `POST /exports/replay-trades.xlsx` with `run_id` set to the replay run ID.
 
 ## Default Universe
 

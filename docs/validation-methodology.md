@@ -13,6 +13,15 @@ Required rules:
 
 Metrics include trade count, win rate, precision, recall where applicable, average R, median R, expectancy, profit factor, max drawdown, MFE, MAE, average time in trade, target hit rate, stop hit rate, and calibration/Brier score when probabilities are available.
 
+## Backtest And Validation Modes
+
+V1 now keeps two modes explicit:
+
+- `label_derived`: default validation and activation path. It uses leakage-safe labels for fast evidence and model training.
+- `candidate_market_replay`: optional replay validation path. It uses persisted replay metrics from raw-bar candidate replay and stores validation reports with purpose `replay_validation`.
+
+Model activation responses include the `validation_mode` used. If replay validation is requested and no replay run exists, the report is rejected with `no_replay_run_available`. Replay validation does not remove the default label-derived guard; it is an explicit additional gate.
+
 ## Phase 2 Implementation Status
 
 Implemented in code:
@@ -24,5 +33,5 @@ Implemented in code:
 
 Still partial:
 
-- Validation currently operates over simulated/label-derived trades; the next phase should wire it to persisted model runs and raw candidate-to-trade simulations.
+- Replay validation currently uses the latest persisted replay run for the requested mode; future work should support selecting a specific replay run, model version, and out-of-sample replay window.
 - Calibration/Brier scoring is not real until a probability model exists.

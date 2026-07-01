@@ -14,6 +14,7 @@ The Phase 2 quant core favors deterministic, testable Python loops over prematur
 - Relative strength alignment builds timestamp buckets: `O(n)`.
 - Candidate detection is constant time per feature row: `O(n)`.
 - Label simulation is linear per candidate over the configured forward window: `O(c * h)`, where `c` is candidate count and `h` is max hold bars.
+- Candidate market replay pre-indexes bars by `(symbol, interval)` and feature rows by `(symbol, interval, timestamp)`, then processes sorted candidates. Current replay complexity is `O(b log b + f + c * h + t)`, where `b` is loaded bars, `f` is features, `c` is candidates, `h` is the forward hold window, and `t` is simulated trades.
 - Backtest metrics are linear in simulated trades: `O(t)`.
 - Walk-forward validation is `O(w * t)` for `w` windows and `t` trades unless window filtering is indexed later.
 
@@ -21,8 +22,9 @@ The Phase 2 quant core favors deterministic, testable Python loops over prematur
 
 - Feature building recomputes all history for a symbol when called by the scanner.
 - Label simulation scans forward bars per candidate.
+- Replay scans forward bars per candidate inside the configured hold window. It avoids per-candidate database queries, but it is still Python-loop based.
 - Walk-forward validation filters trades per window without an interval index.
-- Feature, label, and validation workflows now persist through repositories, but rebuilds are still broad rather than incremental.
+- Feature, label, replay, and validation workflows now persist through repositories. Phase 6 records dirty/stale windows and respects requested symbol/interval/range scopes, but warmup expansion and multi-day replay invalidation are still conservative.
 
 ## Phase 2 Efficiency Decisions
 
@@ -30,11 +32,13 @@ The Phase 2 quant core favors deterministic, testable Python loops over prematur
 - Scanner now caches per-symbol context buffers instead of scoring a single synthetic quote bar.
 - Pure quant tests use synthetic in-memory data and do not require external services.
 - FMP calls are not expanded beyond quote, batch quote, intraday bars, and daily bars.
+- Replay loads bars, features, and candidate signals in batches before simulation, then persists simulated trades in bulk.
+- Replay trade queries are paginated by run ID and ordered by signal timestamp, symbol, and setup.
 
 ## Next Optimizations
 
-1. Add incremental feature updates for scanner context and recently changed sessions.
-2. Narrow label rebuilds by `(symbol, interval, session_date, feature_set_version)`.
-3. Add candidate-window query helpers by symbol and timestamp for faster label simulation.
-4. Use Polars/Pandas grouped transforms once tests lock down leakage behavior.
-5. Store validation trades by window to avoid repeated scans.
+1. Expand dirty windows with exact warmup lookbacks instead of relying on caller-supplied ranges.
+2. Add replay-specific candidate batching by session date for very large symbol universes.
+3. Use Polars/Pandas grouped transforms once tests lock down leakage and replay behavior.
+4. Promote high-volume `bars` and `simulated_trades` paths to Timescale hypertables when production volume justifies it.
+5. Add Timescale compression/retention policies for old raw bars and replay trade rows after export reproducibility is proven.

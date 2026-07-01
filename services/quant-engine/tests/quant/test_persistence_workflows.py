@@ -80,6 +80,38 @@ def test_feature_label_and_backtest_services_use_persisted_rows(tmp_path, make_b
     assert repo.validation_reports.latest(purpose="backtest")["report_id"] == report["report_id"]
 
 
+def test_incremental_build_windows_scope_rebuilds_to_requested_symbols(tmp_path, make_bar) -> None:
+    repo = _repo(tmp_path)
+    aapl_bars = [make_bar(index, 100 + index * 0.05, symbol="AAPL", volume=1000 + index * 20) for index in range(90)]
+    tsla_bars = [make_bar(index, 200 + index * 0.10, symbol="TSLA", volume=2000 + index * 30) for index in range(90)]
+    repo.bars.upsert_many([*aapl_bars, *tsla_bars])
+
+    dirty_features = repo.pipeline_windows.list_dirty("features", symbols=["AAPL", "TSLA"], intervals=["1min"])
+    assert {row["symbol"] for row in dirty_features} == {"AAPL", "TSLA"}
+
+    feature_result = FeatureBuildService(repo).build(symbols=["AAPL"], intervals=["1min"])
+    assert feature_result["features_written"] == 90
+    assert {feature["symbol"] for feature in repo.features.query()} == {"AAPL"}
+    assert not repo.features.query(symbols=["TSLA"], intervals=["1min"])
+    assert repo.pipeline_windows.list_dirty("features", symbols=["AAPL"], intervals=["1min"]) == []
+    assert {row["symbol"] for row in repo.pipeline_windows.list_dirty("features", symbols=["TSLA"], intervals=["1min"])} == {
+        "TSLA"
+    }
+
+    label_result = LabelBuildService(repo).build(symbols=["AAPL"], intervals=["1min"])
+    assert label_result["labels_written"] > 0
+    assert repo.labels.query(symbols=["AAPL"], intervals=["1min"])
+    assert repo.labels.query(symbols=["TSLA"], intervals=["1min"]) == []
+    assert repo.pipeline_windows.list_dirty("candidates", symbols=["AAPL"], intervals=["1min"]) == []
+    assert repo.pipeline_windows.list_dirty("labels", symbols=["AAPL"], intervals=["1min"]) == []
+    assert {row["symbol"] for row in repo.pipeline_windows.list_dirty("candidates", symbols=["TSLA"], intervals=["1min"])} == {
+        "TSLA"
+    }
+    assert {row["symbol"] for row in repo.pipeline_windows.list_dirty("labels", symbols=["TSLA"], intervals=["1min"])} == {
+        "TSLA"
+    }
+
+
 def test_model_activation_requires_accepted_validation_report(tmp_path) -> None:
     repo = _repo(tmp_path)
     model = {

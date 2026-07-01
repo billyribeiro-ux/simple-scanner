@@ -52,6 +52,42 @@ SIGNAL_COLUMNS = [
     "realized_r",
 ]
 
+REPLAY_TRADE_COLUMNS = [
+    "trade_id",
+    "replay_run_id",
+    "candidate_id",
+    "symbol",
+    "interval",
+    "side",
+    "setup_type",
+    "signal_timestamp_utc",
+    "entry_timestamp_utc",
+    "exit_timestamp_utc",
+    "entry_price",
+    "stop_price",
+    "target_1",
+    "target_2",
+    "target_3",
+    "exit_price",
+    "exit_reason",
+    "realized_r",
+    "mfe_r",
+    "mae_r",
+    "bars_held",
+    "minutes_held",
+    "same_bar_ambiguous",
+    "ambiguity_policy",
+    "slippage_bps",
+    "spread_bps",
+    "commission",
+    "market_regime",
+    "time_bucket",
+    "signal_score",
+    "expected_r",
+    "status",
+    "skip_reason",
+]
+
 
 class ExportService:
     def __init__(self) -> None:
@@ -156,6 +192,63 @@ class ExportService:
         workbook.save(xlsx_path)
         return json_path, csv_path, xlsx_path
 
+    def export_replay_trades_csv(self, replay_run_id: str, trades: Iterable[dict[str, object]]) -> Path:
+        path = self.settings.exports_dir / f"replay_trades_{replay_run_id}.csv"
+        rows = [self._replay_trade_row(trade) for trade in trades]
+        with path.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=REPLAY_TRADE_COLUMNS)
+            writer.writeheader()
+            writer.writerows(rows)
+        return path
+
+    def export_replay_trades_xlsx(self, replay_run_id: str, trades: Iterable[dict[str, object]]) -> Path:
+        path = self.settings.exports_dir / f"replay_trades_{replay_run_id}.xlsx"
+        rows = [self._replay_trade_row(trade) for trade in trades]
+        if Workbook is None:
+            self._write_minimal_xlsx(
+                path,
+                {"Trades": [REPLAY_TRADE_COLUMNS, *[[row.get(column) for column in REPLAY_TRADE_COLUMNS] for row in rows]]},
+            )
+            return path
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = "Trades"
+        self._write_sheet(sheet, REPLAY_TRADE_COLUMNS, rows)
+        workbook.save(path)
+        return path
+
+    def export_replay_summary_xlsx(self, replay_run: dict[str, object], trades: Iterable[dict[str, object]]) -> Path:
+        replay_run_id = str(replay_run["replay_run_id"])
+        path = self.settings.exports_dir / f"replay_summary_{replay_run_id}.xlsx"
+        trade_rows = [self._replay_trade_row(trade) for trade in trades]
+        skipped_rows = [row for row in trade_rows if row.get("status") == "SKIPPED"]
+        metrics = dict(replay_run.get("summary_metrics") or {})
+        sheets = self._replay_workbook_sheets(replay_run, metrics, trade_rows, skipped_rows)
+        if Workbook is None:
+            self._write_minimal_xlsx(path, sheets)
+            return path
+        workbook = Workbook()
+        for index, (sheet_name, rows) in enumerate(sheets.items()):
+            sheet = workbook.active if index == 0 else workbook.create_sheet(sheet_name)
+            sheet.title = sheet_name
+            for row in rows:
+                sheet.append(row)
+        workbook.save(path)
+        return path
+
+    def export_replay_metrics_json(self, replay_run: dict[str, object]) -> Path:
+        replay_run_id = str(replay_run["replay_run_id"])
+        path = self.settings.exports_dir / f"replay_metrics_{replay_run_id}.json"
+        payload = {
+            "replay_run_id": replay_run_id,
+            "simulation_type": replay_run.get("simulation_type"),
+            "created_at": replay_run.get("created_at"),
+            "filters": replay_run.get("config") or {},
+            "summary_metrics": replay_run.get("summary_metrics") or {},
+        }
+        path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
+        return path
+
     def _signal_row(self, signal: Signal) -> dict[str, object]:
         payload = signal.model_dump(mode="json")
         payload["side"] = signal.side.value
@@ -163,6 +256,55 @@ class ExportService:
         payload["reasons"] = " | ".join(signal.reasons)
         payload["warnings"] = " | ".join(signal.warnings)
         return {column: payload.get(column) for column in SIGNAL_COLUMNS}
+
+    def _replay_trade_row(self, trade: dict[str, object]) -> dict[str, object]:
+        return {column: trade.get(column) for column in REPLAY_TRADE_COLUMNS}
+
+    def _replay_workbook_sheets(
+        self,
+        replay_run: dict[str, object],
+        metrics: dict[str, object],
+        trade_rows: list[dict[str, object]],
+        skipped_rows: list[dict[str, object]],
+    ) -> dict[str, list[list[object]]]:
+        drawdown_payload = metrics.get("drawdown_series")
+        drawdown_values = drawdown_payload if isinstance(drawdown_payload, list) else []
+        config_payload = replay_run.get("config")
+        config = config_payload if isinstance(config_payload, dict) else {}
+        warnings_payload = replay_run.get("warnings")
+        warnings = warnings_payload if isinstance(warnings_payload, list) else []
+        return {
+            "Summary": [["metric", "value"], *[[key, json.dumps(value, default=str)] for key, value in metrics.items() if not isinstance(value, (dict, list))]],
+            "Trades": [REPLAY_TRADE_COLUMNS, *[[row.get(column) for column in REPLAY_TRADE_COLUMNS] for row in trade_rows if row.get("status") == "TAKEN"]],
+            "Skipped Candidates": [REPLAY_TRADE_COLUMNS, *[[row.get(column) for column in REPLAY_TRADE_COLUMNS] for row in skipped_rows]],
+            "Per Symbol": self._metric_sheet(metrics.get("per_symbol_metrics")),
+            "Per Setup": self._metric_sheet(metrics.get("per_setup_metrics")),
+            "Per Regime": self._metric_sheet(metrics.get("per_regime_metrics")),
+            "Per Time Bucket": self._metric_sheet(metrics.get("per_time_bucket_metrics")),
+            "Daily R": self._series_sheet(metrics.get("daily_r_series")),
+            "Drawdown": [["index", "drawdown_r"], *[[index, value] for index, value in enumerate(drawdown_values, start=1)]],
+            "Config": [["key", "value"], *[[key, json.dumps(value, default=str)] for key, value in config.items()]],
+            "Warnings": [["warning"], *[[warning] for warning in warnings]],
+        }
+
+    def _metric_sheet(self, payload: object) -> list[list[object]]:
+        rows: list[list[object]] = [["group", "metric", "value"]]
+        if isinstance(payload, dict):
+            for group, metrics in payload.items():
+                if isinstance(metrics, dict):
+                    rows.extend([[group, key, value] for key, value in metrics.items()])
+        return rows
+
+    def _series_sheet(self, payload: object) -> list[list[object]]:
+        rows: list[list[object]] = [["key", "value"]]
+        if isinstance(payload, list):
+            for item in payload:
+                if isinstance(item, dict):
+                    value = item.get("r") if "r" in item else item.get("value")
+                    rows.append([item.get("date") or item.get("key"), value])
+                else:
+                    rows.append([len(rows), item])
+        return rows
 
     def _write_sheet(self, sheet, columns: list[str], rows: list[dict[str, object]]) -> None:
         sheet.append(columns)

@@ -100,7 +100,7 @@ make db-inspect
 `make db-inspect` confirms the Alembic revision, expected table count, critical indexes, unique constraints, selected columns, JSON columns, and installed extensions. The current local result is:
 
 ```text
-alembic_version=0002_phase5_indexes
+alembic_version=0003_phase6_replay
 tables=17
 missing_tables=none
 missing_indexes=none

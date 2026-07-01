@@ -203,6 +203,12 @@ def _run_persisted_api_vertical_slice(
         assert "AAPL" in ingest["symbols"]
         assert "APPL" not in ingest["symbols"]
         assert ingest["bars_written"] == 480
+        assert {
+            "features",
+            "candidates",
+            "labels",
+            "replay",
+        } <= {row["artifact_type"] for row in ingest["dirty_ranges"]}
 
         bars = client.get("/data/bars").json()
         assert len(bars) == 480
@@ -212,10 +218,13 @@ def _run_persisted_api_vertical_slice(
 
         features = client.post("/features/build").json()
         assert features["features"] == 480
+        assert features["features_written"] == 480
+        assert features["build_windows"]
 
         labels = client.post("/labels/build").json()
         assert labels["labels"] > 0
         assert labels["candidates"] > 0
+        assert labels["build_windows"]
 
         train = client.post(
             "/models/train",
@@ -311,11 +320,51 @@ def _run_persisted_api_vertical_slice(
             },
         ).json()
         assert backtest["report_id"]
+        assert backtest["simulation_type"] == "label_derived"
         assert backtest["summary"]["total_trades"] > 0
         backtest_runs = client.get("/backtest/runs").json()
         assert backtest["report_id"] in {run["report_id"] for run in backtest_runs}
         backtest_run = client.get(f"/backtest/runs/{backtest['report_id']}").json()
         assert backtest_run["report_id"] == backtest["report_id"]
+        assert backtest_run["simulation_type"] == "label_derived"
+
+        replay = client.post(
+            "/backtest/replay",
+            json={
+                "symbols": ["AAPL", "SPY", "QQQ", "NVDA"],
+                "intervals": ["1min"],
+                "start": start.isoformat(),
+                "end": end.isoformat(),
+                "max_hold_minutes": 30,
+                "minimum_reward_risk": 0.5,
+                "feature_warmup_bars": 1,
+            },
+        ).json()
+        replay_run_id = replay["replay_run_id"]
+        assert replay["simulation_type"] == "candidate_market_replay"
+        assert replay["summary_metrics"]["total_candidates"] > 0
+        assert replay["trades_written"] == replay["summary_metrics"]["total_candidates"]
+        replay_detail = client.get(f"/backtest/replay/{replay_run_id}").json()
+        assert replay_detail["replay_run_id"] == replay_run_id
+        replay_trades = client.get(
+            f"/backtest/replay/{replay_run_id}/trades",
+            params={"limit": 100_000},
+        ).json()
+        assert replay_trades["trades"]
+        assert {trade["status"] for trade in replay_trades["trades"]} <= {"TAKEN", "SKIPPED"}
+        replay_trade_count = len(replay_trades["trades"])
+        taken_replay_trades = client.get(
+            f"/backtest/replay/{replay_run_id}/trades",
+            params={"status": "TAKEN"},
+        ).json()
+        assert all(trade["status"] == "TAKEN" for trade in taken_replay_trades["trades"])
+        combined_runs = client.get("/backtest/runs").json()
+        assert replay_run_id in {
+            run.get("replay_run_id") or run.get("report_id")
+            for run in combined_runs
+        }
+        replay_run = client.get(f"/backtest/runs/{replay_run_id}").json()
+        assert replay_run["replay_run_id"] == replay_run_id
 
         scanner_start = client.post(
             "/scanner/start",
@@ -339,6 +388,18 @@ def _run_persisted_api_vertical_slice(
         csv_export = client.post("/exports/signals.csv", json={"kind": "signals"}).json()
         xlsx_export = client.post("/exports/signals.xlsx", json={"kind": "signals"}).json()
         backtest_export = client.post("/exports/backtest.xlsx", json={"kind": "backtest"}).json()
+        replay_summary_export = client.post(
+            "/exports/replay-summary.xlsx",
+            json={"kind": "replay-summary", "run_id": replay_run_id},
+        ).json()
+        replay_trades_csv = client.post(
+            "/exports/replay-trades.csv",
+            json={"kind": "replay-trades", "run_id": replay_run_id},
+        ).json()
+        replay_trades_xlsx = client.post(
+            "/exports/replay-trades.xlsx",
+            json={"kind": "replay-trades", "run_id": replay_run_id},
+        ).json()
         review = client.post("/review/daily").json()
         persisted_review = client.get(f"/review/daily/{review['date']}").json()
         daily_export = client.post("/exports/daily-review.xlsx", json={"kind": "daily-review"}).json()
@@ -348,8 +409,22 @@ def _run_persisted_api_vertical_slice(
         assert xlsx_export["rows"] == len(live_signals)
         assert backtest_export["status"] == "ok"
         assert backtest_export["note"] == "V1 workbook scaffold"
+        assert replay_summary_export["status"] == "ok"
+        assert len(replay_summary_export["paths"]) == 2
+        assert replay_trades_csv["rows"] == replay_trade_count
+        assert replay_trades_xlsx["rows"] == replay_trade_count
         assert {"Live Signals", "Model Info"} <= _sheet_names(xlsx_export["path"])
         assert {"Live Signals", "Model Info"} <= _sheet_names(backtest_export["path"])
+        assert {
+            "Summary",
+            "Trades",
+            "Skipped Candidates",
+            "Per Symbol",
+            "Per Setup",
+            "Config",
+            "Warnings",
+        } <= _sheet_names(replay_summary_export["paths"][0])
+        assert {"Trades"} <= _sheet_names(replay_trades_xlsx["path"])
         assert review["signals_fired"] + review["signals_skipped"] == len(live_signals)
         assert persisted_review["status"] == "local-file"
         assert len(daily_export["paths"]) == 3
@@ -366,10 +441,12 @@ def _run_persisted_api_vertical_slice(
     assert len(reopened.bars.list_all()) == 480
     assert len(reopened.features.list_all()) == 480
     assert len(reopened.labels.list_all()) > 0
+    assert reopened.replays.get(replay_run_id)["simulation_type"] == "candidate_market_replay"
+    assert len(reopened.replays.list_trades(replay_run_id, limit=100_000)) == replay_trade_count
     assert reopened.active_models.get_active()["model_version"] == replacement_version
     assert reopened.scanner_runs.latest()["scanner_run_id"] == scanner_start["scanner_run_id"]
     assert len(reopened.live_signals.list_latest()) == len(live_signals)
-    assert len(reopened.exports.list_all()) >= 6
+    assert len(reopened.exports.list_all()) >= 10
     assert reopened.daily_reviews.get(datetime.now(UTC).date()) is not None
     assert TEST_FMP_SENTINEL not in str(reopened.provider_requests.list_all())
 
@@ -377,6 +454,9 @@ def _run_persisted_api_vertical_slice(
         csv_export["path"],
         xlsx_export["path"],
         backtest_export["path"],
+        replay_trades_csv["path"],
+        replay_trades_xlsx["path"],
+        *replay_summary_export["paths"],
         *daily_export["paths"],
         model_dir / "active_model.json",
     ]

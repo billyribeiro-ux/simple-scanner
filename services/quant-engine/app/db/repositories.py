@@ -41,13 +41,16 @@ EXPECTED_TABLES = {
     "live_signals",
     "model_artifacts",
     "model_runs",
+    "pipeline_build_windows",
     "provider_requests",
+    "replay_runs",
     "scanner_runs",
+    "simulated_trades",
     "symbols",
     "validation_reports",
     "validation_windows",
 }
-EXPECTED_ALEMBIC_REVISION = "0002_phase5_indexes"
+EXPECTED_ALEMBIC_REVISION = "0003_phase6_replay"
 
 
 def _now_iso() -> str:
@@ -116,10 +119,10 @@ def _payload(obj: Any) -> dict[str, Any]:
 def _date_text(value: Any) -> str | None:
     if value is None:
         return None
-    if isinstance(value, date):
-        return value.isoformat()
     if isinstance(value, datetime):
         return value.date().isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
     return str(value)[:10]
 
 
@@ -513,6 +516,106 @@ class SQLiteStore:
                         created_at TEXT NOT NULL
                     );
 
+                    CREATE TABLE IF NOT EXISTS replay_runs (
+                        replay_run_id TEXT PRIMARY KEY,
+                        simulation_type TEXT NOT NULL,
+                        backend TEXT NOT NULL,
+                        start TEXT,
+                        end TEXT,
+                        symbols_json TEXT DEFAULT '[]',
+                        intervals_json TEXT DEFAULT '[]',
+                        config_json TEXT DEFAULT '{}',
+                        summary_metrics_json TEXT DEFAULT '{}',
+                        per_symbol_metrics_json TEXT DEFAULT '{}',
+                        per_setup_metrics_json TEXT DEFAULT '{}',
+                        per_regime_metrics_json TEXT DEFAULT '{}',
+                        per_time_bucket_metrics_json TEXT DEFAULT '{}',
+                        skip_breakdown_json TEXT DEFAULT '{}',
+                        warnings_json TEXT DEFAULT '[]',
+                        payload_json TEXT NOT NULL,
+                        created_at TEXT NOT NULL
+                    );
+
+                    CREATE INDEX IF NOT EXISTS ix_replay_runs_created_type
+                        ON replay_runs(created_at, simulation_type);
+
+                    CREATE INDEX IF NOT EXISTS ix_replay_runs_simulation_type
+                        ON replay_runs(simulation_type);
+
+                    CREATE TABLE IF NOT EXISTS simulated_trades (
+                        trade_id TEXT PRIMARY KEY,
+                        replay_run_id TEXT NOT NULL,
+                        candidate_id TEXT,
+                        symbol TEXT NOT NULL,
+                        interval TEXT NOT NULL,
+                        side TEXT NOT NULL,
+                        setup_type TEXT NOT NULL,
+                        signal_timestamp_utc TEXT NOT NULL,
+                        entry_timestamp_utc TEXT,
+                        exit_timestamp_utc TEXT,
+                        entry_price REAL,
+                        stop_price REAL,
+                        target_1 REAL,
+                        target_2 REAL,
+                        target_3 REAL,
+                        exit_price REAL,
+                        exit_reason TEXT,
+                        realized_r REAL NOT NULL DEFAULT 0,
+                        mfe_r REAL NOT NULL DEFAULT 0,
+                        mae_r REAL NOT NULL DEFAULT 0,
+                        bars_held INTEGER NOT NULL DEFAULT 0,
+                        minutes_held REAL NOT NULL DEFAULT 0,
+                        same_bar_ambiguous INTEGER NOT NULL DEFAULT 0,
+                        ambiguity_policy TEXT,
+                        slippage_bps REAL NOT NULL DEFAULT 0,
+                        spread_bps REAL NOT NULL DEFAULT 0,
+                        commission REAL NOT NULL DEFAULT 0,
+                        market_regime TEXT,
+                        time_bucket TEXT,
+                        signal_score REAL,
+                        expected_r REAL,
+                        status TEXT NOT NULL,
+                        skip_reason TEXT,
+                        metadata_json TEXT DEFAULT '{}',
+                        payload_json TEXT NOT NULL,
+                        created_at TEXT NOT NULL
+                    );
+
+                    CREATE INDEX IF NOT EXISTS ix_simulated_trades_run_symbol_setup_side
+                        ON simulated_trades(replay_run_id, symbol, setup_type, side);
+
+                    CREATE INDEX IF NOT EXISTS ix_simulated_trades_run_status
+                        ON simulated_trades(replay_run_id, status);
+
+                    CREATE INDEX IF NOT EXISTS ix_simulated_trades_signal_ts
+                        ON simulated_trades(signal_timestamp_utc);
+
+                    CREATE INDEX IF NOT EXISTS ix_candidate_signals_replay_lookup
+                        ON candidate_signals(symbol, interval, timestamp_utc, setup_type, side);
+
+                    CREATE INDEX IF NOT EXISTS ix_live_signals_symbol_ts_status_model
+                        ON live_signals(ticker, timestamp_utc, status, model_version);
+
+                    CREATE TABLE IF NOT EXISTS pipeline_build_windows (
+                        build_window_id TEXT PRIMARY KEY,
+                        artifact_type TEXT NOT NULL,
+                        symbol TEXT NOT NULL,
+                        interval TEXT NOT NULL,
+                        session_date TEXT,
+                        start TEXT,
+                        end TEXT,
+                        version TEXT NOT NULL,
+                        dirty INTEGER NOT NULL DEFAULT 1,
+                        stale_reason TEXT,
+                        payload_json TEXT DEFAULT '{}',
+                        created_at TEXT NOT NULL,
+                        updated_at TEXT NOT NULL,
+                        UNIQUE(artifact_type, symbol, interval, session_date, version)
+                    );
+
+                    CREATE INDEX IF NOT EXISTS ix_pipeline_windows_lookup
+                        ON pipeline_build_windows(artifact_type, symbol, interval, session_date, dirty);
+
                     CREATE TABLE IF NOT EXISTS daily_reviews (
                         review_id TEXT PRIMARY KEY,
                         review_date TEXT NOT NULL,
@@ -699,6 +802,7 @@ class BarRepository:
 
     def upsert_many(self, bars: Iterable[Bar | dict[str, Any]]) -> int:
         rows = []
+        dirty_windows: dict[tuple[str, str, str, str, str], dict[str, str]] = {}
         seen_symbols: set[str] = set()
         now = _now_iso()
         for bar in bars:
@@ -708,9 +812,20 @@ class BarRepository:
             timestamp_utc = _parse_datetime(payload["timestamp_utc"]).isoformat()
             timestamp_et = _maybe_datetime(payload.get("timestamp_et"))
             timestamp_et_text = timestamp_et.isoformat() if timestamp_et else None
+            session_date = _date_text(timestamp_et or timestamp_utc) or timestamp_utc[:10]
             source = str(payload.get("source") or "unknown")
             row_id = _stable_id("bar", symbol, interval, timestamp_utc, source)
             seen_symbols.add(symbol)
+            for artifact_type, version in (
+                ("features", "features.v2.no_leakage"),
+                ("candidates", "candidate_signals.v1"),
+                ("labels", "labels.v2.no_leakage"),
+                ("replay", "candidate_market_replay"),
+            ):
+                key = (artifact_type, symbol, interval, session_date, version)
+                current = dirty_windows.setdefault(key, {"start": timestamp_utc, "end": timestamp_utc})
+                current["start"] = min(current["start"], timestamp_utc)
+                current["end"] = max(current["end"], timestamp_utc)
             rows.append(
                 (
                     row_id,
@@ -718,7 +833,7 @@ class BarRepository:
                     interval,
                     timestamp_utc,
                     timestamp_et_text,
-                    _date_text(timestamp_et or timestamp_utc),
+                    session_date,
                     float(payload["open"]),
                     float(payload["high"]),
                     float(payload["low"]),
@@ -757,11 +872,47 @@ class BarRepository:
                     """,
                     rows,
                 )
+                self._record_dirty_windows(connection, dirty_windows, now)
                 connection.commit()
             finally:
                 if str(self.store.path) != ":memory:":
                     connection.close()
         return len(rows)
+
+    def _record_dirty_windows(self, connection: Any, dirty_windows: dict[tuple[str, str, str, str, str], dict[str, str]], now: str) -> None:
+        for (artifact_type, symbol, interval, session_date, version), window in dirty_windows.items():
+            build_window_id = _stable_id("build_window", artifact_type, symbol, interval, session_date, version)
+            connection.execute(
+                """
+                INSERT INTO pipeline_build_windows(
+                    build_window_id, artifact_type, symbol, interval, session_date, start, "end",
+                    version, dirty, stale_reason, payload_json, created_at, updated_at
+                )
+                VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(artifact_type, symbol, interval, session_date, version) DO UPDATE SET
+                    start=excluded.start,
+                    "end"=excluded."end",
+                    dirty=excluded.dirty,
+                    stale_reason=excluded.stale_reason,
+                    payload_json=excluded.payload_json,
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    build_window_id,
+                    artifact_type,
+                    symbol,
+                    interval,
+                    session_date,
+                    window["start"],
+                    window["end"],
+                    version,
+                    True,
+                    "bars_upserted",
+                    _json_dumps({"source": "bar_upsert"}),
+                    now,
+                    now,
+                ),
+            )
 
     def list_all(self) -> list[Bar]:
         return self.query()
@@ -954,9 +1105,48 @@ class CandidateSignalRepository:
         return len(rows)
 
     def list_all(self) -> list[dict[str, Any]]:
+        return self.query()
+
+    def query(
+        self,
+        symbols: Iterable[str] | None = None,
+        intervals: Iterable[str] | None = None,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        sides: Iterable[str] | None = None,
+        setup_types: Iterable[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        normalized_symbols = [normalize_symbol(symbol) for symbol in symbols or []]
+        if normalized_symbols:
+            clauses.append(f"symbol IN ({','.join('?' for _ in normalized_symbols)})")
+            params.extend(normalized_symbols)
+        interval_values = [str(interval) for interval in intervals or []]
+        if interval_values:
+            clauses.append(f"interval IN ({','.join('?' for _ in interval_values)})")
+            params.extend(interval_values)
+        side_values = [str(side) for side in sides or []]
+        if side_values:
+            clauses.append(f"side IN ({','.join('?' for _ in side_values)})")
+            params.extend(side_values)
+        setup_values = [str(setup) for setup in setup_types or []]
+        if setup_values:
+            clauses.append(f"setup_type IN ({','.join('?' for _ in setup_values)})")
+            params.extend(setup_values)
+        if start is not None:
+            clauses.append("timestamp_utc >= ?")
+            params.append(start.isoformat())
+        if end is not None:
+            clauses.append("timestamp_utc <= ?")
+            params.append(end.isoformat())
+        sql = "SELECT payload_json FROM candidate_signals"
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
+        sql += " ORDER BY timestamp_utc, symbol, setup_type"
         connection = self.store.connect()
         try:
-            rows = connection.execute("SELECT payload_json FROM candidate_signals ORDER BY timestamp_utc").fetchall()
+            rows = connection.execute(sql, params).fetchall()
             return [_json_loads(row["payload_json"]) for row in rows]
         finally:
             if str(self.store.path) != ":memory:":
@@ -1049,6 +1239,7 @@ class LabelRepository:
     def query(
         self,
         symbols: Iterable[str] | None = None,
+        intervals: Iterable[str] | None = None,
         start: datetime | None = None,
         end: datetime | None = None,
     ) -> list[Label]:
@@ -1058,6 +1249,10 @@ class LabelRepository:
         if normalized_symbols:
             clauses.append(f"symbol IN ({','.join('?' for _ in normalized_symbols)})")
             params.extend(normalized_symbols)
+        interval_values = [str(interval) for interval in intervals or []]
+        if interval_values:
+            clauses.append(f"interval IN ({','.join('?' for _ in interval_values)})")
+            params.extend(interval_values)
         if start is not None:
             clauses.append("timestamp_utc >= ?")
             params.append(start.isoformat())
@@ -1580,6 +1775,290 @@ class ProviderRequestRepository:
                 connection.close()
 
 
+class ReplayRepository:
+    def __init__(self, store: SQLiteStore) -> None:
+        self.store = store
+
+    def save(self, replay_run: Any, trades: Iterable[Any]) -> dict[str, Any]:
+        payload = _payload(replay_run)
+        replay_run_id = str(payload["replay_run_id"])
+        metrics = payload.get("summary_metrics") or payload.get("metrics") or {}
+        config = payload.get("config") or {}
+        created_at = str(payload.get("created_at") or _now_iso())
+        backend = "postgresql" if str(self.store.path) == ":postgresql:" else "sqlite"
+        run_payload = payload | {
+            "replay_run_id": replay_run_id,
+            "simulation_type": str(payload.get("simulation_type") or "candidate_market_replay"),
+            "backend": backend,
+            "summary_metrics": metrics,
+            "created_at": created_at,
+        }
+        trade_payloads = [_payload(trade) for trade in trades]
+        now = _now_iso()
+        with self.store._lock:
+            connection = self.store.connect()
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO replay_runs(
+                        replay_run_id, simulation_type, backend, start, "end", symbols_json, intervals_json,
+                        config_json, summary_metrics_json, per_symbol_metrics_json, per_setup_metrics_json,
+                        per_regime_metrics_json, per_time_bucket_metrics_json, skip_breakdown_json,
+                        warnings_json, payload_json, created_at
+                    )
+                    VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(replay_run_id) DO UPDATE SET
+                        summary_metrics_json=excluded.summary_metrics_json,
+                        per_symbol_metrics_json=excluded.per_symbol_metrics_json,
+                        per_setup_metrics_json=excluded.per_setup_metrics_json,
+                        per_regime_metrics_json=excluded.per_regime_metrics_json,
+                        per_time_bucket_metrics_json=excluded.per_time_bucket_metrics_json,
+                        skip_breakdown_json=excluded.skip_breakdown_json,
+                        warnings_json=excluded.warnings_json,
+                        payload_json=excluded.payload_json
+                    """,
+                    (
+                        replay_run_id,
+                        run_payload["simulation_type"],
+                        backend,
+                        run_payload.get("start"),
+                        run_payload.get("end"),
+                        _json_dumps(run_payload.get("symbols") or []),
+                        _json_dumps(run_payload.get("intervals") or []),
+                        _json_dumps(config),
+                        _json_dumps(metrics),
+                        _json_dumps(metrics.get("per_symbol_metrics") or {}),
+                        _json_dumps(metrics.get("per_setup_metrics") or {}),
+                        _json_dumps(metrics.get("per_regime_metrics") or {}),
+                        _json_dumps(metrics.get("per_time_bucket_metrics") or {}),
+                        _json_dumps(metrics.get("skip_breakdown") or {}),
+                        _json_dumps(run_payload.get("warnings") or []),
+                        _json_dumps(run_payload),
+                        created_at,
+                    ),
+                )
+                connection.execute("DELETE FROM simulated_trades WHERE replay_run_id = ?", (replay_run_id,))
+                connection.executemany(
+                    """
+                    INSERT INTO simulated_trades(
+                        trade_id, replay_run_id, candidate_id, symbol, interval, side, setup_type,
+                        signal_timestamp_utc, entry_timestamp_utc, exit_timestamp_utc, entry_price, stop_price,
+                        target_1, target_2, target_3, exit_price, exit_reason, realized_r, mfe_r, mae_r,
+                        bars_held, minutes_held, same_bar_ambiguous, ambiguity_policy, slippage_bps,
+                        spread_bps, commission, market_regime, time_bucket, signal_score, expected_r,
+                        status, skip_reason, metadata_json, payload_json, created_at
+                    )
+                    VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(trade_id) DO UPDATE SET
+                        exit_timestamp_utc=excluded.exit_timestamp_utc,
+                        exit_price=excluded.exit_price,
+                        exit_reason=excluded.exit_reason,
+                        realized_r=excluded.realized_r,
+                        mfe_r=excluded.mfe_r,
+                        mae_r=excluded.mae_r,
+                        status=excluded.status,
+                        skip_reason=excluded.skip_reason,
+                        metadata_json=excluded.metadata_json,
+                        payload_json=excluded.payload_json
+                    """,
+                    [
+                        (
+                            str(trade["trade_id"]),
+                            replay_run_id,
+                            trade.get("candidate_id"),
+                            normalize_symbol(str(trade["symbol"])),
+                            str(trade.get("interval") or "1min"),
+                            str(trade["side"]),
+                            str(trade["setup_type"]),
+                            _maybe_datetime(trade.get("signal_timestamp_utc")).isoformat() if trade.get("signal_timestamp_utc") else None,
+                            _maybe_datetime(trade.get("entry_timestamp_utc")).isoformat() if trade.get("entry_timestamp_utc") else None,
+                            _maybe_datetime(trade.get("exit_timestamp_utc")).isoformat() if trade.get("exit_timestamp_utc") else None,
+                            trade.get("entry_price"),
+                            trade.get("stop_price"),
+                            trade.get("target_1"),
+                            trade.get("target_2"),
+                            trade.get("target_3"),
+                            trade.get("exit_price"),
+                            trade.get("exit_reason"),
+                            float(trade.get("realized_r") or 0.0),
+                            float(trade.get("mfe_r") or 0.0),
+                            float(trade.get("mae_r") or 0.0),
+                            int(trade.get("bars_held") or 0),
+                            float(trade.get("minutes_held") or 0.0),
+                            bool(trade.get("same_bar_ambiguous")),
+                            trade.get("ambiguity_policy"),
+                            float(trade.get("slippage_bps") or 0.0),
+                            float(trade.get("spread_bps") or 0.0),
+                            float(trade.get("commission") or 0.0),
+                            trade.get("market_regime"),
+                            trade.get("time_bucket"),
+                            trade.get("signal_score"),
+                            trade.get("expected_r"),
+                            str(trade.get("status") or "TAKEN"),
+                            trade.get("skip_reason"),
+                            _json_dumps(trade.get("metadata") or {}),
+                            _json_dumps(trade | {"replay_run_id": replay_run_id}),
+                            now,
+                        )
+                        for trade in trade_payloads
+                    ],
+                )
+                connection.commit()
+            finally:
+                if str(self.store.path) != ":memory:":
+                    connection.close()
+        return run_payload | {"trades_written": len(trade_payloads)}
+
+    def get(self, replay_run_id: str) -> dict[str, Any] | None:
+        connection = self.store.connect()
+        try:
+            row = connection.execute("SELECT payload_json FROM replay_runs WHERE replay_run_id = ?", (replay_run_id,)).fetchone()
+            return _json_loads(row["payload_json"]) if row else None
+        finally:
+            if str(self.store.path) != ":memory:":
+                connection.close()
+
+    def list_runs(self) -> list[dict[str, Any]]:
+        connection = self.store.connect()
+        try:
+            rows = connection.execute("SELECT payload_json FROM replay_runs ORDER BY created_at DESC").fetchall()
+            return [_json_loads(row["payload_json"]) for row in rows]
+        finally:
+            if str(self.store.path) != ":memory:":
+                connection.close()
+
+    def list_trades(
+        self,
+        replay_run_id: str,
+        limit: int = 500,
+        offset: int = 0,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        sql = "SELECT payload_json FROM simulated_trades WHERE replay_run_id = ?"
+        params: list[Any] = [replay_run_id]
+        if status is not None:
+            sql += " AND status = ?"
+            params.append(status)
+        sql += " ORDER BY signal_timestamp_utc, symbol, setup_type LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
+        connection = self.store.connect()
+        try:
+            rows = connection.execute(sql, params).fetchall()
+            return [_json_loads(row["payload_json"]) for row in rows]
+        finally:
+            if str(self.store.path) != ":memory:":
+                connection.close()
+
+
+class PipelineBuildWindowRepository:
+    def __init__(self, store: SQLiteStore) -> None:
+        self.store = store
+
+    def list_dirty(
+        self,
+        artifact_type: str | None = None,
+        symbols: Iterable[str] | None = None,
+        intervals: Iterable[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        clauses = ["dirty = ?"]
+        params: list[Any] = [True]
+        if artifact_type is not None:
+            clauses.append("artifact_type = ?")
+            params.append(artifact_type)
+        normalized_symbols = [normalize_symbol(symbol) for symbol in symbols or []]
+        if normalized_symbols:
+            clauses.append(f"symbol IN ({','.join('?' for _ in normalized_symbols)})")
+            params.extend(normalized_symbols)
+        interval_values = [str(interval) for interval in intervals or []]
+        if interval_values:
+            clauses.append(f"interval IN ({','.join('?' for _ in interval_values)})")
+            params.extend(interval_values)
+        sql = "SELECT * FROM pipeline_build_windows WHERE " + " AND ".join(clauses)  # noqa: S608 - fixed clauses with bound parameters.
+        sql += " ORDER BY artifact_type, symbol, interval, session_date"
+        connection = self.store.connect()
+        try:
+            return [self._row(row) for row in connection.execute(sql, params).fetchall()]
+        finally:
+            if str(self.store.path) != ":memory:":
+                connection.close()
+
+    def mark_built(
+        self,
+        artifact_type: str,
+        symbols: Iterable[str],
+        intervals: Iterable[str],
+        start: datetime | None,
+        end: datetime | None,
+        version: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
+        now = _now_iso()
+        rows = []
+        selected_symbols = [normalize_symbol(symbol) for symbol in symbols]
+        selected_intervals = [str(interval) for interval in intervals]
+        session_date = _date_text(start or end)
+        with self.store._lock:
+            connection = self.store.connect()
+            try:
+                for symbol in selected_symbols:
+                    for interval in selected_intervals:
+                        build_window_id = _stable_id("build_window", artifact_type, symbol, interval, session_date, version)
+                        payload = {
+                            "artifact_type": artifact_type,
+                            "symbol": symbol,
+                            "interval": interval,
+                            "session_date": session_date,
+                            "start": start.isoformat() if start else None,
+                            "end": end.isoformat() if end else None,
+                            "version": version,
+                            "dirty": False,
+                            "metadata": metadata or {},
+                        }
+                        connection.execute(
+                            """
+                            INSERT INTO pipeline_build_windows(
+                                build_window_id, artifact_type, symbol, interval, session_date, start, "end",
+                                version, dirty, stale_reason, payload_json, created_at, updated_at
+                            )
+                            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            ON CONFLICT(artifact_type, symbol, interval, session_date, version) DO UPDATE SET
+                                start=excluded.start,
+                                "end"=excluded."end",
+                                dirty=excluded.dirty,
+                                stale_reason=excluded.stale_reason,
+                                payload_json=excluded.payload_json,
+                                updated_at=excluded.updated_at
+                            """,
+                            (
+                                build_window_id,
+                                artifact_type,
+                                symbol,
+                                interval,
+                                session_date,
+                                start.isoformat() if start else None,
+                                end.isoformat() if end else None,
+                                version,
+                                False,
+                                None,
+                                _json_dumps(payload),
+                                now,
+                                now,
+                            ),
+                        )
+                        rows.append(payload | {"build_window_id": build_window_id})
+                connection.commit()
+            finally:
+                if str(self.store.path) != ":memory:":
+                    connection.close()
+        return rows
+
+    def _row(self, row: Any) -> dict[str, Any]:
+        data = dict(row)
+        data["dirty"] = bool(data.get("dirty"))
+        data["payload"] = _json_loads(data.pop("payload_json"))
+        return data
+
+
 class ExportRepository:
     def __init__(self, store: SQLiteStore) -> None:
         self.store = store
@@ -1772,6 +2251,8 @@ class RepositoryRegistry:
         self.live_signals = LiveSignalRepository(self.store)
         self.scanner_runs = ScannerRunRepository(self.store)
         self.provider_requests = ProviderRequestRepository(self.store)
+        self.replays = ReplayRepository(self.store)
+        self.pipeline_windows = PipelineBuildWindowRepository(self.store)
         self.exports = ExportRepository(self.store)
         self.daily_reviews = DailyReviewRepository(self.store)
 

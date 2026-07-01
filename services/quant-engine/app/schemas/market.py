@@ -180,6 +180,40 @@ class BacktestRequest(BaseModel):
     model_version: str | None = None
 
 
+class ReplayBacktestRequest(BaseModel):
+    symbols: list[str] | None = None
+    intervals: list[Literal["1min", "5min", "15min"]] = ["1min"]
+    start: datetime
+    end: datetime
+    session: str = "rth"
+    candidate_setup_types: list[str] = Field(default_factory=list)
+    sides: list[str] | str = "BOTH"
+    max_hold_minutes: int = 60
+    entry_mode: str = "next_bar_open"
+    stop_mode: str = "candidate_context"
+    target_mode: str = "candidate_targets"
+    target_1_r: float = 1.0
+    target_2_r: float = 1.5
+    target_3_r: float = 2.5
+    partial_exit_mode: str = "none"
+    same_bar_stop_target_policy: str = "conservative_stop_first"
+    intrabar_path_policy: str = "conservative"
+    slippage_bps: float = 0.0
+    spread_bps: float = 0.0
+    commission_per_share: float = 0.0
+    minimum_reward_risk: float = 1.0
+    minimum_confidence: float | None = None
+    allow_overlapping_trades: bool = False
+    max_open_trades_per_symbol: int = 1
+    max_open_trades_portfolio: int = 10
+    cooldown_bars_after_loss: int = 0
+    cooldown_bars_after_trade: int = 0
+    one_trade_per_setup_per_symbol_until_exit: bool = True
+    no_trade_on_insufficient_context: bool = True
+    market_regime_filter: list[str] = Field(default_factory=list)
+    time_bucket_filter: list[str] = Field(default_factory=list)
+
+
 class ExportRequest(BaseModel):
     kind: str
     date: str | None = None
