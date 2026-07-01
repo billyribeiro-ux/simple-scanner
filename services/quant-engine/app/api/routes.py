@@ -17,11 +17,13 @@ from app.db.repositories import (
 from app.jobs.scanner import scanner_state
 from app.models.engine import ModelEngine
 from app.schemas.market import (
+    BacktestComparisonRequest,
     BacktestRequest,
     ExportRequest,
     IngestRequest,
     ReplayBacktestRequest,
     ScannerStartRequest,
+    SensitivityRequest,
     TrainRequest,
 )
 from app.services.workflows import (
@@ -178,8 +180,29 @@ async def train_model(request: TrainRequest) -> dict[str, object]:
 
 
 @router.post("/models/validate")
-async def validate_model(model_version: str | None = None, validation_mode: str = "label_derived") -> dict[str, object]:
-    return ValidationWorkflowService(repos()).validate(model_version=model_version, validation_mode=validation_mode)
+async def validate_model(
+    model_version: str | None = None,
+    validation_mode: str = "label_derived",
+    replay_run_id: str | None = None,
+    replay_filter: str | None = None,
+    allow_latest_replay_fallback: bool = False,
+    sensitivity_run_id: str | None = None,
+    require_sensitivity: bool = False,
+    minimum_robustness_score: float = 0.0,
+    allow_stale_replay_validation: bool = False,
+) -> dict[str, object]:
+    parsed_filter = json.loads(replay_filter) if replay_filter else None
+    return ValidationWorkflowService(repos()).validate(
+        model_version=model_version,
+        validation_mode=validation_mode,
+        replay_run_id=replay_run_id,
+        replay_filter=parsed_filter,
+        allow_latest_replay_fallback=allow_latest_replay_fallback,
+        sensitivity_run_id=sensitivity_run_id,
+        require_sensitivity=require_sensitivity,
+        minimum_robustness_score=minimum_robustness_score,
+        allow_stale_replay_validation=allow_stale_replay_validation,
+    )
 
 
 @router.post("/models/activate")
@@ -208,6 +231,50 @@ async def run_backtest(request: BacktestRequest) -> dict[str, object]:
 @router.post("/backtest/replay")
 async def run_replay_backtest(request: ReplayBacktestRequest) -> dict[str, object]:
     return BacktestService(repos()).run_replay(request.model_dump(mode="json"))
+
+
+@router.get("/pipeline/status")
+async def pipeline_status() -> dict[str, object]:
+    return BacktestService(repos()).pipeline_status()
+
+
+@router.post("/backtest/replay/{replay_run_id}/sensitivity")
+async def run_replay_sensitivity(
+    replay_run_id: str,
+    request: SensitivityRequest | None = None,
+) -> dict[str, object]:
+    payload = request.model_dump(mode="json") if request else {}
+    return BacktestService(repos()).run_sensitivity(replay_run_id, payload)
+
+
+@router.get("/backtest/replay/sensitivity/{sensitivity_run_id}")
+async def replay_sensitivity(sensitivity_run_id: str) -> dict[str, object]:
+    sensitivity = BacktestService(repos()).get_sensitivity(sensitivity_run_id)
+    return sensitivity or {"sensitivity_run_id": sensitivity_run_id, "status": "not_found"}
+
+
+@router.get("/backtest/replay/sensitivity/{sensitivity_run_id}/scenarios")
+async def replay_sensitivity_scenarios(sensitivity_run_id: str) -> dict[str, object]:
+    return {
+        "sensitivity_run_id": sensitivity_run_id,
+        "scenarios": BacktestService(repos()).sensitivity_scenarios(sensitivity_run_id),
+    }
+
+
+@router.get("/backtest/replay/{replay_run_id}/sensitivity")
+async def replay_sensitivity_for_run(replay_run_id: str) -> dict[str, object]:
+    return {"replay_run_id": replay_run_id, "sensitivity_runs": BacktestService(repos()).list_sensitivity(replay_run_id)}
+
+
+@router.post("/backtest/compare-label-vs-replay")
+async def compare_label_vs_replay(request: BacktestComparisonRequest) -> dict[str, object]:
+    return BacktestService(repos()).compare_label_vs_replay(request.model_dump(mode="json"))
+
+
+@router.get("/backtest/comparisons/{comparison_id}")
+async def backtest_comparison(comparison_id: str) -> dict[str, object]:
+    comparison = BacktestService(repos()).get_comparison(comparison_id)
+    return comparison or {"comparison_id": comparison_id, "status": "not_found"}
 
 
 @router.get("/backtest/replay/{replay_run_id}")
@@ -323,6 +390,34 @@ async def export_replay_trades_xlsx(request: ExportRequest) -> dict[str, object]
     if not request.run_id:
         return {"status": "error", "reason": "run_id_required"}
     return ExportWorkflowService(repos()).export_replay_trades(request.run_id, "xlsx")
+
+
+@router.post("/exports/sensitivity-summary.xlsx")
+async def export_sensitivity_summary_xlsx(request: ExportRequest) -> dict[str, object]:
+    if not request.run_id:
+        return {"status": "error", "reason": "run_id_required"}
+    return ExportWorkflowService(repos()).export_sensitivity_summary(request.run_id)
+
+
+@router.post("/exports/sensitivity-scenarios.csv")
+async def export_sensitivity_scenarios_csv(request: ExportRequest) -> dict[str, object]:
+    if not request.run_id:
+        return {"status": "error", "reason": "run_id_required"}
+    return ExportWorkflowService(repos()).export_sensitivity_scenarios(request.run_id, "csv")
+
+
+@router.post("/exports/sensitivity-scenarios.xlsx")
+async def export_sensitivity_scenarios_xlsx(request: ExportRequest) -> dict[str, object]:
+    if not request.run_id:
+        return {"status": "error", "reason": "run_id_required"}
+    return ExportWorkflowService(repos()).export_sensitivity_scenarios(request.run_id, "xlsx")
+
+
+@router.post("/exports/sensitivity-metrics.json")
+async def export_sensitivity_metrics_json(request: ExportRequest) -> dict[str, object]:
+    if not request.run_id:
+        return {"status": "error", "reason": "run_id_required"}
+    return ExportWorkflowService(repos()).export_sensitivity_metrics(request.run_id)
 
 
 @router.get("/exports/{export_id}")

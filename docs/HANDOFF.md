@@ -4,7 +4,7 @@ Report status date: 2026-07-01
 
 ## Executive State
 
-Phase 6 candidate-to-trade market replay implementation is complete in source. Python `3.14.6` is installed through Homebrew, `services/quant-engine/.venv` exists on Python `3.14.6`, Docker Postgres/TimescaleDB plus Redis are the required database runtime, Alembic upgrades the target database to `0003_phase6_replay`, and the persisted FastAPI vertical-slice smoke test covers both label-derived and replay backtest modes with a mocked provider and no FMP key.
+Phase 7 replay calibration audit and operational hardening is complete in source. Python `3.14.6` is installed through Homebrew, `services/quant-engine/.venv` exists on Python `3.14.6`, Docker Postgres/TimescaleDB plus Redis are the required database runtime, Alembic upgrades the target database to `0004_phase7_audit`, and the persisted FastAPI vertical-slice smoke test covers label-derived backtests, explicit replay validation, replay sensitivity, label-vs-replay comparison, and exports with a mocked provider and no FMP key.
 
 This remains a local-first scanner, research, validation, backtest, signal, and export platform only. It is not a broker, auto-trader, order router, self-learning system, or profitability system.
 
@@ -43,6 +43,7 @@ make api-smoke-sqlite
 make api-smoke-postgres
 make repository-parity-test
 make replay-test
+make replay-sensitivity-test
 make export-test
 make fmp-smoke
 corepack pnpm check
@@ -65,11 +66,14 @@ The FastAPI repository backend is selected explicitly:
 - failed Postgres init: hard failure by default;
 - `AMD_ALLOW_SQLITE_FALLBACK=true`: explicit SQLite fallback reported as `sqlite-fallback-from-postgres`.
 
-Phase 6 adds persisted replay state:
+Phase 7 persists replay audit and sensitivity state:
 
-- `replay_runs`: one row per candidate market replay run with config, filters, simulation type, metrics, warnings, and backend.
+- `replay_runs`: one row per candidate market replay run with config, filters, simulation type, metrics, warnings, backend, config hash, input fingerprint, candidate fingerprint, and stale-window status.
 - `simulated_trades`: one row per taken or skipped candidate, including execution assumptions, entry/exit prices, realized R, MFE/MAE, skip reason, and ambiguity policy.
 - `pipeline_build_windows`: dirty/stale metadata for feature, candidate, label, and replay rebuild awareness by artifact, symbol, interval, session date, version, and timestamp range.
+- `replay_sensitivity_runs`: sensitivity run summaries, robustness scores, fragility flags, worst/median/best cases, and gate results.
+- `replay_sensitivity_scenarios`: scenario-level slippage/spread/intrabar metrics.
+- `backtest_comparisons`: persisted label-derived vs replay comparison reports.
 
 Safe status fields are exposed through `GET /health`, `GET /config`, and `make doctor`: `persistence_backend`, `runtime_mode`, `database_configured`, `database_reachable`, `fallback_enabled`, and `fallback_reason`. Full database URLs, passwords, and API keys are never returned.
 
@@ -79,16 +83,16 @@ Safe status fields are exposed through `GET /health`, `GET /config`, and `make d
 - Repository-backed API route state instead of route-level `_MEMORY`.
 - SQLite local API persistence and reinitialization survival for bars, features, labels, replay runs/trades, model runs, active model, scanner runs/signals, exports, and daily reviews.
 - Postgres API persistence and reinitialization survival for the same vertical slice after `make db-migrate`.
-- Alembic migration and schema inspection success against local Postgres/TimescaleDB on host port `15432` when the database is at revision `0003_phase6_replay`.
-- SQLite/Postgres repository parity for symbols, bars, features, labels, replay runs/trades, pipeline build windows, models, scanner runs, signals, provider requests, exports, and daily reviews.
-- CSV/XLSX/JSON export generation from persisted signals, replay runs/trades, and daily reviews.
+- Alembic migration and schema inspection success against local Postgres/TimescaleDB on host port `15432` when the database is at revision `0004_phase7_audit`; `bars` is verified as a Timescale hypertable when the extension is available.
+- SQLite/Postgres repository parity for symbols, bars, features, labels, replay runs/trades, sensitivity runs/scenarios, comparisons, pipeline build windows, models, scanner runs, signals, provider requests, exports, and daily reviews.
+- CSV/XLSX/JSON export generation from persisted signals, replay runs/trades, replay sensitivity runs, and daily reviews, with file hashes and workbook sheets recorded.
 - Activation guard requiring a persisted accepted validation report.
 - Secret redaction behavior and absence of the supplied FMP key from repo files.
 
 ## What Is Not Safe To Trust Yet
 
 - Live FMP entitlement coverage. The live smoke was not run because `FMP_API_KEY` is not loaded into the process environment or ignored env files.
-- Market replay as execution-grade reality. Phase 6 improves honesty by replaying raw bars, but fills are still simulated from OHLCV with conservative same-bar rules, configurable slippage/spread, and no true market depth.
+- Market replay as execution-grade reality. Replay is now auditable and sensitivity-tested, but fills are still simulated from OHLCV with conservative same-bar rules, configurable slippage/spread, and no true market depth.
 - Model calibration. V1 remains a statistical evidence baseline, not a calibrated ML classifier.
 - Live trading readiness. No broker execution or order routing exists.
 
@@ -112,11 +116,26 @@ curl -s -X POST http://localhost:8000/backtest/replay \
   -d '{"symbols":["AAPL"],"intervals":["1min"],"start":"2026-06-01T13:30:00+00:00","end":"2026-06-01T19:59:00+00:00","max_hold_minutes":60,"minimum_reward_risk":1.0}'
 ```
 
-The response includes `simulation_type = candidate_market_replay`, `replay_run_id`, `summary_metrics`, and `trades_written`. Query the run and paginated trades with:
+The response includes `simulation_type = candidate_market_replay`, `replay_run_id`, `summary_metrics`, `config_hash`, `input_fingerprint`, `candidate_fingerprint`, and `trades_written`. Query the run and paginated trades with:
 
 ```bash
 curl -s http://localhost:8000/backtest/replay/{replay_run_id}
 curl -s 'http://localhost:8000/backtest/replay/{replay_run_id}/trades?limit=500&offset=0'
+```
+
+Replay validation now requires explicit selection unless fallback is intentionally enabled:
+
+```bash
+curl -s -X POST 'http://localhost:8000/models/validate?validation_mode=candidate_market_replay&replay_run_id={replay_run_id}'
+```
+
+Run sensitivity and label-vs-replay comparison with:
+
+```bash
+curl -s -X POST http://localhost:8000/backtest/replay/{replay_run_id}/sensitivity
+curl -s -X POST http://localhost:8000/backtest/compare-label-vs-replay \
+  -H 'content-type: application/json' \
+  -d '{"replay_run_id":"{replay_run_id}"}'
 ```
 
 Export replay outputs with:
@@ -131,6 +150,9 @@ curl -s -X POST http://localhost:8000/exports/replay-trades.csv \
 curl -s -X POST http://localhost:8000/exports/replay-trades.xlsx \
   -H 'content-type: application/json' \
   -d '{"kind":"replay-trades","run_id":"{replay_run_id}"}'
+curl -s -X POST http://localhost:8000/exports/sensitivity-summary.xlsx \
+  -H 'content-type: application/json' \
+  -d '{"kind":"sensitivity-summary","run_id":"{sensitivity_run_id}"}'
 ```
 
 ## Current Blockers
@@ -140,6 +162,6 @@ curl -s -X POST http://localhost:8000/exports/replay-trades.xlsx \
 
 ## Exact Next Recommended Phase
 
-Phase 7: replay calibration audit and operational hardening.
+Phase 8: replay operations and calibration follow-through.
 
-The next phase should audit replay assumptions against sampled real intraday paths, add richer slippage/spread sensitivity reporting, tighten Timescale hypertable/compression policies, and add replay-oriented monitoring around stale windows and export reproducibility. Do not add broker execution, WebSocket scope, options data, self-learning language, or profitability claims in that phase.
+The next phase should add Timescale compression/retention policies, richer operational dashboards or CLI reports if requested, calibration research against sampled intraday data, and FMP entitlement follow-through. Do not add broker execution, WebSocket scope, options data, self-learning language, or profitability claims in that phase.

@@ -343,6 +343,46 @@ def test_repository_core_contract_parity(tmp_path, monkeypatch, backend: str) ->
         },
     ]
     saved_replay = repo.replays.save(replay_run, replay_trades)
+    sensitivity = repo.replay_sensitivity.save(
+        {
+            "sensitivity_run_id": "parity-sensitivity",
+            "replay_run_id": "parity-replay",
+            "created_at": datetime.now(UTC).isoformat(),
+            "config": {"slippage_bps_grid": [0, 1], "spread_bps_grid": [0, 2]},
+            "scenario_count": 1,
+            "passed_scenario_count": 1,
+            "failed_scenario_count": 0,
+            "robustness_score": 1.0,
+            "pass_fail": "pass",
+            "fragility_flags": [],
+            "gate_results": {"robustness_score_met": True},
+            "worst_case": {"scenario_id": "parity-scenario"},
+            "median_case": {"scenario_id": "parity-scenario"},
+            "best_case": {"scenario_id": "parity-scenario"},
+            "scenarios": [
+                {
+                    "scenario_id": "parity-scenario",
+                    "replay_run_id": "parity-replay",
+                    "slippage_bps": 0,
+                    "spread_bps": 0,
+                    "intrabar_path_policy": "conservative",
+                    "same_bar_stop_target_policy": "conservative_stop_first",
+                    "summary_metrics": {"total_trades": 1, "average_r": 1.5, "profit_factor": 0},
+                    "gate_results": {"minimum_total_trades_met": True},
+                    "pass_fail": "pass",
+                }
+            ],
+        }
+    )
+    comparison = repo.backtest_comparisons.save(
+        {
+            "comparison_type": "label_vs_replay",
+            "replay_run_id": "parity-replay",
+            "summary": {"status": "aligned_with_tolerance", "deltas": {"average_r": 0}},
+            "label_summary": {"total_trades": 1},
+            "replay_summary": {"total_trades": 1},
+        }
+    )
     replay_windows = repo.pipeline_windows.mark_built(
         "replay",
         ["AAPL"],
@@ -353,6 +393,8 @@ def test_repository_core_contract_parity(tmp_path, monkeypatch, backend: str) ->
         {"replay_run_id": "parity-replay"},
     )
     assert saved_replay["trades_written"] == 2
+    assert sensitivity["scenarios_written"] == 1
+    assert comparison["comparison_id"]
     assert replay_windows[0]["dirty"] is False
 
     reopened = RepositoryRegistry(settings=get_settings())
@@ -369,6 +411,9 @@ def test_repository_core_contract_parity(tmp_path, monkeypatch, backend: str) ->
     assert reopened.daily_reviews.get(date(2026, 6, 1))["review_id"] == review["review_id"]
     assert reopened.replays.get("parity-replay")["simulation_type"] == "candidate_market_replay"
     assert len(reopened.replays.list_trades("parity-replay")) == 2
+    assert reopened.replay_sensitivity.get("parity-sensitivity")["pass_fail"] == "pass"  # noqa: S105
+    assert len(reopened.replay_sensitivity.list_scenarios("parity-sensitivity")) == 1
+    assert reopened.backtest_comparisons.get(comparison["comparison_id"])["comparison_type"] == "label_vs_replay"
     skipped_replay_trades = reopened.replays.list_trades("parity-replay", status="SKIPPED")
     assert skipped_replay_trades[0]["skip_reason"] == "missing_entry_bar"
     replay_builds = reopened.pipeline_windows.list_dirty("replay", symbols=["AAPL"], intervals=["1min"])

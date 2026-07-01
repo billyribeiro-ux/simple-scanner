@@ -11,7 +11,7 @@ This is still a research simulator. It does not place orders, model queue positi
 ## Simulation Type
 
 - `label_derived`: fast evidence mode based on leakage-safe labels.
-- `candidate_market_replay`: Phase 6 replay mode based on persisted candidates, features, and raw bars.
+- `candidate_market_replay`: replay mode based on persisted candidates, features, and raw bars.
 
 Every replay run and exported replay artifact carries `simulation_type = candidate_market_replay`.
 
@@ -94,11 +94,24 @@ Replay runs persist to `replay_runs`. Taken and skipped candidates persist to `s
 
 The replay summary workbook includes `Summary`, `Trades`, `Skipped Candidates`, `Per Symbol`, `Per Setup`, `Per Regime`, `Per Time Bucket`, `Daily R`, `Drawdown`, `Config`, and `Warnings`.
 
+Phase 7 replay runs also persist audit fields:
+
+- `config_hash`
+- `input_fingerprint`
+- `candidate_fingerprint`
+- replay, feature, candidate, and label versions
+- source row counts
+- backend and git commit when available
+- stale-window status
+
+Replay sensitivity persists to `replay_sensitivity_runs` and `replay_sensitivity_scenarios`. The sensitivity summary workbook includes `Summary`, `Scenario Metrics`, `Worst Case`, `Median Case`, `Best Case`, `Fragility Flags`, `Gate Results`, `Config`, and `Warnings`.
+
 ## Known Limits
 
 - OHLCV bars cannot prove actual intrabar path unless the policy is configured as an assumption.
 - Same-bar ambiguity defaults to conservative stop first, which can understate best-case outcomes.
 - Slippage and spread are fixed config assumptions, not live microstructure estimates.
 - Commission is simple per-share cost.
-- The latest replay validation path uses the latest persisted replay run; specific replay-run selection is future work.
+- Replay validation requires explicit `replay_run_id` or `replay_filter`, unless `allow_latest_replay_fallback=true` is intentionally set.
+- Replay sensitivity is a stress test over assumptions; it is not calibrated ML and is not a profitability claim.
 - No calibrated ML, self-learning, broker execution, WebSocket entitlement path, options, Greeks, IV, or market internals are in scope.

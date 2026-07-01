@@ -8,6 +8,7 @@ from sqlalchemy import create_engine, text
 EXPECTED_TABLES = {
     "active_models",
     "alembic_version",
+    "backtest_comparisons",
     "bars",
     "candidate_signals",
     "closed_signals",
@@ -21,6 +22,8 @@ EXPECTED_TABLES = {
     "pipeline_build_windows",
     "provider_requests",
     "replay_runs",
+    "replay_sensitivity_runs",
+    "replay_sensitivity_scenarios",
     "scanner_runs",
     "simulated_trades",
     "symbols",
@@ -29,8 +32,9 @@ EXPECTED_TABLES = {
 }
 
 DEFAULT_URL = "postgresql+psycopg://amd:amd@localhost:15432/adaptive_market_decoder"
-EXPECTED_REVISION = "0003_phase6_replay"
+EXPECTED_REVISION = "0004_phase7_audit"
 EXPECTED_INDEXES = {
+    "ix_backtest_comparisons_replay_created",
     "ix_candidate_signals_replay_lookup",
     "ix_bars_lookup",
     "ix_features_lookup",
@@ -41,7 +45,10 @@ EXPECTED_INDEXES = {
     "ix_live_signals_ticker_ts_status",
     "ix_pipeline_windows_lookup",
     "ix_replay_runs_created_type",
+    "ix_replay_runs_config_hash",
     "ix_replay_runs_simulation_type",
+    "ix_sensitivity_runs_replay_created",
+    "ix_sensitivity_scenarios_run_cost",
     "ix_validation_reports_model_purpose_created",
     "ix_scanner_runs_started",
     "ix_simulated_trades_run_status",
@@ -63,7 +70,20 @@ EXPECTED_COLUMNS = {
     "live_signals": {"ticker", "timestamp_utc", "status", "payload_json"},
     "model_runs": {"model_version", "active", "payload_json"},
     "pipeline_build_windows": {"artifact_type", "symbol", "interval", "session_date", "dirty", "payload_json"},
-    "replay_runs": {"replay_run_id", "simulation_type", "config_json", "summary_metrics_json", "payload_json"},
+    "replay_runs": {
+        "replay_run_id",
+        "simulation_type",
+        "config_json",
+        "config_hash",
+        "input_fingerprint",
+        "candidate_fingerprint",
+        "stale_window_status_json",
+        "summary_metrics_json",
+        "payload_json",
+    },
+    "replay_sensitivity_runs": {"sensitivity_run_id", "replay_run_id", "config_json", "summary_json", "payload_json"},
+    "replay_sensitivity_scenarios": {"scenario_id", "sensitivity_run_id", "replay_run_id", "summary_metrics_json", "payload_json"},
+    "backtest_comparisons": {"comparison_id", "replay_run_id", "summary_json", "payload_json"},
     "simulated_trades": {"trade_id", "replay_run_id", "symbol", "setup_type", "status", "payload_json"},
     "validation_reports": {"report_id", "model_version", "payload_json"},
     "active_models": {"model_type", "strategy_scope", "payload_json"},
@@ -93,7 +113,18 @@ EXPECTED_JSON_COLUMNS = {
     ("replay_runs", "per_time_bucket_metrics_json"),
     ("replay_runs", "skip_breakdown_json"),
     ("replay_runs", "warnings_json"),
+    ("replay_runs", "stale_window_status_json"),
     ("replay_runs", "payload_json"),
+    ("replay_sensitivity_runs", "config_json"),
+    ("replay_sensitivity_runs", "summary_json"),
+    ("replay_sensitivity_runs", "gate_results_json"),
+    ("replay_sensitivity_runs", "fragility_flags_json"),
+    ("replay_sensitivity_runs", "payload_json"),
+    ("replay_sensitivity_scenarios", "summary_metrics_json"),
+    ("replay_sensitivity_scenarios", "gate_results_json"),
+    ("replay_sensitivity_scenarios", "payload_json"),
+    ("backtest_comparisons", "summary_json"),
+    ("backtest_comparisons", "payload_json"),
     ("simulated_trades", "metadata_json"),
     ("simulated_trades", "payload_json"),
     ("exports", "payload_json"),
@@ -164,6 +195,15 @@ def main() -> int:
                 )
             )
         }
+        try:
+            hypertables = {
+                str(row[0])
+                for row in connection.execute(
+                    text("select hypertable_name from timescaledb_information.hypertables")
+                )
+            }
+        except Exception:
+            hypertables = set()
     missing = sorted(EXPECTED_TABLES - tables)
     missing_indexes = sorted(EXPECTED_INDEXES - indexes)
     missing_constraints = sorted(EXPECTED_UNIQUE_CONSTRAINTS - unique_constraints)
@@ -185,7 +225,9 @@ def main() -> int:
     print(f"missing_columns={','.join(missing_columns) if missing_columns else 'none'}")
     print(f"missing_json_columns={','.join(missing_json_columns) if missing_json_columns else 'none'}")
     print(f"extensions={','.join(extensions)}")
+    print(f"timescale_hypertables={','.join(sorted(hypertables)) if hypertables else 'none'}")
     missing_extension = "timescaledb" not in extensions
+    missing_bars_hypertable = "timescaledb" in extensions and "bars" not in hypertables
     wrong_revision = version != EXPECTED_REVISION
     return 1 if (
         missing
@@ -194,6 +236,7 @@ def main() -> int:
         or missing_columns
         or missing_json_columns
         or missing_extension
+        or missing_bars_hypertable
         or wrong_revision
     ) else 0
 

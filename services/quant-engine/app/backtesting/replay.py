@@ -81,6 +81,7 @@ class ReplayConfig:
     time_bucket_filter: tuple[str, ...] = ()
     close_at_session_end: bool = True
     feature_warmup_bars: int = 1
+    allow_stale: bool = False
 
     @classmethod
     def from_payload(cls, payload: dict[str, Any]) -> ReplayConfig:
@@ -133,6 +134,7 @@ class ReplayConfig:
             time_bucket_filter=tuple(str(value) for value in data.get("time_bucket_filter") or ()),
             close_at_session_end=bool(data.get("close_at_session_end", True)),
             feature_warmup_bars=int(data.get("feature_warmup_bars") or 1),
+            allow_stale=bool(data.get("allow_stale", False)),
         )
 
     def to_dict(self) -> dict[str, Any]:

@@ -1,6 +1,6 @@
 # Data Model
 
-Core storage is designed around PostgreSQL with TimescaleDB when available. If the Timescale extension is not available, the same tables function as plain PostgreSQL tables. Phase 6 verifies Alembic revision `0003_phase6_replay`, replay tables, incremental build-window metadata, critical indexes, unique constraints, JSON columns, and `timescaledb` against the local compose database. The API repository runtime supports both SQLite local storage and PostgreSQL.
+Core storage is designed around PostgreSQL with TimescaleDB when available. If the Timescale extension is not available, the same tables function as plain PostgreSQL tables. Phase 7 verifies Alembic revision `0004_phase7_audit`, 23 tables, replay audit fields, replay sensitivity tables, comparison tables, incremental build-window metadata, critical indexes, unique constraints, JSON columns, `timescaledb`, and `bars` as a hypertable against the local compose database. The API repository runtime supports both SQLite local storage and PostgreSQL.
 
 ## Tables
 
@@ -19,8 +19,11 @@ Core storage is designed around PostgreSQL with TimescaleDB when available. If t
 - `scanner_runs`: scanner start/stop status, symbols, threshold, active model version, and run stats.
 - `daily_reviews`: end-of-day review artifacts and recommendations.
 - `provider_requests`: redacted request accounting and provider health.
-- `exports`: generated CSV/XLSX artifact metadata.
-- `replay_runs`: candidate-to-trade replay run metadata, config, filters, backend, simulation type, metrics, warnings, and JSON payload.
+- `exports`: generated CSV/XLSX/JSON artifact metadata, including file SHA-256 and workbook sheets when available.
+- `replay_runs`: candidate-to-trade replay run metadata, config, filters, backend, simulation type, metrics, warnings, config hash, input fingerprint, candidate fingerprint, stale-window status, and JSON payload.
+- `replay_sensitivity_runs`: replay sensitivity summary, config, robustness score, fragility flags, gate results, and JSON payload.
+- `replay_sensitivity_scenarios`: per-scenario slippage/spread/intrabar sensitivity metrics and JSON payload.
+- `backtest_comparisons`: label-derived vs replay comparison summaries and JSON payload.
 - `simulated_trades`: taken and skipped candidate replay rows with signal timestamp, entry/exit assumptions, prices, R metrics, MFE/MAE, ambiguity policy, status, skip reason, and JSON payload.
 - `pipeline_build_windows`: stale/dirty metadata by artifact type, symbol, interval, session date, version, and affected timestamp range for features, candidates, labels, and replay awareness.
 
@@ -28,8 +31,8 @@ Core storage is designed around PostgreSQL with TimescaleDB when available. If t
 
 Signals include timestamp, ticker, side, entry/stop/targets, R metrics, confidence, grade, setup type, market and ticker regime, reasons, warnings, historical sample metrics, model metadata, status, exit fields, and realized R.
 
-## Phase 6 Indexes And Constraints
+## Phase 7 Indexes And Constraints
 
-`make db-inspect` verifies the migration revision plus critical lookup indexes on bars, features, candidate signals, labels, simulated trades, replay runs, live signals, validation reports, scanner runs, and pipeline build windows. It also verifies the unique constraints that preserve idempotent upserts for bars, features, candidate signals, labels, pipeline build windows, and active model scope.
+`make db-inspect` verifies the migration revision plus critical lookup indexes on bars, features, candidate signals, labels, simulated trades, replay runs, replay sensitivity, comparisons, live signals, validation reports, scanner runs, and pipeline build windows. It also verifies the unique constraints that preserve idempotent upserts for bars, features, candidate signals, labels, pipeline build windows, and active model scope.
 
 `simulated_trades` stores skipped candidates in the same table as taken trades with `status = SKIPPED` and a populated `skip_reason`. Metrics are computed from taken simulated trades; candidate counts and skip rates include both taken and skipped rows.

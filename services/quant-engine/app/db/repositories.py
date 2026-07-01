@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 import sqlite3
 from collections.abc import Iterable
 from dataclasses import asdict, is_dataclass
@@ -13,6 +14,7 @@ from hashlib import sha256
 from pathlib import Path
 from threading import RLock
 from typing import Any
+from zipfile import ZipFile
 
 try:
     from sqlalchemy import create_engine, text
@@ -32,6 +34,7 @@ EXPECTED_TABLES = {
     "active_models",
     "alembic_version",
     "bars",
+    "backtest_comparisons",
     "candidate_signals",
     "closed_signals",
     "daily_reviews",
@@ -44,13 +47,15 @@ EXPECTED_TABLES = {
     "pipeline_build_windows",
     "provider_requests",
     "replay_runs",
+    "replay_sensitivity_runs",
+    "replay_sensitivity_scenarios",
     "scanner_runs",
     "simulated_trades",
     "symbols",
     "validation_reports",
     "validation_windows",
 }
-EXPECTED_ALEMBIC_REVISION = "0003_phase6_replay"
+EXPECTED_ALEMBIC_REVISION = "0004_phase7_audit"
 
 
 def _now_iso() -> str:
@@ -107,6 +112,29 @@ def _maybe_datetime(value: Any) -> datetime | None:
 def _stable_id(prefix: str, *parts: Any) -> str:
     digest = sha256("|".join(str(part) for part in parts).encode("utf-8")).hexdigest()[:32]
     return f"{prefix}_{digest}"
+
+
+def _file_sha256(path: Path | str) -> str | None:
+    file_path = Path(path)
+    if not file_path.exists() or not file_path.is_file():
+        return None
+    digest = sha256()
+    with file_path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _xlsx_sheet_names(path: Path | str) -> list[str]:
+    file_path = Path(path)
+    if file_path.suffix.lower() != ".xlsx" or not file_path.exists():
+        return []
+    try:
+        with ZipFile(file_path) as archive:
+            workbook_xml = archive.read("xl/workbook.xml").decode("utf-8", errors="ignore")
+    except Exception:
+        return []
+    return re.findall(r'<sheet[^>]+name="([^"]+)"', workbook_xml)
 
 
 def _payload(obj: Any) -> dict[str, Any]:
@@ -525,6 +553,14 @@ class SQLiteStore:
                         symbols_json TEXT DEFAULT '[]',
                         intervals_json TEXT DEFAULT '[]',
                         config_json TEXT DEFAULT '{}',
+                        config_hash TEXT,
+                        input_fingerprint TEXT,
+                        candidate_fingerprint TEXT,
+                        replay_config_version TEXT,
+                        feature_set_version TEXT,
+                        candidate_config_version TEXT,
+                        label_config_version TEXT,
+                        stale_window_status_json TEXT DEFAULT '{}',
                         summary_metrics_json TEXT DEFAULT '{}',
                         per_symbol_metrics_json TEXT DEFAULT '{}',
                         per_setup_metrics_json TEXT DEFAULT '{}',
@@ -541,6 +577,53 @@ class SQLiteStore:
 
                     CREATE INDEX IF NOT EXISTS ix_replay_runs_simulation_type
                         ON replay_runs(simulation_type);
+
+                    CREATE INDEX IF NOT EXISTS ix_replay_runs_config_hash
+                        ON replay_runs(config_hash);
+
+                    CREATE TABLE IF NOT EXISTS replay_sensitivity_runs (
+                        sensitivity_run_id TEXT PRIMARY KEY,
+                        replay_run_id TEXT NOT NULL,
+                        config_json TEXT DEFAULT '{}',
+                        summary_json TEXT DEFAULT '{}',
+                        gate_results_json TEXT DEFAULT '{}',
+                        fragility_flags_json TEXT DEFAULT '[]',
+                        payload_json TEXT NOT NULL,
+                        created_at TEXT NOT NULL
+                    );
+
+                    CREATE INDEX IF NOT EXISTS ix_sensitivity_runs_replay_created
+                        ON replay_sensitivity_runs(replay_run_id, created_at);
+
+                    CREATE TABLE IF NOT EXISTS replay_sensitivity_scenarios (
+                        scenario_id TEXT PRIMARY KEY,
+                        sensitivity_run_id TEXT NOT NULL,
+                        replay_run_id TEXT NOT NULL,
+                        slippage_bps REAL NOT NULL,
+                        spread_bps REAL NOT NULL,
+                        intrabar_path_policy TEXT NOT NULL,
+                        same_bar_stop_target_policy TEXT NOT NULL,
+                        summary_metrics_json TEXT DEFAULT '{}',
+                        gate_results_json TEXT DEFAULT '{}',
+                        payload_json TEXT NOT NULL,
+                        created_at TEXT NOT NULL
+                    );
+
+                    CREATE INDEX IF NOT EXISTS ix_sensitivity_scenarios_run_cost
+                        ON replay_sensitivity_scenarios(sensitivity_run_id, slippage_bps, spread_bps);
+
+                    CREATE TABLE IF NOT EXISTS backtest_comparisons (
+                        comparison_id TEXT PRIMARY KEY,
+                        label_run_id TEXT,
+                        replay_run_id TEXT NOT NULL,
+                        comparison_type TEXT NOT NULL,
+                        summary_json TEXT DEFAULT '{}',
+                        payload_json TEXT NOT NULL,
+                        created_at TEXT NOT NULL
+                    );
+
+                    CREATE INDEX IF NOT EXISTS ix_backtest_comparisons_replay_created
+                        ON backtest_comparisons(replay_run_id, created_at);
 
                     CREATE TABLE IF NOT EXISTS simulated_trades (
                         trade_id TEXT PRIMARY KEY,
@@ -626,6 +709,21 @@ class SQLiteStore:
                     );
                     """
                 )
+                for statement in (
+                    "ALTER TABLE replay_runs ADD COLUMN config_hash TEXT",
+                    "ALTER TABLE replay_runs ADD COLUMN input_fingerprint TEXT",
+                    "ALTER TABLE replay_runs ADD COLUMN candidate_fingerprint TEXT",
+                    "ALTER TABLE replay_runs ADD COLUMN replay_config_version TEXT",
+                    "ALTER TABLE replay_runs ADD COLUMN feature_set_version TEXT",
+                    "ALTER TABLE replay_runs ADD COLUMN candidate_config_version TEXT",
+                    "ALTER TABLE replay_runs ADD COLUMN label_config_version TEXT",
+                    "ALTER TABLE replay_runs ADD COLUMN stale_window_status_json TEXT DEFAULT '{}'",
+                ):
+                    try:
+                        connection.execute(statement)
+                    except sqlite3.OperationalError as exc:
+                        if "duplicate column name" not in str(exc).lower():
+                            raise
                 connection.commit()
             finally:
                 if str(self.path) != ":memory:":
@@ -1802,12 +1900,23 @@ class ReplayRepository:
                     """
                     INSERT INTO replay_runs(
                         replay_run_id, simulation_type, backend, start, "end", symbols_json, intervals_json,
-                        config_json, summary_metrics_json, per_symbol_metrics_json, per_setup_metrics_json,
+                        config_json, config_hash, input_fingerprint, candidate_fingerprint,
+                        replay_config_version, feature_set_version, candidate_config_version,
+                        label_config_version, stale_window_status_json,
+                        summary_metrics_json, per_symbol_metrics_json, per_setup_metrics_json,
                         per_regime_metrics_json, per_time_bucket_metrics_json, skip_breakdown_json,
                         warnings_json, payload_json, created_at
                     )
-                    VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(replay_run_id) DO UPDATE SET
+                        config_hash=excluded.config_hash,
+                        input_fingerprint=excluded.input_fingerprint,
+                        candidate_fingerprint=excluded.candidate_fingerprint,
+                        replay_config_version=excluded.replay_config_version,
+                        feature_set_version=excluded.feature_set_version,
+                        candidate_config_version=excluded.candidate_config_version,
+                        label_config_version=excluded.label_config_version,
+                        stale_window_status_json=excluded.stale_window_status_json,
                         summary_metrics_json=excluded.summary_metrics_json,
                         per_symbol_metrics_json=excluded.per_symbol_metrics_json,
                         per_setup_metrics_json=excluded.per_setup_metrics_json,
@@ -1826,6 +1935,14 @@ class ReplayRepository:
                         _json_dumps(run_payload.get("symbols") or []),
                         _json_dumps(run_payload.get("intervals") or []),
                         _json_dumps(config),
+                        run_payload.get("config_hash"),
+                        run_payload.get("input_fingerprint"),
+                        run_payload.get("candidate_fingerprint"),
+                        run_payload.get("replay_config_version"),
+                        run_payload.get("feature_set_version"),
+                        run_payload.get("candidate_config_version"),
+                        run_payload.get("label_config_version"),
+                        _json_dumps(run_payload.get("stale_window_status") or {}),
                         _json_dumps(metrics),
                         _json_dumps(metrics.get("per_symbol_metrics") or {}),
                         _json_dumps(metrics.get("per_setup_metrics") or {}),
@@ -1927,6 +2044,41 @@ class ReplayRepository:
             if str(self.store.path) != ":memory:":
                 connection.close()
 
+    def select(self, replay_filter: dict[str, Any]) -> dict[str, Any] | None:
+        matches = [run for run in self.list_runs() if self._matches_filter(run, replay_filter)]
+        if not matches:
+            return None
+        return sorted(
+            matches,
+            key=lambda run: (str(run.get("created_at") or ""), str(run.get("replay_run_id") or "")),
+            reverse=True,
+        )[0]
+
+    def _matches_filter(self, replay_run: dict[str, Any], replay_filter: dict[str, Any]) -> bool:
+        if str(replay_run.get("simulation_type")) != "candidate_market_replay":
+            return False
+        symbols = [normalize_symbol(str(symbol)) for symbol in replay_filter.get("symbols") or []]
+        if symbols and set(symbols) - {normalize_symbol(str(symbol)) for symbol in replay_run.get("symbols") or []}:
+            return False
+        intervals = [str(interval) for interval in replay_filter.get("intervals") or []]
+        if intervals and set(intervals) - {str(interval) for interval in replay_run.get("intervals") or []}:
+            return False
+        if replay_filter.get("start") and str(replay_run.get("start")) != str(replay_filter["start"]):
+            return False
+        if replay_filter.get("end") and str(replay_run.get("end")) != str(replay_filter["end"]):
+            return False
+        if replay_filter.get("model_version") and str(replay_run.get("model_version")) != str(replay_filter["model_version"]):
+            return False
+        if replay_filter.get("feature_set_version") and str(replay_run.get("feature_set_version")) != str(replay_filter["feature_set_version"]):
+            return False
+        if replay_filter.get("replay_config_hash") and str(replay_run.get("config_hash")) != str(replay_filter["replay_config_hash"]):
+            return False
+        if replay_filter.get("minimum_created_at") and str(replay_run.get("created_at") or "") < str(replay_filter["minimum_created_at"]):
+            return False
+        if replay_filter.get("maximum_created_at") and str(replay_run.get("created_at") or "") > str(replay_filter["maximum_created_at"]):
+            return False
+        return True
+
     def list_trades(
         self,
         replay_run_id: str,
@@ -1945,6 +2097,191 @@ class ReplayRepository:
         try:
             rows = connection.execute(sql, params).fetchall()
             return [_json_loads(row["payload_json"]) for row in rows]
+        finally:
+            if str(self.store.path) != ":memory:":
+                connection.close()
+
+
+class ReplaySensitivityRepository:
+    def __init__(self, store: SQLiteStore) -> None:
+        self.store = store
+
+    def save(self, sensitivity_run: dict[str, Any]) -> dict[str, Any]:
+        payload = _payload(sensitivity_run)
+        scenarios = [_payload(scenario) for scenario in payload.get("scenarios") or []]
+        sensitivity_run_id = str(payload["sensitivity_run_id"])
+        replay_run_id = str(payload["replay_run_id"])
+        created_at = str(payload.get("created_at") or _now_iso())
+        summary = {
+            "scenario_count": payload.get("scenario_count"),
+            "passed_scenario_count": payload.get("passed_scenario_count"),
+            "failed_scenario_count": payload.get("failed_scenario_count"),
+            "robustness_score": payload.get("robustness_score"),
+            "pass_fail": payload.get("pass_fail"),
+            "worst_case": payload.get("worst_case"),
+            "median_case": payload.get("median_case"),
+            "best_case": payload.get("best_case"),
+        }
+        row_payload = payload | {"created_at": created_at}
+        with self.store._lock:
+            connection = self.store.connect()
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO replay_sensitivity_runs(
+                        sensitivity_run_id, replay_run_id, config_json, summary_json,
+                        gate_results_json, fragility_flags_json, payload_json, created_at
+                    )
+                    VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(sensitivity_run_id) DO UPDATE SET
+                        config_json=excluded.config_json,
+                        summary_json=excluded.summary_json,
+                        gate_results_json=excluded.gate_results_json,
+                        fragility_flags_json=excluded.fragility_flags_json,
+                        payload_json=excluded.payload_json
+                    """,
+                    (
+                        sensitivity_run_id,
+                        replay_run_id,
+                        _json_dumps(row_payload.get("config") or {}),
+                        _json_dumps(summary),
+                        _json_dumps(row_payload.get("gate_results") or {}),
+                        _json_dumps(row_payload.get("fragility_flags") or []),
+                        _json_dumps(row_payload),
+                        created_at,
+                    ),
+                )
+                connection.execute(
+                    "DELETE FROM replay_sensitivity_scenarios WHERE sensitivity_run_id = ?",
+                    (sensitivity_run_id,),
+                )
+                connection.executemany(
+                    """
+                    INSERT INTO replay_sensitivity_scenarios(
+                        scenario_id, sensitivity_run_id, replay_run_id, slippage_bps, spread_bps,
+                        intrabar_path_policy, same_bar_stop_target_policy, summary_metrics_json,
+                        gate_results_json, payload_json, created_at
+                    )
+                    VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(scenario_id) DO UPDATE SET
+                        summary_metrics_json=excluded.summary_metrics_json,
+                        gate_results_json=excluded.gate_results_json,
+                        payload_json=excluded.payload_json
+                    """,
+                    [
+                        (
+                            str(scenario["scenario_id"]),
+                            sensitivity_run_id,
+                            replay_run_id,
+                            float(scenario.get("slippage_bps") or 0.0),
+                            float(scenario.get("spread_bps") or 0.0),
+                            str(scenario.get("intrabar_path_policy") or "conservative"),
+                            str(scenario.get("same_bar_stop_target_policy") or "conservative_stop_first"),
+                            _json_dumps(scenario.get("summary_metrics") or {}),
+                            _json_dumps(scenario.get("gate_results") or {}),
+                            _json_dumps(scenario | {"sensitivity_run_id": sensitivity_run_id, "replay_run_id": replay_run_id}),
+                            created_at,
+                        )
+                        for scenario in scenarios
+                    ],
+                )
+                connection.commit()
+            finally:
+                if str(self.store.path) != ":memory:":
+                    connection.close()
+        return row_payload | {"scenarios_written": len(scenarios)}
+
+    def get(self, sensitivity_run_id: str) -> dict[str, Any] | None:
+        connection = self.store.connect()
+        try:
+            row = connection.execute(
+                "SELECT payload_json FROM replay_sensitivity_runs WHERE sensitivity_run_id = ?",
+                (sensitivity_run_id,),
+            ).fetchone()
+            return _json_loads(row["payload_json"]) if row else None
+        finally:
+            if str(self.store.path) != ":memory:":
+                connection.close()
+
+    def list_for_replay(self, replay_run_id: str) -> list[dict[str, Any]]:
+        connection = self.store.connect()
+        try:
+            rows = connection.execute(
+                "SELECT payload_json FROM replay_sensitivity_runs WHERE replay_run_id = ? ORDER BY created_at DESC",
+                (replay_run_id,),
+            ).fetchall()
+            return [_json_loads(row["payload_json"]) for row in rows]
+        finally:
+            if str(self.store.path) != ":memory:":
+                connection.close()
+
+    def list_scenarios(self, sensitivity_run_id: str) -> list[dict[str, Any]]:
+        connection = self.store.connect()
+        try:
+            rows = connection.execute(
+                """
+                SELECT payload_json FROM replay_sensitivity_scenarios
+                WHERE sensitivity_run_id = ?
+                ORDER BY slippage_bps, spread_bps, intrabar_path_policy, same_bar_stop_target_policy
+                """,
+                (sensitivity_run_id,),
+            ).fetchall()
+            return [_json_loads(row["payload_json"]) for row in rows]
+        finally:
+            if str(self.store.path) != ":memory:":
+                connection.close()
+
+
+class BacktestComparisonRepository:
+    def __init__(self, store: SQLiteStore) -> None:
+        self.store = store
+
+    def save(self, comparison: dict[str, Any]) -> dict[str, Any]:
+        payload = _payload(comparison)
+        created_at = str(payload.get("created_at") or _now_iso())
+        comparison_id = str(
+            payload.get("comparison_id")
+            or _stable_id("comparison", payload.get("comparison_type") or "label_vs_replay", payload.get("replay_run_id"), created_at)
+        )
+        row_payload = payload | {"comparison_id": comparison_id, "created_at": created_at}
+        with self.store._lock:
+            connection = self.store.connect()
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO backtest_comparisons(
+                        comparison_id, label_run_id, replay_run_id, comparison_type,
+                        summary_json, payload_json, created_at
+                    )
+                    VALUES(?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(comparison_id) DO UPDATE SET
+                        summary_json=excluded.summary_json,
+                        payload_json=excluded.payload_json
+                    """,
+                    (
+                        comparison_id,
+                        row_payload.get("label_run_id"),
+                        str(row_payload["replay_run_id"]),
+                        str(row_payload.get("comparison_type") or "label_vs_replay"),
+                        _json_dumps(row_payload.get("summary") or {}),
+                        _json_dumps(row_payload),
+                        created_at,
+                    ),
+                )
+                connection.commit()
+            finally:
+                if str(self.store.path) != ":memory:":
+                    connection.close()
+        return row_payload
+
+    def get(self, comparison_id: str) -> dict[str, Any] | None:
+        connection = self.store.connect()
+        try:
+            row = connection.execute(
+                "SELECT payload_json FROM backtest_comparisons WHERE comparison_id = ?",
+                (comparison_id,),
+            ).fetchone()
+            return _json_loads(row["payload_json"]) if row else None
         finally:
             if str(self.store.path) != ":memory:":
                 connection.close()
@@ -1981,6 +2318,23 @@ class PipelineBuildWindowRepository:
         finally:
             if str(self.store.path) != ":memory:":
                 connection.close()
+
+    def status(
+        self,
+        symbols: Iterable[str] | None = None,
+        intervals: Iterable[str] | None = None,
+    ) -> dict[str, Any]:
+        dirty = self.list_dirty(symbols=symbols, intervals=intervals)
+        by_artifact: dict[str, int] = {}
+        for row in dirty:
+            artifact_type = str(row.get("artifact_type") or "unknown")
+            by_artifact[artifact_type] = by_artifact.get(artifact_type, 0) + 1
+        return {
+            "status": "stale" if dirty else "clean",
+            "dirty_window_count": len(dirty),
+            "dirty_by_artifact": by_artifact,
+            "dirty_windows": dirty,
+        }
 
     def mark_built(
         self,
@@ -2074,6 +2428,20 @@ class ExportRepository:
     ) -> dict[str, Any]:
         created_at = _now_iso()
         export_id = _stable_id("export", export_type, fmt, path, created_at)
+        audit_payload = dict(payload or {})
+        file_hash = _file_sha256(path)
+        workbook_sheets = _xlsx_sheet_names(path)
+        audit_payload.update(
+            {
+                "file_sha256": file_hash,
+                "workbook_sheets": workbook_sheets,
+                "row_count": row_count,
+                "source_run_id": source_run_id,
+                "export_type": export_type,
+                "format": fmt,
+                "created_at": created_at,
+            }
+        )
         row = {
             "export_id": export_id,
             "export_type": export_type,
@@ -2082,7 +2450,9 @@ class ExportRepository:
             "row_count": row_count,
             "source_run_id": source_run_id,
             "created_at": created_at,
-            "payload": payload or {},
+            "payload": audit_payload,
+            "file_sha256": file_hash,
+            "workbook_sheets": workbook_sheets,
         }
         with self.store._lock:
             connection = self.store.connect()
@@ -2092,7 +2462,7 @@ class ExportRepository:
                     INSERT INTO exports(export_id, export_type, format, path, row_count, source_run_id, payload_json, created_at)
                     VALUES(?, ?, ?, ?, ?, ?, ?, ?)
                     """,
-                    (export_id, export_type, fmt, str(path), row_count, source_run_id, _json_dumps(payload or {}), created_at),
+                    (export_id, export_type, fmt, str(path), row_count, source_run_id, _json_dumps(audit_payload), created_at),
                 )
                 connection.commit()
             finally:
@@ -2108,6 +2478,9 @@ class ExportRepository:
             for row in rows:
                 data = dict(row)
                 data["payload"] = _json_loads(data.pop("payload_json"))
+                if isinstance(data["payload"], dict):
+                    data["file_sha256"] = data["payload"].get("file_sha256")
+                    data["workbook_sheets"] = data["payload"].get("workbook_sheets") or []
                 output.append(data)
             return output
         finally:
@@ -2252,6 +2625,8 @@ class RepositoryRegistry:
         self.scanner_runs = ScannerRunRepository(self.store)
         self.provider_requests = ProviderRequestRepository(self.store)
         self.replays = ReplayRepository(self.store)
+        self.replay_sensitivity = ReplaySensitivityRepository(self.store)
+        self.backtest_comparisons = BacktestComparisonRepository(self.store)
         self.pipeline_windows = PipelineBuildWindowRepository(self.store)
         self.exports = ExportRepository(self.store)
         self.daily_reviews = DailyReviewRepository(self.store)

@@ -18,9 +18,24 @@ Metrics include trade count, win rate, precision, recall where applicable, avera
 V1 now keeps two modes explicit:
 
 - `label_derived`: default validation and activation path. It uses leakage-safe labels for fast evidence and model training.
-- `candidate_market_replay`: optional replay validation path. It uses persisted replay metrics from raw-bar candidate replay and stores validation reports with purpose `replay_validation`.
+- `candidate_market_replay`: optional replay validation path. It uses explicitly selected persisted replay metrics from raw-bar candidate replay and stores validation reports with purpose `replay_validation`.
 
-Model activation responses include the `validation_mode` used. If replay validation is requested and no replay run exists, the report is rejected with `no_replay_run_available`. Replay validation does not remove the default label-derived guard; it is an explicit additional gate.
+Model activation responses include the `validation_mode` used. If replay validation is requested without `replay_run_id`, `replay_filter`, or `allow_latest_replay_fallback=true`, the report is rejected with `replay_run_selection_required`. Replay validation does not remove the default label-derived guard; it is an explicit additional gate.
+
+Replay validation selection fields:
+
+- `replay_run_id`: exact replay run.
+- `replay_filter`: JSON filter that deterministically selects the newest matching replay run.
+- `allow_latest_replay_fallback`: explicit opt-in to the previous latest-run behavior.
+- `allow_stale_replay_validation`: explicit opt-in to validate with a stale replay run.
+
+Sensitivity-aware validation fields:
+
+- `require_sensitivity`
+- `sensitivity_run_id`
+- `minimum_robustness_score`
+
+When a sensitivity run is provided, replay validation rejects runs with mismatched replay IDs, failed sensitivity gates, or robustness below the requested threshold.
 
 ## Phase 2 Implementation Status
 
@@ -33,5 +48,5 @@ Implemented in code:
 
 Still partial:
 
-- Replay validation currently uses the latest persisted replay run for the requested mode; future work should support selecting a specific replay run, model version, and out-of-sample replay window.
+- Replay validation is only as trustworthy as the selected replay window and assumptions; review `config_hash`, `input_fingerprint`, and sensitivity flags before using it for model activation decisions.
 - Calibration/Brier scoring is not real until a probability model exists.

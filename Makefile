@@ -2,7 +2,7 @@ PYTHON ?= python3
 PYTHON314 ?= python3.14
 SERVICE_DIR := services/quant-engine
 
-.PHONY: help doctor setup setup-backend require-backend-venv quant-test backend-test backend-lint backend-typecheck api-smoke api-smoke-sqlite api-smoke-postgres repository-parity-test replay-test export-test fmp-smoke dev api-dev web-dev db-up db-down db-migrate db-inspect db-reset-dev ingest features labels train validate backtest scanner export test lint typecheck
+.PHONY: help doctor setup setup-backend require-backend-venv quant-test backend-test backend-lint backend-typecheck api-smoke api-smoke-sqlite api-smoke-postgres repository-parity-test replay-test replay-sensitivity-test export-test fmp-smoke dev api-dev web-dev db-up db-down db-migrate db-inspect db-diagnostics db-reset-dev ingest features labels train validate backtest scanner export test lint typecheck
 
 help:
 	@printf "Adaptive Market Decoder commands\n\n"
@@ -18,6 +18,7 @@ help:
 	@printf "  make db-down             Stop local database services\n"
 	@printf "  make db-migrate          Run Alembic migrations\n"
 	@printf "  make db-inspect          Inspect migrated Postgres/Timescale schema\n"
+	@printf "  make db-diagnostics      Print read-only Postgres replay/sensitivity diagnostics\n"
 	@printf "  make db-reset-dev        DEV ONLY: delete local database volumes, restart, and migrate\n\n"
 	@printf "Quality:\n"
 	@printf "  make quant-test          Run pure quant tests, with python3 fallback when venv is absent\n"
@@ -29,6 +30,7 @@ help:
 	@printf "  make api-smoke-postgres  Run Postgres persisted FastAPI smoke test against local compose DB\n"
 	@printf "  make repository-parity-test Run SQLite/Postgres repository parity tests\n"
 	@printf "  make replay-test        Run candidate-to-trade replay simulator tests\n"
+	@printf "  make replay-sensitivity-test Run replay audit and sensitivity tests\n"
 	@printf "  make export-test        Run export workbook/CSV tests\n"
 	@printf "  make fmp-smoke           Run optional live FMP REST smoke if FMP_API_KEY is configured\n"
 	@printf "  make test lint typecheck Run backend and frontend quality gates\n"
@@ -94,6 +96,9 @@ repository-parity-test: require-backend-venv
 replay-test: require-backend-venv
 	cd $(SERVICE_DIR) && PYTHONPATH=. .venv/bin/python -m pytest tests/quant/test_replay_engine.py
 
+replay-sensitivity-test: require-backend-venv
+	cd $(SERVICE_DIR) && PYTHONPATH=. .venv/bin/python -m pytest tests/quant/test_replay_sensitivity.py
+
 export-test: require-backend-venv
 	cd $(SERVICE_DIR) && PYTHONPATH=. .venv/bin/python -m pytest tests/test_exports.py
 
@@ -121,6 +126,9 @@ db-migrate: require-backend-venv
 
 db-inspect: require-backend-venv
 	PYTHONPATH=$(SERVICE_DIR) $(SERVICE_DIR)/.venv/bin/python scripts/inspect_db_schema.py
+
+db-diagnostics: require-backend-venv
+	PYTHONPATH=$(SERVICE_DIR) $(SERVICE_DIR)/.venv/bin/python scripts/db_query_diagnostics.py
 
 db-reset-dev:
 	@printf "\nDEV ONLY: this deletes local Postgres/Redis containers and named volumes for this compose project.\n"

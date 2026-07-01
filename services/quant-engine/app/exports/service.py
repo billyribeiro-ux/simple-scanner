@@ -88,6 +88,23 @@ REPLAY_TRADE_COLUMNS = [
     "skip_reason",
 ]
 
+SENSITIVITY_SCENARIO_COLUMNS = [
+    "scenario_id",
+    "sensitivity_run_id",
+    "replay_run_id",
+    "slippage_bps",
+    "spread_bps",
+    "intrabar_path_policy",
+    "same_bar_stop_target_policy",
+    "pass_fail",
+    "total_trades",
+    "average_r",
+    "profit_factor",
+    "max_drawdown_r",
+    "total_r",
+    "skip_rate",
+]
+
 
 class ExportService:
     def __init__(self) -> None:
@@ -232,7 +249,7 @@ class ExportService:
             sheet = workbook.active if index == 0 else workbook.create_sheet(sheet_name)
             sheet.title = sheet_name
             for row in rows:
-                sheet.append(row)
+                sheet.append([self._cell_value(value) for value in row])
         workbook.save(path)
         return path
 
@@ -249,6 +266,65 @@ class ExportService:
         path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
         return path
 
+    def export_sensitivity_summary_xlsx(self, sensitivity_run: dict[str, object], scenarios: Iterable[dict[str, object]]) -> Path:
+        sensitivity_run_id = str(sensitivity_run["sensitivity_run_id"])
+        path = self.settings.exports_dir / f"replay_sensitivity_summary_{sensitivity_run_id}.xlsx"
+        scenario_rows = [self._sensitivity_scenario_row(scenario, sensitivity_run_id) for scenario in scenarios]
+        sheets = self._sensitivity_workbook_sheets(sensitivity_run, scenario_rows)
+        if Workbook is None:
+            self._write_minimal_xlsx(path, sheets)
+            return path
+        workbook = Workbook()
+        for index, (sheet_name, rows) in enumerate(sheets.items()):
+            sheet = workbook.active if index == 0 else workbook.create_sheet(sheet_name)
+            sheet.title = sheet_name
+            for row in rows:
+                sheet.append([self._cell_value(value) for value in row])
+        workbook.save(path)
+        return path
+
+    def export_sensitivity_scenarios_csv(self, sensitivity_run_id: str, scenarios: Iterable[dict[str, object]]) -> Path:
+        path = self.settings.exports_dir / f"replay_sensitivity_scenarios_{sensitivity_run_id}.csv"
+        rows = [self._sensitivity_scenario_row(scenario, sensitivity_run_id) for scenario in scenarios]
+        with path.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=SENSITIVITY_SCENARIO_COLUMNS)
+            writer.writeheader()
+            writer.writerows(rows)
+        return path
+
+    def export_sensitivity_scenarios_xlsx(self, sensitivity_run_id: str, scenarios: Iterable[dict[str, object]]) -> Path:
+        path = self.settings.exports_dir / f"replay_sensitivity_scenarios_{sensitivity_run_id}.xlsx"
+        rows = [self._sensitivity_scenario_row(scenario, sensitivity_run_id) for scenario in scenarios]
+        if Workbook is None:
+            self._write_minimal_xlsx(
+                path,
+                {"Scenario Metrics": [SENSITIVITY_SCENARIO_COLUMNS, *[[row.get(column) for column in SENSITIVITY_SCENARIO_COLUMNS] for row in rows]]},
+            )
+            return path
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = "Scenario Metrics"
+        self._write_sheet(sheet, SENSITIVITY_SCENARIO_COLUMNS, rows)
+        workbook.save(path)
+        return path
+
+    def export_sensitivity_metrics_json(self, sensitivity_run: dict[str, object], scenarios: Iterable[dict[str, object]]) -> Path:
+        sensitivity_run_id = str(sensitivity_run["sensitivity_run_id"])
+        path = self.settings.exports_dir / f"replay_sensitivity_metrics_{sensitivity_run_id}.json"
+        payload = {
+            "sensitivity_run_id": sensitivity_run_id,
+            "replay_run_id": sensitivity_run.get("replay_run_id"),
+            "created_at": sensitivity_run.get("created_at"),
+            "config": sensitivity_run.get("config") or {},
+            "robustness_score": sensitivity_run.get("robustness_score"),
+            "pass_fail": sensitivity_run.get("pass_fail"),
+            "fragility_flags": sensitivity_run.get("fragility_flags") or [],
+            "gate_results": sensitivity_run.get("gate_results") or {},
+            "scenario_count": len(list(scenarios)),
+        }
+        path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
+        return path
+
     def _signal_row(self, signal: Signal) -> dict[str, object]:
         payload = signal.model_dump(mode="json")
         payload["side"] = signal.side.value
@@ -259,6 +335,25 @@ class ExportService:
 
     def _replay_trade_row(self, trade: dict[str, object]) -> dict[str, object]:
         return {column: trade.get(column) for column in REPLAY_TRADE_COLUMNS}
+
+    def _sensitivity_scenario_row(self, scenario: dict[str, object], sensitivity_run_id: str) -> dict[str, object]:
+        metrics = dict(scenario.get("summary_metrics") or {})
+        return {
+            "scenario_id": scenario.get("scenario_id"),
+            "sensitivity_run_id": scenario.get("sensitivity_run_id") or sensitivity_run_id,
+            "replay_run_id": scenario.get("replay_run_id"),
+            "slippage_bps": scenario.get("slippage_bps"),
+            "spread_bps": scenario.get("spread_bps"),
+            "intrabar_path_policy": scenario.get("intrabar_path_policy"),
+            "same_bar_stop_target_policy": scenario.get("same_bar_stop_target_policy"),
+            "pass_fail": scenario.get("pass_fail"),
+            "total_trades": metrics.get("total_trades"),
+            "average_r": metrics.get("average_r"),
+            "profit_factor": metrics.get("profit_factor"),
+            "max_drawdown_r": metrics.get("max_drawdown_r"),
+            "total_r": metrics.get("total_r"),
+            "skip_rate": metrics.get("skip_rate"),
+        }
 
     def _replay_workbook_sheets(
         self,
@@ -287,6 +382,54 @@ class ExportService:
             "Warnings": [["warning"], *[[warning] for warning in warnings]],
         }
 
+    def _sensitivity_workbook_sheets(
+        self,
+        sensitivity_run: dict[str, object],
+        scenario_rows: list[dict[str, object]],
+    ) -> dict[str, list[list[object]]]:
+        worst = dict(sensitivity_run.get("worst_case") or {})
+        median_case = dict(sensitivity_run.get("median_case") or {})
+        best = dict(sensitivity_run.get("best_case") or {})
+        fragility_payload = sensitivity_run.get("fragility_flags")
+        fragility_flags = fragility_payload if isinstance(fragility_payload, list) else []
+        return {
+            "Summary": [
+                ["metric", "value"],
+                ["sensitivity_run_id", sensitivity_run.get("sensitivity_run_id")],
+                ["replay_run_id", sensitivity_run.get("replay_run_id")],
+                ["scenario_count", sensitivity_run.get("scenario_count")],
+                ["robustness_score", sensitivity_run.get("robustness_score")],
+                ["pass_fail", sensitivity_run.get("pass_fail")],
+            ],
+            "Scenario Metrics": [
+                SENSITIVITY_SCENARIO_COLUMNS,
+                *[[row.get(column) for column in SENSITIVITY_SCENARIO_COLUMNS] for row in scenario_rows],
+            ],
+            "Worst Case": self._scenario_detail_sheet(worst),
+            "Median Case": self._scenario_detail_sheet(median_case),
+            "Best Case": self._scenario_detail_sheet(best),
+            "Fragility Flags": [["flag"], *[[flag] for flag in fragility_flags]],
+            "Gate Results": [["gate", "passed"], *[[key, value] for key, value in dict(sensitivity_run.get("gate_results") or {}).items()]],
+            "Config": [["key", "value"], *[[key, json.dumps(value, default=str)] for key, value in dict(sensitivity_run.get("config") or {}).items()]],
+            "Warnings": [["warning"], ["audit", "Replay sensitivity is a stress test, not a profitability claim."]],
+        }
+
+    def _scenario_detail_sheet(self, scenario: dict[str, object]) -> list[list[object]]:
+        rows: list[list[object]] = [["section", "key", "value"]]
+        for key, value in scenario.items():
+            if key in {"summary_metrics", "gate_results"} and isinstance(value, dict):
+                rows.extend([[key, metric_key, self._cell_value(metric_value)] for metric_key, metric_value in value.items()])
+            else:
+                rows.append(["scenario", key, json.dumps(value, default=str)])
+        return rows
+
+    def _cell_value(self, value: object) -> object:
+        if isinstance(value, float) and (value != value or value in (float("inf"), float("-inf"))):
+            return None
+        if isinstance(value, (dict, list, tuple, set)):
+            return json.dumps(value, default=str)
+        return value
+
     def _metric_sheet(self, payload: object) -> list[list[object]]:
         rows: list[list[object]] = [["group", "metric", "value"]]
         if isinstance(payload, dict):
@@ -309,7 +452,7 @@ class ExportService:
     def _write_sheet(self, sheet, columns: list[str], rows: list[dict[str, object]]) -> None:
         sheet.append(columns)
         for row in rows:
-            sheet.append([row.get(column) for column in columns])
+            sheet.append([self._cell_value(row.get(column)) for column in columns])
 
     def _write_minimal_xlsx(self, path: Path, sheets: dict[str, list[list[object]]]) -> None:
         with ZipFile(path, "w", ZIP_DEFLATED) as archive:

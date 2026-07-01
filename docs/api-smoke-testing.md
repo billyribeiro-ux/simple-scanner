@@ -40,8 +40,15 @@ The test sets a non-secret sentinel `FMP_API_KEY` only to exercise scanner gatin
 - `GET /models/{model_version}`
 - `POST /backtest/run`
 - `POST /backtest/replay`
+- `GET /pipeline/status`
 - `GET /backtest/replay/{replay_run_id}`
 - `GET /backtest/replay/{replay_run_id}/trades`
+- `POST /backtest/replay/{replay_run_id}/sensitivity`
+- `GET /backtest/replay/sensitivity/{sensitivity_run_id}`
+- `GET /backtest/replay/sensitivity/{sensitivity_run_id}/scenarios`
+- `GET /backtest/replay/{replay_run_id}/sensitivity`
+- `POST /backtest/compare-label-vs-replay`
+- `GET /backtest/comparisons/{comparison_id}`
 - `GET /backtest/runs`
 - `GET /backtest/runs/{run_id}`
 - `POST /scanner/start`
@@ -55,6 +62,10 @@ The test sets a non-secret sentinel `FMP_API_KEY` only to exercise scanner gatin
 - `POST /exports/replay-summary.xlsx`
 - `POST /exports/replay-trades.csv`
 - `POST /exports/replay-trades.xlsx`
+- `POST /exports/sensitivity-summary.xlsx`
+- `POST /exports/sensitivity-scenarios.csv`
+- `POST /exports/sensitivity-scenarios.xlsx`
+- `POST /exports/sensitivity-metrics.json`
 - `POST /review/daily`
 - `GET /review/daily/{date}`
 - `POST /exports/daily-review.xlsx`
@@ -77,15 +88,20 @@ The smoke test:
 - verifies accepted validation can activate the model;
 - verifies a replacement active model leaves one active model per scope;
 - runs and persists a label-derived backtest report with `simulation_type = label_derived`;
-- runs and persists a candidate market replay with `simulation_type = candidate_market_replay`;
+- runs and persists a candidate market replay with `simulation_type = candidate_market_replay`, `config_hash`, `input_fingerprint`, and `candidate_fingerprint`;
 - re-queries replay summary and paginated simulated trades;
+- verifies replay validation rejects missing explicit replay selection;
+- validates with an explicit `replay_run_id`;
+- runs and persists replay sensitivity scenarios;
+- persists a label-vs-replay comparison;
 - starts the scanner with mocked quotes/context;
 - persists a scanner run and live signals;
 - exports live signals CSV and XLSX from persisted signals;
 - exports replay summary XLSX plus metrics JSON and replay trades CSV/XLSX from persisted replay data;
+- exports replay sensitivity summary XLSX, scenarios CSV/XLSX, and metrics JSON;
 - persists a daily review and exports JSON/CSV/XLSX review artifacts;
 - reinitializes the repository;
-- re-queries bars, features, labels, replay runs/trades, active model, scanner run, signals, exports, and daily review from disk.
+- re-queries bars, features, labels, replay runs/trades, sensitivity runs, comparisons, active model, scanner run, signals, exports, and daily review from disk.
 
 ## Known Limits
 

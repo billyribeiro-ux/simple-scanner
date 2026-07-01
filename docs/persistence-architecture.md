@@ -4,7 +4,7 @@ Status date: 2026-07-01
 
 ## Summary
 
-The API route `_MEMORY` workflow state has been replaced with repository-backed persistence. The local-first API runtime uses SQLite at `data/local_repo.sqlite3` when no database URL is configured, and it uses PostgreSQL/TimescaleDB when `DATABASE_URL` points at a migrated Postgres database. Phase 6 verifies the same persisted API vertical slice against both backends, including candidate market replay runs and simulated trades.
+The API route `_MEMORY` workflow state has been replaced with repository-backed persistence. The local-first API runtime uses SQLite at `data/local_repo.sqlite3` when no database URL is configured, and it uses PostgreSQL/TimescaleDB when `DATABASE_URL` points at a migrated Postgres database. Phase 7 verifies the same persisted API vertical slice against both backends, including candidate market replay runs, simulated trades, replay sensitivity, and label-vs-replay comparisons.
 
 This is still a scanner, research, validation, backtest, model metadata, signal, and export platform. It is not a broker, not an order router, and not a profitability engine.
 
@@ -12,7 +12,7 @@ This is still a scanner, research, validation, backtest, model metadata, signal,
 
 - Local default: `data/local_repo.sqlite3`, ignored by git along with SQLite WAL sidecars.
 - Configured SQLite: `sqlite:///...` paths, including `AMD_SQLITE_PATH` for local test/runtime overrides.
-- PostgreSQL runtime: sync SQLAlchemy/psycopg repository store against Alembic revision `0003_phase6_replay` on local host port `15432`.
+- PostgreSQL runtime: sync SQLAlchemy/psycopg repository store against Alembic revision `0004_phase7_audit` on local host port `15432`.
 - Export artifacts: `exports/`, ignored except `.gitkeep`.
 - Model artifacts: `model_artifacts/`, ignored except `.gitkeep`.
 - FMP secrets: `FMP_API_KEY` from environment or ignored env files only.
@@ -37,6 +37,8 @@ It exposes concrete repositories for:
 - `exports`
 - `daily_reviews`
 - `replays`
+- `replay_sensitivity`
+- `backtest_comparisons`
 - `pipeline_windows`
 
 The implementation is synchronous and transaction-scoped for both SQLite and PostgreSQL. API routes call the repository registry directly because the local V1 workload is small; async network I/O remains isolated in FMP provider calls.
@@ -65,8 +67,10 @@ Backend selection is explicit:
 - `/backtest/run` reads persisted labels and writes a persisted report with purpose `backtest` and `simulation_type = label_derived`.
 - `/backtest/replay` reads persisted bars, features, and candidate signals; writes a persisted replay run and simulated trades with `simulation_type = candidate_market_replay`.
 - `/backtest/replay/{replay_run_id}/trades` reads paginated simulated trades from persistence.
+- `/backtest/replay/{replay_run_id}/sensitivity` writes persisted replay sensitivity runs and scenarios.
+- `/backtest/compare-label-vs-replay` writes persisted comparison reports.
 - `/signals/live` and `/signals/history` read persisted live signals.
-- `/exports/*` read persisted signals or replay runs/trades and write export metadata.
+- `/exports/*` read persisted signals, replay runs/trades, replay sensitivity runs, or daily reviews and write export metadata with file hashes and workbook sheets when available.
 - `/review/daily` reads persisted signals and writes daily review payloads.
 
 SSE streaming still uses an in-process queue because it is transient delivery plumbing, not the durable source of truth.
@@ -116,16 +120,19 @@ The aligned table set is:
 - `exports`
 - `daily_reviews`
 - `replay_runs`
+- `replay_sensitivity_runs`
+- `replay_sensitivity_scenarios`
+- `backtest_comparisons`
 - `simulated_trades`
 - `pipeline_build_windows`
 
 ## Incremental Build Windows
 
-`bars.upsert_many` records dirty windows for `features`, `candidates`, `labels`, and `replay` by symbol, interval, session date, timestamp range, and version. Feature and label build services return stale ranges and built windows, then mark the requested artifact windows clean. This is V1 metadata, not a full scheduler: it proves scoped rebuild awareness and prevents narrow requested rebuilds from touching unrelated symbols, while leaving future warmup/lookback expansion for Phase 7.
+`bars.upsert_many` records dirty windows for `features`, `candidates`, `labels`, and `replay` by symbol, interval, session date, timestamp range, and version. Feature and label build services return stale ranges and built windows, then mark the requested artifact windows clean. Replay now rejects dirty feature/candidate windows by default unless `allow_stale=true`, and replay validation rejects stale replay runs by default unless `allow_stale_replay_validation=true`.
 
 ## Current Limits
 
-- Postgres is implemented for the repository contract, but heavy query planning and Timescale hypertable policy tuning remain future work.
+- Postgres is implemented for the repository contract, and `bars` is created as a Timescale hypertable when the extension is available. Compression and retention policies remain future work.
 - SQLite remains the local default for no-configuration development.
 - No live FMP smoke was executed because `FMP_API_KEY` is not loaded in the process environment or ignored env files.
 - Replay is simulated from OHLCV bars and does not prove actual fills, liquidity, or profitability.

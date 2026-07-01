@@ -212,6 +212,25 @@ class ReplayBacktestRequest(BaseModel):
     no_trade_on_insufficient_context: bool = True
     market_regime_filter: list[str] = Field(default_factory=list)
     time_bucket_filter: list[str] = Field(default_factory=list)
+    allow_stale: bool = False
+
+
+class SensitivityRequest(BaseModel):
+    slippage_bps_grid: list[float] | None = None
+    spread_bps_grid: list[float] | None = None
+    intrabar_path_policies: list[str] | None = None
+    same_bar_stop_target_policies: list[str] | None = None
+    minimum_robustness_score: float = 0.70
+    minimum_total_trades: int = 5
+    minimum_average_r: float = 0.0
+    minimum_profit_factor: float = 1.0
+    maximum_drawdown_r: float = -10.0
+
+
+class BacktestComparisonRequest(BaseModel):
+    replay_run_id: str
+    label_run_id: str | None = None
+    symbols: list[str] | None = None
 
 
 class ExportRequest(BaseModel):

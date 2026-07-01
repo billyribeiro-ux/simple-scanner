@@ -100,14 +100,21 @@ make db-inspect
 `make db-inspect` confirms the Alembic revision, expected table count, critical indexes, unique constraints, selected columns, JSON columns, and installed extensions. The current local result is:
 
 ```text
-alembic_version=0003_phase6_replay
-tables=17
+alembic_version=0004_phase7_audit
+tables=23
 missing_tables=none
 missing_indexes=none
 missing_constraints=none
 missing_columns=none
 missing_json_columns=none
 extensions=plpgsql,timescaledb
+timescale_hypertables=bars
+```
+
+Read-only query diagnostics:
+
+```bash
+make db-diagnostics
 ```
 
 Stop local services:
@@ -180,6 +187,7 @@ make api-smoke
 make api-smoke-sqlite
 make api-smoke-postgres
 make repository-parity-test
+make replay-sensitivity-test
 ```
 
 Frontend gates:

@@ -24,7 +24,8 @@ The Phase 2 quant core favors deterministic, testable Python loops over prematur
 - Label simulation scans forward bars per candidate.
 - Replay scans forward bars per candidate inside the configured hold window. It avoids per-candidate database queries, but it is still Python-loop based.
 - Walk-forward validation filters trades per window without an interval index.
-- Feature, label, replay, and validation workflows now persist through repositories. Phase 6 records dirty/stale windows and respects requested symbol/interval/range scopes, but warmup expansion and multi-day replay invalidation are still conservative.
+- Feature, label, replay, sensitivity, comparison, and validation workflows now persist through repositories. Phase 7 records replay audit hashes/fingerprints, blocks stale replay inputs by default, and respects requested symbol/interval/range scopes, but warmup expansion and multi-day replay invalidation are still conservative.
+- Replay sensitivity multiplies replay cost by the configured scenario grid. The default grid is intentionally compact enough for local research, and smoke tests use a reduced grid.
 
 ## Phase 2 Efficiency Decisions
 
@@ -41,4 +42,4 @@ The Phase 2 quant core favors deterministic, testable Python loops over prematur
 2. Add replay-specific candidate batching by session date for very large symbol universes.
 3. Use Polars/Pandas grouped transforms once tests lock down leakage and replay behavior.
 4. Promote high-volume `bars` and `simulated_trades` paths to Timescale hypertables when production volume justifies it.
-5. Add Timescale compression/retention policies for old raw bars and replay trade rows after export reproducibility is proven.
+5. Add Timescale compression/retention policies for old raw bars, replay trades, and sensitivity scenarios after export reproducibility is proven.

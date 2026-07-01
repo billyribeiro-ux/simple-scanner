@@ -4,6 +4,14 @@ import json
 from datetime import date, datetime, timedelta
 from typing import Any
 
+from app.backtesting.audit import (
+    CANDIDATE_CONFIG_VERSION,
+    REPLAY_CONFIG_VERSION,
+    candidate_fingerprint,
+    git_commit,
+    replay_config_hash,
+    replay_input_fingerprint,
+)
 from app.backtesting.engine import BacktestEngine
 from app.backtesting.replay import (
     SIMULATION_TYPE_LABEL_DERIVED,
@@ -11,6 +19,7 @@ from app.backtesting.replay import (
     CandidateMarketReplayEngine,
     ReplayConfig,
 )
+from app.backtesting.sensitivity import ReplaySensitivityEngine, SensitivityConfig
 from app.config import Settings, get_settings
 from app.data.provider import MarketDataProvider
 from app.data.symbols import normalize_symbols
@@ -221,29 +230,66 @@ class ValidationWorkflowService:
         start: datetime | None = None,
         end: datetime | None = None,
         validation_mode: str = SIMULATION_TYPE_LABEL_DERIVED,
+        replay_run_id: str | None = None,
+        replay_filter: dict[str, Any] | None = None,
+        allow_latest_replay_fallback: bool = False,
+        sensitivity_run_id: str | None = None,
+        require_sensitivity: bool = False,
+        minimum_robustness_score: float = 0.0,
+        allow_stale_replay_validation: bool = False,
     ) -> dict[str, Any]:
         if validation_mode == SIMULATION_TYPE_REPLAY:
-            replay_runs = self.repos.replays.list_runs()
-            replay = replay_runs[0] if replay_runs else None
+            replay, selection = self._select_replay_run(
+                replay_run_id=replay_run_id,
+                replay_filter=replay_filter,
+                allow_latest_replay_fallback=allow_latest_replay_fallback,
+            )
             if replay is None:
-                report = {
-                    "report_id": None,
-                    "model_version": model_version,
-                    "validation_mode": SIMULATION_TYPE_REPLAY,
-                    "summary": self.backtest.summarize_trades([]),
-                    "windows": [],
-                    "activation_decision": "rejected",
-                    "rejection_reasons": ["no_replay_run_available"],
-                    "leakage_warnings": [],
-                    "created_at": datetime.now(UTC).isoformat(),
-                }
-                return self.repos.validation_reports.save(report, model_version=model_version, purpose="replay_validation")
+                reason = str(selection.get("reason") or "no_replay_run_available")
+                return self._save_replay_rejection(
+                    model_version,
+                    selection,
+                    [reason if reason in {"replay_run_selection_required", "replay_run_not_found", "no_replay_run_matching_filter"} else "no_replay_run_available"],
+                )
+            if str(replay.get("simulation_type")) != SIMULATION_TYPE_REPLAY:
+                return self._save_replay_rejection(model_version, selection, ["invalid_replay_simulation_type"])
+            stale_status = self._replay_stale_status(replay)
+            if stale_status["status"] != "clean" and not allow_stale_replay_validation:
+                return self._save_replay_rejection(
+                    model_version,
+                    selection,
+                    ["stale_replay_run"],
+                    replay=replay,
+                    stale_status=stale_status,
+                )
             metrics = dict(replay.get("summary_metrics") or {})
             decision = self.validation.activation_decision(metrics, [], [])
+            rejection_reasons = list(decision["rejection_reasons"])
+            sensitivity = None
+            if require_sensitivity and not sensitivity_run_id:
+                rejection_reasons.append("sensitivity_required")
+            if sensitivity_run_id:
+                sensitivity = self.repos.replay_sensitivity.get(sensitivity_run_id)
+                if sensitivity is None:
+                    rejection_reasons.append("sensitivity_run_not_found")
+                elif sensitivity.get("replay_run_id") != replay.get("replay_run_id"):
+                    rejection_reasons.append("sensitivity_replay_run_mismatch")
+                else:
+                    robustness = float(sensitivity.get("robustness_score") or 0.0)
+                    if robustness < minimum_robustness_score:
+                        rejection_reasons.append("sensitivity_robustness_below_threshold")
+                    if sensitivity.get("pass_fail") != "pass":
+                        rejection_reasons.append("sensitivity_gate_failed")
+            activation_decision = "rejected" if rejection_reasons else str(decision["activation_decision"])
             payload = {
                 "model_version": model_version,
                 "validation_mode": SIMULATION_TYPE_REPLAY,
                 "replay_run_id": replay["replay_run_id"],
+                "replay_run_selection": selection,
+                "stale_window_status": stale_status,
+                "sensitivity_run_id": sensitivity_run_id,
+                "sensitivity_summary": self._sensitivity_summary(sensitivity),
+                "minimum_robustness_score": minimum_robustness_score,
                 "summary": metrics,
                 "windows": [],
                 "per_symbol": metrics.get("per_symbol_metrics") or {},
@@ -251,8 +297,8 @@ class ValidationWorkflowService:
                 "per_regime": metrics.get("per_regime_metrics") or {},
                 "per_time_bucket": metrics.get("per_time_bucket_metrics") or {},
                 "leakage_warnings": [],
-                "activation_decision": decision["activation_decision"],
-                "rejection_reasons": decision["rejection_reasons"],
+                "activation_decision": activation_decision,
+                "rejection_reasons": rejection_reasons,
                 "created_at": datetime.now(UTC).isoformat(),
             }
             return self.repos.validation_reports.save(payload, model_version=model_version, purpose="replay_validation")
@@ -297,6 +343,91 @@ class ValidationWorkflowService:
                 "created_at": datetime.now(UTC).isoformat(),
             }
         return self.repos.validation_reports.save(payload, model_version=model_version, purpose="validation")
+
+    def _select_replay_run(
+        self,
+        replay_run_id: str | None,
+        replay_filter: dict[str, Any] | None,
+        allow_latest_replay_fallback: bool,
+    ) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+        if replay_run_id:
+            replay = self.repos.replays.get(replay_run_id)
+            return replay, {
+                "requested_replay_run_id": replay_run_id,
+                "selected_replay_run_id": replay.get("replay_run_id") if replay else None,
+                "reason": "explicit_replay_run_id" if replay else "replay_run_not_found",
+                "allow_latest_replay_fallback": allow_latest_replay_fallback,
+            }
+        if replay_filter:
+            replay = self.repos.replays.select(replay_filter)
+            return replay, {
+                "replay_filter": replay_filter,
+                "selected_replay_run_id": replay.get("replay_run_id") if replay else None,
+                "reason": "newest_created_at_matching_filter" if replay else "no_replay_run_matching_filter",
+                "allow_latest_replay_fallback": allow_latest_replay_fallback,
+            }
+        if allow_latest_replay_fallback:
+            replay_runs = self.repos.replays.list_runs()
+            replay = replay_runs[0] if replay_runs else None
+            return replay, {
+                "selected_replay_run_id": replay.get("replay_run_id") if replay else None,
+                "reason": "latest_replay_fallback",
+                "allow_latest_replay_fallback": True,
+            }
+        return None, {"reason": "replay_run_selection_required", "allow_latest_replay_fallback": False}
+
+    def _save_replay_rejection(
+        self,
+        model_version: str | None,
+        selection: dict[str, Any],
+        reasons: list[str],
+        replay: dict[str, Any] | None = None,
+        stale_status: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        payload = {
+            "report_id": None,
+            "model_version": model_version,
+            "validation_mode": SIMULATION_TYPE_REPLAY,
+            "replay_run_id": replay.get("replay_run_id") if replay else None,
+            "replay_run_selection": selection,
+            "stale_window_status": stale_status or {},
+            "summary": dict(replay.get("summary_metrics") or {}) if replay else self.backtest.summarize_trades([]),
+            "windows": [],
+            "activation_decision": "rejected",
+            "rejection_reasons": reasons,
+            "leakage_warnings": [],
+            "created_at": datetime.now(UTC).isoformat(),
+        }
+        return self.repos.validation_reports.save(payload, model_version=model_version, purpose="replay_validation")
+
+    def _replay_stale_status(self, replay: dict[str, Any]) -> dict[str, Any]:
+        symbols = replay.get("symbols") or []
+        intervals = replay.get("intervals") or []
+        dirty = self.repos.pipeline_windows.list_dirty("replay", symbols=symbols, intervals=intervals)
+        saved_status = replay.get("stale_window_status") or {}
+        if dirty:
+            return {
+                "status": "dirty",
+                "source": "pipeline_build_windows",
+                "stale_window_ids": [row.get("build_window_id") for row in dirty],
+                "dirty_windows": dirty,
+                "saved_status": saved_status,
+            }
+        if isinstance(saved_status, dict) and saved_status.get("status") and saved_status.get("status") != "clean":
+            return saved_status
+        return {"status": "clean", "stale_window_ids": []}
+
+    def _sensitivity_summary(self, sensitivity: dict[str, Any] | None) -> dict[str, Any] | None:
+        if sensitivity is None:
+            return None
+        return {
+            "sensitivity_run_id": sensitivity.get("sensitivity_run_id"),
+            "replay_run_id": sensitivity.get("replay_run_id"),
+            "robustness_score": sensitivity.get("robustness_score"),
+            "pass_fail": sensitivity.get("pass_fail"),
+            "fragility_flags": sensitivity.get("fragility_flags") or [],
+            "gate_results": sensitivity.get("gate_results") or {},
+        }
 
 
 class ModelTrainingService:
@@ -372,6 +503,10 @@ class ModelActivationService:
             "model_version": model_version,
             "report_id": report.get("report_id"),
             "validation_mode": validation_mode,
+            "replay_run_id": report.get("replay_run_id"),
+            "replay_run_selection": report.get("replay_run_selection"),
+            "sensitivity_run_id": report.get("sensitivity_run_id"),
+            "sensitivity_summary": report.get("sensitivity_summary"),
             "active_model": active,
         }
 
@@ -381,6 +516,7 @@ class BacktestService:
         self.repos = repos
         self.engine = BacktestEngine()
         self.replay_engine = CandidateMarketReplayEngine()
+        self.sensitivity_engine = ReplaySensitivityEngine(self.replay_engine)
 
     def run(
         self,
@@ -410,6 +546,14 @@ class BacktestService:
 
     def run_replay(self, payload: dict[str, Any]) -> dict[str, Any]:
         config = ReplayConfig.from_payload(payload)
+        stale_status = self._replay_input_stale_status(config)
+        if stale_status["status"] != "clean" and not config.allow_stale:
+            return {
+                "status": "error",
+                "reason": "stale_replay_inputs",
+                "stale_window_status": stale_status,
+                "hint": "Run /features/build and /labels/build or retry with allow_stale=true for an explicit audit-marked replay.",
+            }
         bars = self.repos.bars.query(
             symbols=list(config.symbols),
             intervals=list(config.intervals),
@@ -431,7 +575,20 @@ class BacktestService:
             setup_types=list(config.candidate_setup_types),
         )
         run = self.replay_engine.replay(bars, features, candidates, config)
-        persisted = self.repos.replays.save(run.to_dict(), [trade.to_dict() for trade in run.trades])
+        replay_payload = run.to_dict()
+        replay_payload.update(
+            self._replay_provenance(
+                config=config,
+                bars=bars,
+                features=features,
+                candidates=candidates,
+                run_payload=replay_payload,
+                stale_status=stale_status,
+            )
+        )
+        if stale_status["status"] != "clean":
+            replay_payload.setdefault("warnings", []).append("replay_inputs_allowed_with_stale_pipeline_windows")
+        persisted = self.repos.replays.save(replay_payload, [trade.to_dict() for trade in run.trades])
         self.repos.pipeline_windows.mark_built(
             "replay",
             list(config.symbols) or sorted({bar.symbol for bar in bars}),
@@ -446,6 +603,11 @@ class BacktestService:
             },
         )
         return persisted
+
+    def pipeline_status(self, symbols: list[str] | None = None, intervals: list[str] | None = None) -> dict[str, Any]:
+        return self.repos.pipeline_windows.status(symbols=symbols, intervals=intervals) | {
+            "persistence": self.repos.info()
+        }
 
     def get_replay(self, replay_run_id: str) -> dict[str, Any] | None:
         return self.repos.replays.get(replay_run_id)
@@ -473,6 +635,158 @@ class BacktestService:
             if run.get("report_id") == run_id:
                 return run | {"simulation_type": run.get("simulation_type") or SIMULATION_TYPE_LABEL_DERIVED}
         return None
+
+    def run_sensitivity(self, replay_run_id: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        replay = self.repos.replays.get(replay_run_id)
+        if replay is None:
+            return {"status": "not_found", "replay_run_id": replay_run_id}
+        config = ReplayConfig.from_payload(dict(replay.get("config") or {}))
+        bars, features, candidates = self._replay_sources(config)
+        sensitivity = self.sensitivity_engine.run(
+            replay_run_id,
+            bars,
+            features,
+            candidates,
+            config,
+            SensitivityConfig.from_payload(payload),
+        )
+        sensitivity["source_config_hash"] = replay.get("config_hash")
+        sensitivity["source_input_fingerprint"] = replay.get("input_fingerprint")
+        sensitivity["source_candidate_fingerprint"] = replay.get("candidate_fingerprint")
+        saved = self.repos.replay_sensitivity.save(sensitivity)
+        return {"status": "ok", **saved}
+
+    def get_sensitivity(self, sensitivity_run_id: str) -> dict[str, Any] | None:
+        return self.repos.replay_sensitivity.get(sensitivity_run_id)
+
+    def list_sensitivity(self, replay_run_id: str) -> list[dict[str, Any]]:
+        return self.repos.replay_sensitivity.list_for_replay(replay_run_id)
+
+    def sensitivity_scenarios(self, sensitivity_run_id: str) -> list[dict[str, Any]]:
+        return self.repos.replay_sensitivity.list_scenarios(sensitivity_run_id)
+
+    def compare_label_vs_replay(self, payload: dict[str, Any]) -> dict[str, Any]:
+        replay_run_id = str(payload.get("replay_run_id") or "")
+        replay = self.repos.replays.get(replay_run_id)
+        if replay is None:
+            return {"status": "not_found", "replay_run_id": replay_run_id}
+        config = ReplayConfig.from_payload(dict(replay.get("config") or {}))
+        labels = self.repos.labels.query(
+            symbols=payload.get("symbols") or list(config.symbols),
+            intervals=list(config.intervals),
+            start=config.start,
+            end=config.end,
+        )
+        label_trades = self.engine.simulate_labels(labels, one_open_trade_per_symbol=True)
+        label_summary = self.engine.summarize_trades(label_trades)
+        replay_summary = dict(replay.get("summary_metrics") or {})
+        summary = self._comparison_summary(label_summary, replay_summary)
+        comparison = {
+            "comparison_type": "label_vs_replay",
+            "label_run_id": payload.get("label_run_id"),
+            "replay_run_id": replay_run_id,
+            "label_summary": label_summary,
+            "replay_summary": replay_summary,
+            "summary": summary,
+            "created_at": datetime.now(UTC).isoformat(),
+        }
+        saved = self.repos.backtest_comparisons.save(comparison)
+        return {"status": "ok", **saved}
+
+    def get_comparison(self, comparison_id: str) -> dict[str, Any] | None:
+        return self.repos.backtest_comparisons.get(comparison_id)
+
+    def _replay_sources(self, config: ReplayConfig) -> tuple[list[Bar], list[dict[str, Any]], list[dict[str, Any]]]:
+        bars = self.repos.bars.query(
+            symbols=list(config.symbols),
+            intervals=list(config.intervals),
+            start=config.start,
+            end=config.end,
+        )
+        features = self.repos.features.query(
+            symbols=list(config.symbols),
+            intervals=list(config.intervals),
+            start=config.start,
+            end=config.end,
+        )
+        candidates = self.repos.candidate_signals.query(
+            symbols=list(config.symbols),
+            intervals=list(config.intervals),
+            start=config.start,
+            end=config.end,
+            sides=list(config.sides),
+            setup_types=list(config.candidate_setup_types),
+        )
+        return bars, features, candidates
+
+    def _replay_input_stale_status(self, config: ReplayConfig) -> dict[str, Any]:
+        dirty = [
+            row
+            for row in self.repos.pipeline_windows.list_dirty(
+                symbols=list(config.symbols),
+                intervals=list(config.intervals),
+            )
+            if row.get("artifact_type") in {"features", "candidates"}
+        ]
+        return {
+            "status": "dirty" if dirty else "clean",
+            "stale_window_ids": [row.get("build_window_id") for row in dirty],
+            "dirty_windows": dirty,
+        }
+
+    def _replay_provenance(
+        self,
+        config: ReplayConfig,
+        bars: list[Bar],
+        features: list[dict[str, Any]],
+        candidates: list[dict[str, Any]],
+        run_payload: dict[str, Any],
+        stale_status: dict[str, Any],
+    ) -> dict[str, Any]:
+        config_payload = config.to_dict()
+        return {
+            "replay_config_version": REPLAY_CONFIG_VERSION,
+            "feature_set_version": FEATURE_SET_VERSION,
+            "candidate_config_version": CANDIDATE_CONFIG_VERSION,
+            "label_config_version": LABEL_CONFIG_VERSION,
+            "source_bar_count": len(bars),
+            "source_feature_count": len(features),
+            "source_candidate_count": len(candidates),
+            "taken_trade_count": int((run_payload.get("summary_metrics") or {}).get("candidates_taken") or 0),
+            "skipped_candidate_count": int((run_payload.get("summary_metrics") or {}).get("candidates_skipped") or 0),
+            "repository_backend": self.repos.backend,
+            "database_migration_revision": self.repos.info().get("alembic_version") or "sqlite-local",
+            "git_commit": git_commit(),
+            "config_hash": replay_config_hash(config_payload),
+            "input_fingerprint": replay_input_fingerprint(bars, features, candidates, config_payload),
+            "candidate_fingerprint": candidate_fingerprint(candidates),
+            "stale_window_status": stale_status,
+            "stale_window_ids": stale_status.get("stale_window_ids") or [],
+        }
+
+    def _comparison_summary(self, label_summary: dict[str, Any], replay_summary: dict[str, Any]) -> dict[str, Any]:
+        def value(summary: dict[str, Any], key: str) -> float:
+            return float(summary.get(key) or 0.0)
+
+        deltas = {
+            "total_trades": value(replay_summary, "total_trades") - value(label_summary, "total_trades"),
+            "average_r": value(replay_summary, "average_r") - value(label_summary, "average_r"),
+            "win_rate": value(replay_summary, "win_rate") - value(label_summary, "win_rate"),
+            "profit_factor": value(replay_summary, "profit_factor") - value(label_summary, "profit_factor"),
+            "max_drawdown_r": value(replay_summary, "max_drawdown_r") - value(label_summary, "max_drawdown_r"),
+        }
+        flags = []
+        if abs(deltas["average_r"]) >= 0.25:
+            flags.append("average_r_disagreement")
+        if abs(deltas["win_rate"]) >= 0.15:
+            flags.append("win_rate_disagreement")
+        if abs(deltas["total_trades"]) >= max(5.0, value(label_summary, "total_trades") * 0.25):
+            flags.append("trade_count_disagreement")
+        return {
+            "deltas": deltas,
+            "material_disagreements": flags,
+            "status": "material_disagreement" if flags else "aligned_with_tolerance",
+        }
 
 
 class ExportWorkflowService:
@@ -555,6 +869,74 @@ class ExportWorkflowService:
             ),
         ]
         return {"status": "ok", "paths": [str(summary_path), str(metrics_path)], "exports": records}
+
+    def export_sensitivity_summary(self, sensitivity_run_id: str) -> dict[str, Any]:
+        sensitivity = self.repos.replay_sensitivity.get(sensitivity_run_id)
+        if sensitivity is None:
+            return {"status": "not_found", "sensitivity_run_id": sensitivity_run_id}
+        scenarios = self.repos.replay_sensitivity.list_scenarios(sensitivity_run_id)
+        path = self.exporter.export_sensitivity_summary_xlsx(sensitivity, scenarios)
+        record = self.repos.exports.record(
+            "replay_sensitivity_summary",
+            "xlsx",
+            path,
+            len(scenarios),
+            str(sensitivity.get("replay_run_id")),
+            self._sensitivity_export_payload(sensitivity, "summary"),
+        )
+        return {"status": "ok", "path": str(path), "rows": len(scenarios), "export": record}
+
+    def export_sensitivity_scenarios(self, sensitivity_run_id: str, kind: str) -> dict[str, Any]:
+        sensitivity = self.repos.replay_sensitivity.get(sensitivity_run_id)
+        if sensitivity is None:
+            return {"status": "not_found", "sensitivity_run_id": sensitivity_run_id}
+        scenarios = self.repos.replay_sensitivity.list_scenarios(sensitivity_run_id)
+        if kind == "csv":
+            path = self.exporter.export_sensitivity_scenarios_csv(sensitivity_run_id, scenarios)
+        elif kind == "xlsx":
+            path = self.exporter.export_sensitivity_scenarios_xlsx(sensitivity_run_id, scenarios)
+        else:
+            raise ValueError("sensitivity scenario export kind must be csv or xlsx")
+        record = self.repos.exports.record(
+            "replay_sensitivity_scenarios",
+            kind,
+            path,
+            len(scenarios),
+            str(sensitivity.get("replay_run_id")),
+            self._sensitivity_export_payload(sensitivity, "scenarios"),
+        )
+        return {"status": "ok", "kind": kind, "path": str(path), "rows": len(scenarios), "export": record}
+
+    def export_sensitivity_metrics(self, sensitivity_run_id: str) -> dict[str, Any]:
+        sensitivity = self.repos.replay_sensitivity.get(sensitivity_run_id)
+        if sensitivity is None:
+            return {"status": "not_found", "sensitivity_run_id": sensitivity_run_id}
+        scenarios = self.repos.replay_sensitivity.list_scenarios(sensitivity_run_id)
+        path = self.exporter.export_sensitivity_metrics_json(sensitivity, scenarios)
+        record = self.repos.exports.record(
+            "replay_sensitivity_metrics",
+            "json",
+            path,
+            len(scenarios),
+            str(sensitivity.get("replay_run_id")),
+            self._sensitivity_export_payload(sensitivity, "metrics"),
+        )
+        return {"status": "ok", "path": str(path), "rows": len(scenarios), "export": record}
+
+    def _sensitivity_export_payload(self, sensitivity: dict[str, Any], export_scope: str) -> dict[str, Any]:
+        return {
+            "simulation_type": SIMULATION_TYPE_REPLAY,
+            "source_simulation_type": SIMULATION_TYPE_REPLAY,
+            "sensitivity_run_id": sensitivity.get("sensitivity_run_id"),
+            "replay_run_id": sensitivity.get("replay_run_id"),
+            "config_hash": sensitivity.get("source_config_hash"),
+            "input_fingerprint": sensitivity.get("source_input_fingerprint"),
+            "candidate_fingerprint": sensitivity.get("source_candidate_fingerprint"),
+            "filters": sensitivity.get("config") or {},
+            "warnings": ["Sensitivity exports are reproducibility artifacts, not profitability claims."],
+            "export_scope": export_scope,
+            "created_at": datetime.now(UTC).isoformat(),
+        }
 
 
 class DailyReviewService:

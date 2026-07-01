@@ -271,6 +271,14 @@ replay_runs = sa.Table(
     sa.Column("symbols_json", sa.JSON, nullable=False, server_default=sa.text("'[]'::jsonb")),
     sa.Column("intervals_json", sa.JSON, nullable=False, server_default=sa.text("'[]'::jsonb")),
     sa.Column("config_json", sa.JSON, nullable=False, server_default=sa.text("'{}'::jsonb")),
+    sa.Column("config_hash", sa.String(64)),
+    sa.Column("input_fingerprint", sa.String(64)),
+    sa.Column("candidate_fingerprint", sa.String(64)),
+    sa.Column("replay_config_version", sa.String(64)),
+    sa.Column("feature_set_version", sa.String(64)),
+    sa.Column("candidate_config_version", sa.String(64)),
+    sa.Column("label_config_version", sa.String(64)),
+    sa.Column("stale_window_status_json", sa.JSON, nullable=False, server_default=sa.text("'{}'::jsonb")),
     sa.Column("summary_metrics_json", sa.JSON, nullable=False, server_default=sa.text("'{}'::jsonb")),
     sa.Column("per_symbol_metrics_json", sa.JSON, nullable=False, server_default=sa.text("'{}'::jsonb")),
     sa.Column("per_setup_metrics_json", sa.JSON, nullable=False, server_default=sa.text("'{}'::jsonb")),
@@ -278,6 +286,50 @@ replay_runs = sa.Table(
     sa.Column("per_time_bucket_metrics_json", sa.JSON, nullable=False, server_default=sa.text("'{}'::jsonb")),
     sa.Column("skip_breakdown_json", sa.JSON, nullable=False, server_default=sa.text("'{}'::jsonb")),
     sa.Column("warnings_json", sa.JSON, nullable=False, server_default=sa.text("'[]'::jsonb")),
+    sa.Column("payload_json", sa.JSON, nullable=False),
+    sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+)
+
+
+replay_sensitivity_runs = sa.Table(
+    "replay_sensitivity_runs",
+    metadata,
+    sa.Column("sensitivity_run_id", sa.String(96), primary_key=True),
+    sa.Column("replay_run_id", sa.String(96), nullable=False, index=True),
+    sa.Column("config_json", sa.JSON, nullable=False, server_default=sa.text("'{}'::jsonb")),
+    sa.Column("summary_json", sa.JSON, nullable=False, server_default=sa.text("'{}'::jsonb")),
+    sa.Column("gate_results_json", sa.JSON, nullable=False, server_default=sa.text("'{}'::jsonb")),
+    sa.Column("fragility_flags_json", sa.JSON, nullable=False, server_default=sa.text("'[]'::jsonb")),
+    sa.Column("payload_json", sa.JSON, nullable=False),
+    sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+)
+
+
+replay_sensitivity_scenarios = sa.Table(
+    "replay_sensitivity_scenarios",
+    metadata,
+    sa.Column("scenario_id", sa.String(96), primary_key=True),
+    sa.Column("sensitivity_run_id", sa.String(96), nullable=False, index=True),
+    sa.Column("replay_run_id", sa.String(96), nullable=False, index=True),
+    sa.Column("slippage_bps", sa.Numeric(18, 6), nullable=False),
+    sa.Column("spread_bps", sa.Numeric(18, 6), nullable=False),
+    sa.Column("intrabar_path_policy", sa.String(64), nullable=False),
+    sa.Column("same_bar_stop_target_policy", sa.String(64), nullable=False),
+    sa.Column("summary_metrics_json", sa.JSON, nullable=False, server_default=sa.text("'{}'::jsonb")),
+    sa.Column("gate_results_json", sa.JSON, nullable=False, server_default=sa.text("'{}'::jsonb")),
+    sa.Column("payload_json", sa.JSON, nullable=False),
+    sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+)
+
+
+backtest_comparisons = sa.Table(
+    "backtest_comparisons",
+    metadata,
+    sa.Column("comparison_id", sa.String(96), primary_key=True),
+    sa.Column("label_run_id", sa.String(96)),
+    sa.Column("replay_run_id", sa.String(96), nullable=False, index=True),
+    sa.Column("comparison_type", sa.String(64), nullable=False),
+    sa.Column("summary_json", sa.JSON, nullable=False, server_default=sa.text("'{}'::jsonb")),
     sa.Column("payload_json", sa.JSON, nullable=False),
     sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
 )

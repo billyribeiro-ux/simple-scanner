@@ -342,8 +342,13 @@ def _run_persisted_api_vertical_slice(
         ).json()
         replay_run_id = replay["replay_run_id"]
         assert replay["simulation_type"] == "candidate_market_replay"
+        assert replay["config_hash"]
+        assert replay["input_fingerprint"]
+        assert replay["candidate_fingerprint"]
         assert replay["summary_metrics"]["total_candidates"] > 0
         assert replay["trades_written"] == replay["summary_metrics"]["total_candidates"]
+        pipeline_status = client.get("/pipeline/status").json()
+        assert "dirty_window_count" in pipeline_status
         replay_detail = client.get(f"/backtest/replay/{replay_run_id}").json()
         assert replay_detail["replay_run_id"] == replay_run_id
         replay_trades = client.get(
@@ -365,6 +370,51 @@ def _run_persisted_api_vertical_slice(
         }
         replay_run = client.get(f"/backtest/runs/{replay_run_id}").json()
         assert replay_run["replay_run_id"] == replay_run_id
+        missing_replay_selection = client.post(
+            "/models/validate",
+            params={"model_version": model_version, "validation_mode": "candidate_market_replay"},
+        ).json()
+        assert "replay_run_selection_required" in missing_replay_selection["rejection_reasons"]
+        replay_validation = client.post(
+            "/models/validate",
+            params={
+                "model_version": model_version,
+                "validation_mode": "candidate_market_replay",
+                "replay_run_id": replay_run_id,
+            },
+        ).json()
+        assert replay_validation["replay_run_id"] == replay_run_id
+        assert replay_validation["replay_run_selection"]["reason"] == "explicit_replay_run_id"
+        sensitivity = client.post(
+            f"/backtest/replay/{replay_run_id}/sensitivity",
+            json={
+                "slippage_bps_grid": [0, 1],
+                "spread_bps_grid": [0, 2],
+                "intrabar_path_policies": ["conservative"],
+                "minimum_total_trades": 1,
+                "minimum_robustness_score": 0,
+            },
+        ).json()
+        sensitivity_run_id = sensitivity["sensitivity_run_id"]
+        assert sensitivity["status"] == "ok"
+        assert sensitivity["scenario_count"] == 4
+        sensitivity_detail = client.get(f"/backtest/replay/sensitivity/{sensitivity_run_id}").json()
+        assert sensitivity_detail["sensitivity_run_id"] == sensitivity_run_id
+        sensitivity_scenarios = client.get(
+            f"/backtest/replay/sensitivity/{sensitivity_run_id}/scenarios"
+        ).json()
+        assert len(sensitivity_scenarios["scenarios"]) == 4
+        sensitivity_list = client.get(f"/backtest/replay/{replay_run_id}/sensitivity").json()
+        assert sensitivity_run_id in {
+            run["sensitivity_run_id"] for run in sensitivity_list["sensitivity_runs"]
+        }
+        comparison = client.post(
+            "/backtest/compare-label-vs-replay",
+            json={"replay_run_id": replay_run_id},
+        ).json()
+        assert comparison["status"] == "ok"
+        comparison_detail = client.get(f"/backtest/comparisons/{comparison['comparison_id']}").json()
+        assert comparison_detail["comparison_id"] == comparison["comparison_id"]
 
         scanner_start = client.post(
             "/scanner/start",
@@ -400,6 +450,22 @@ def _run_persisted_api_vertical_slice(
             "/exports/replay-trades.xlsx",
             json={"kind": "replay-trades", "run_id": replay_run_id},
         ).json()
+        sensitivity_summary_export = client.post(
+            "/exports/sensitivity-summary.xlsx",
+            json={"kind": "sensitivity-summary", "run_id": sensitivity_run_id},
+        ).json()
+        sensitivity_scenarios_csv = client.post(
+            "/exports/sensitivity-scenarios.csv",
+            json={"kind": "sensitivity-scenarios", "run_id": sensitivity_run_id},
+        ).json()
+        sensitivity_scenarios_xlsx = client.post(
+            "/exports/sensitivity-scenarios.xlsx",
+            json={"kind": "sensitivity-scenarios", "run_id": sensitivity_run_id},
+        ).json()
+        sensitivity_metrics_export = client.post(
+            "/exports/sensitivity-metrics.json",
+            json={"kind": "sensitivity-metrics", "run_id": sensitivity_run_id},
+        ).json()
         review = client.post("/review/daily").json()
         persisted_review = client.get(f"/review/daily/{review['date']}").json()
         daily_export = client.post("/exports/daily-review.xlsx", json={"kind": "daily-review"}).json()
@@ -413,6 +479,11 @@ def _run_persisted_api_vertical_slice(
         assert len(replay_summary_export["paths"]) == 2
         assert replay_trades_csv["rows"] == replay_trade_count
         assert replay_trades_xlsx["rows"] == replay_trade_count
+        assert sensitivity_summary_export["status"] == "ok"
+        assert sensitivity_summary_export["export"]["file_sha256"]
+        assert sensitivity_scenarios_csv["rows"] == 4
+        assert sensitivity_scenarios_xlsx["rows"] == 4
+        assert sensitivity_metrics_export["rows"] == 4
         assert {"Live Signals", "Model Info"} <= _sheet_names(xlsx_export["path"])
         assert {"Live Signals", "Model Info"} <= _sheet_names(backtest_export["path"])
         assert {
@@ -425,6 +496,18 @@ def _run_persisted_api_vertical_slice(
             "Warnings",
         } <= _sheet_names(replay_summary_export["paths"][0])
         assert {"Trades"} <= _sheet_names(replay_trades_xlsx["path"])
+        assert {
+            "Summary",
+            "Scenario Metrics",
+            "Worst Case",
+            "Median Case",
+            "Best Case",
+            "Fragility Flags",
+            "Gate Results",
+            "Config",
+            "Warnings",
+        } <= _sheet_names(sensitivity_summary_export["path"])
+        assert {"Scenario Metrics"} <= _sheet_names(sensitivity_scenarios_xlsx["path"])
         assert review["signals_fired"] + review["signals_skipped"] == len(live_signals)
         assert persisted_review["status"] == "local-file"
         assert len(daily_export["paths"]) == 3
@@ -443,10 +526,12 @@ def _run_persisted_api_vertical_slice(
     assert len(reopened.labels.list_all()) > 0
     assert reopened.replays.get(replay_run_id)["simulation_type"] == "candidate_market_replay"
     assert len(reopened.replays.list_trades(replay_run_id, limit=100_000)) == replay_trade_count
+    assert reopened.replay_sensitivity.get(sensitivity_run_id)["replay_run_id"] == replay_run_id
+    assert reopened.backtest_comparisons.get(comparison["comparison_id"])["replay_run_id"] == replay_run_id
     assert reopened.active_models.get_active()["model_version"] == replacement_version
     assert reopened.scanner_runs.latest()["scanner_run_id"] == scanner_start["scanner_run_id"]
     assert len(reopened.live_signals.list_latest()) == len(live_signals)
-    assert len(reopened.exports.list_all()) >= 10
+    assert len(reopened.exports.list_all()) >= 14
     assert reopened.daily_reviews.get(datetime.now(UTC).date()) is not None
     assert TEST_FMP_SENTINEL not in str(reopened.provider_requests.list_all())
 
@@ -456,6 +541,10 @@ def _run_persisted_api_vertical_slice(
         backtest_export["path"],
         replay_trades_csv["path"],
         replay_trades_xlsx["path"],
+        sensitivity_summary_export["path"],
+        sensitivity_scenarios_csv["path"],
+        sensitivity_scenarios_xlsx["path"],
+        sensitivity_metrics_export["path"],
         *replay_summary_export["paths"],
         *daily_export["paths"],
         model_dir / "active_model.json",

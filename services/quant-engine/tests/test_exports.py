@@ -4,6 +4,7 @@ from datetime import datetime
 
 from openpyxl import load_workbook
 
+from app.db.repositories import RepositoryRegistry
 from app.exports.service import ExportService
 from app.schemas.market import Side, Signal
 from app.utils.time import UTC
@@ -153,3 +154,80 @@ def test_replay_exports_include_trades_skips_metrics_and_workbook_sheets(tmp_pat
     metrics_payload = json.loads(metrics_json.read_text(encoding="utf-8"))
     assert metrics_payload["simulation_type"] == "candidate_market_replay"
     assert metrics_payload["summary_metrics"]["total_candidates"] == 2
+
+
+def test_sensitivity_exports_and_repository_metadata(tmp_path, monkeypatch) -> None:
+    service = ExportService()
+    monkeypatch.setattr(service.settings, "exports_dir", tmp_path)
+    sensitivity = {
+        "sensitivity_run_id": "sensitivity-export-test",
+        "replay_run_id": "replay-export-test",
+        "created_at": datetime(2026, 6, 1, 14, 0, tzinfo=UTC).isoformat(),
+        "config": {"slippage_bps_grid": [0, 1], "spread_bps_grid": [0, 2]},
+        "scenario_count": 2,
+        "robustness_score": 0.5,
+        "pass_fail": "fail",
+        "fragility_flags": ["robustness_score_below_threshold"],
+        "gate_results": {"robustness_score_met": False},
+        "worst_case": {"scenario_id": "scenario-2", "summary_metrics": {"average_r": -0.1}},
+        "median_case": {"scenario_id": "scenario-1", "summary_metrics": {"average_r": 0.1}},
+        "best_case": {"scenario_id": "scenario-1", "summary_metrics": {"average_r": 0.1}},
+    }
+    scenarios = [
+        {
+            "scenario_id": "scenario-1",
+            "sensitivity_run_id": "sensitivity-export-test",
+            "replay_run_id": "replay-export-test",
+            "slippage_bps": 0,
+            "spread_bps": 0,
+            "intrabar_path_policy": "conservative",
+            "same_bar_stop_target_policy": "conservative_stop_first",
+            "pass_fail": "pass",
+            "summary_metrics": {"total_trades": 10, "average_r": 0.1, "profit_factor": 1.2, "max_drawdown_r": -1, "total_r": 1, "skip_rate": 0.0},
+        },
+        {
+            "scenario_id": "scenario-2",
+            "sensitivity_run_id": "sensitivity-export-test",
+            "replay_run_id": "replay-export-test",
+            "slippage_bps": 1,
+            "spread_bps": 2,
+            "intrabar_path_policy": "conservative",
+            "same_bar_stop_target_policy": "conservative_stop_first",
+            "pass_fail": "fail",
+            "summary_metrics": {"total_trades": 10, "average_r": -0.1, "profit_factor": 0.8, "max_drawdown_r": -2, "total_r": -1, "skip_rate": 0.0},
+        },
+    ]
+
+    summary_xlsx = service.export_sensitivity_summary_xlsx(sensitivity, scenarios)
+    scenarios_csv = service.export_sensitivity_scenarios_csv("sensitivity-export-test", scenarios)
+    scenarios_xlsx = service.export_sensitivity_scenarios_xlsx("sensitivity-export-test", scenarios)
+    metrics_json = service.export_sensitivity_metrics_json(sensitivity, scenarios)
+
+    assert {
+        "Summary",
+        "Scenario Metrics",
+        "Worst Case",
+        "Median Case",
+        "Best Case",
+        "Fragility Flags",
+        "Gate Results",
+        "Config",
+        "Warnings",
+    } <= _sheet_names(summary_xlsx)
+    assert _sheet_names(scenarios_xlsx) == {"Scenario Metrics"}
+    assert scenarios_csv.exists()
+    assert json.loads(metrics_json.read_text(encoding="utf-8"))["scenario_count"] == 2
+
+    repo = RepositoryRegistry(db_path=tmp_path / "exports.sqlite3")
+    record = repo.exports.record(
+        "replay_sensitivity_summary",
+        "xlsx",
+        summary_xlsx,
+        row_count=2,
+        source_run_id="replay-export-test",
+        payload={"source_simulation_type": "candidate_market_replay"},
+    )
+    assert record["file_sha256"]
+    assert "Summary" in record["workbook_sheets"]
+    persisted = repo.exports.list_all()[0]
+    assert persisted["file_sha256"] == record["file_sha256"]
