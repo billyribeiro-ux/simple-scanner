@@ -2,7 +2,28 @@ PYTHON ?= python3
 PYTHON314 ?= python3.14
 SERVICE_DIR := services/quant-engine
 
-.PHONY: doctor setup setup-backend quant-test dev db-up db-migrate ingest features labels train validate backtest scanner export test lint typecheck
+.PHONY: help doctor setup setup-backend require-backend-venv quant-test backend-test backend-lint backend-typecheck dev api-dev web-dev db-up db-down db-migrate db-reset-dev ingest features labels train validate backtest scanner export test lint typecheck
+
+help:
+	@printf "Adaptive Market Decoder commands\n\n"
+	@printf "Runtime:\n"
+	@printf "  make doctor              Check Node 24.18.0, Python 3.14.6, venv, Docker, env, and backend tools\n"
+	@printf "  make setup               Install frontend workspace and backend venv\n"
+	@printf "  make setup-backend       Create services/quant-engine/.venv with python3.14 and install [dev,ml]\n"
+	@printf "  make api-dev             Start FastAPI backend on :8000\n"
+	@printf "  make web-dev             Start SvelteKit dev server\n"
+	@printf "  make dev                 Start db services plus API and web dev servers\n\n"
+	@printf "Database:\n"
+	@printf "  make db-up               Start local Postgres/Timescale and Redis\n"
+	@printf "  make db-down             Stop local database services\n"
+	@printf "  make db-migrate          Run Alembic migrations\n"
+	@printf "  make db-reset-dev        DEV ONLY: delete local database volumes, restart, and migrate\n\n"
+	@printf "Quality:\n"
+	@printf "  make quant-test          Run pure quant tests, with python3 fallback when venv is absent\n"
+	@printf "  make backend-test        Run full backend pytest in the target venv\n"
+	@printf "  make backend-lint        Run backend ruff checks\n"
+	@printf "  make backend-typecheck   Run backend mypy checks\n"
+	@printf "  make test lint typecheck Run backend and frontend quality gates\n"
 
 setup:
 	corepack enable
@@ -23,6 +44,13 @@ setup-backend:
 	$(SERVICE_DIR)/.venv/bin/python -m pip install --upgrade pip
 	$(SERVICE_DIR)/.venv/bin/python -m pip install -e "$(SERVICE_DIR)[dev,ml]"
 
+require-backend-venv:
+	@if [ ! -x "$(SERVICE_DIR)/.venv/bin/python" ]; then \
+		echo "Backend venv missing at $(SERVICE_DIR)/.venv."; \
+		echo "Install Python 3.14.6, then run make setup-backend."; \
+		exit 1; \
+	fi
+
 quant-test:
 	@if [ -x "$(SERVICE_DIR)/.venv/bin/python" ]; then \
 		cd $(SERVICE_DIR) && PYTHONPATH=. .venv/bin/python -m pytest tests/quant; \
@@ -31,15 +59,41 @@ quant-test:
 		cd $(SERVICE_DIR) && PYTHONPATH=. python3 -m pytest tests/quant; \
 	fi
 
+backend-test: require-backend-venv
+	cd $(SERVICE_DIR) && PYTHONPATH=. .venv/bin/python -m pytest
+
+backend-lint: require-backend-venv
+	cd $(SERVICE_DIR) && .venv/bin/ruff check app tests
+
+backend-typecheck: require-backend-venv
+	cd $(SERVICE_DIR) && .venv/bin/mypy app
+
 dev:
 	$(MAKE) db-up
-	$(SERVICE_DIR)/.venv/bin/uvicorn app.main:app --reload --app-dir $(SERVICE_DIR) --host 0.0.0.0 --port 8000 & corepack pnpm dev
+	$(MAKE) -j2 api-dev web-dev
+
+api-dev: require-backend-venv
+	$(SERVICE_DIR)/.venv/bin/uvicorn app.main:app --reload --app-dir $(SERVICE_DIR) --host 0.0.0.0 --port 8000
+
+web-dev:
+	corepack pnpm dev
 
 db-up:
 	docker compose up -d postgres redis
 
-db-migrate:
+db-down:
+	docker compose down
+
+db-migrate: require-backend-venv
 	cd $(SERVICE_DIR) && .venv/bin/alembic upgrade head
+
+db-reset-dev:
+	@printf "\nDEV ONLY: this deletes local Postgres/Redis containers and named volumes for this compose project.\n"
+	@printf "Press Ctrl-C within 5 seconds to abort.\n\n"
+	@sleep 5
+	docker compose down -v
+	$(MAKE) db-up
+	$(MAKE) db-migrate
 
 ingest:
 	cd $(SERVICE_DIR) && .venv/bin/python -m app.cli ingest
@@ -65,14 +119,11 @@ scanner:
 export:
 	cd $(SERVICE_DIR) && .venv/bin/python -m app.cli export
 
-test:
-	cd $(SERVICE_DIR) && .venv/bin/python -m pytest
+test: backend-test
 	corepack pnpm test
 
-lint:
-	cd $(SERVICE_DIR) && .venv/bin/ruff check app tests
+lint: backend-lint
 	corepack pnpm lint
 
-typecheck:
-	cd $(SERVICE_DIR) && .venv/bin/mypy app
+typecheck: backend-typecheck
 	corepack pnpm check
