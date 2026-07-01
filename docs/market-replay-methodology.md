@@ -123,3 +123,10 @@ Counterfactual per-candidate replay is documented as future work. Phase 8 does n
 - Replay validation requires explicit `replay_run_id` or `replay_filter`, unless `allow_latest_replay_fallback=true` is intentionally set.
 - Replay sensitivity is a stress test over assumptions; it is not calibrated ML and is not a profitability claim.
 - No calibrated ML, self-learning, broker execution, WebSocket entitlement path, options, Greeks, IV, or market internals are in scope.
+## Phase 9 Counterfactual Mode
+
+`candidate_market_replay` remains the portfolio-style simulation with overlap, cooldown, and max-open constraints. Phase 9 adds `model_training_counterfactual`, which replays each valid candidate independently for candidate-quality evidence.
+
+Counterfactual replay shares the same next-bar-open, same-bar ambiguity, slippage/spread, stop/target, time-exit, session-exit, MFE, and MAE logic. It does not mutate global portfolio state and must not be read as executable portfolio P/L.
+
+Run metadata is persisted in existing replay JSON fields. Trade-level counterfactual metadata is persisted in `simulated_trades.metadata_json`.

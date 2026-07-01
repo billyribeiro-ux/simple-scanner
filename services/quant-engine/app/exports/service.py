@@ -86,6 +86,13 @@ REPLAY_TRADE_COLUMNS = [
     "expected_r",
     "status",
     "skip_reason",
+    "replay_purpose",
+    "candidate_quality_label",
+    "counterfactual_observed",
+    "portfolio_blocked_in_execution_replay",
+    "concurrent_candidate_count_at_signal",
+    "overlap_group_id",
+    "concurrency_bucket",
 ]
 
 SENSITIVITY_SCENARIO_COLUMNS = [
@@ -135,6 +142,27 @@ SCORE_AUDIT_COLUMNS = [
     "expected_r_estimate",
     "suppression_reasons",
     "warnings",
+]
+
+CALIBRATION_BIN_COLUMNS = [
+    "calibration_audit_id",
+    "bin_type",
+    "bin_key",
+    "sample_size",
+    "observed_average_r",
+    "observed_win_rate",
+    "profit_factor",
+    "max_drawdown_r",
+    "same_bar_ambiguity_rate",
+    "fragility_flag_rate",
+]
+
+MODEL_COMPARISON_COLUMNS = [
+    "model_version",
+    "observed_outcome_count",
+    "average_r",
+    "profit_factor",
+    "active",
 ]
 
 
@@ -450,6 +478,69 @@ class ExportService:
         self._write_workbook(path, sheets)
         return path
 
+    def export_calibration_audit_xlsx(self, audit: dict[str, object], bins: Iterable[dict[str, object]]) -> Path:
+        audit_id = str(audit.get("calibration_audit_id") or "latest")
+        path = self.settings.exports_dir / f"calibration_audit_{audit_id}.xlsx"
+        stability = dict(audit.get("stability_metrics") or {})
+        sheets = {
+            "Summary": [["metric", "value"], *[[key, self._cell_value(value)] for key, value in audit.items() if key not in {"score_bins", "grade_bins", "action_bins", "stability_metrics"} and not isinstance(value, (dict, list))]],
+            "Score Bins": self._dict_table(audit.get("score_bins")),
+            "Grade Bins": self._dict_table(audit.get("grade_bins")),
+            "Action Bins": self._dict_table(audit.get("action_bins")),
+            "Stability By Symbol": self._dict_table(stability.get("by_symbol")),
+            "Stability By Setup": self._dict_table(stability.get("by_setup")),
+            "Stability By Regime": self._dict_table(stability.get("by_regime")),
+            "Stability By Time Bucket": self._dict_table(stability.get("by_time_bucket")),
+            "Warnings": [["warning"], *[[warning] for warning in list(audit.get("calibration_warnings") or audit.get("warnings") or [])]],
+            "Rejection Reasons": [["reason"], *[[reason] for reason in list(audit.get("rejection_reasons") or [])]],
+            "Config": [["key", "value"], *[[key, self._cell_value(value)] for key, value in dict(audit.get("config") or {}).items()]],
+            "Provenance": [["key", "value"], *[[key, self._cell_value(value)] for key, value in dict(audit.get("provenance") or {}).items()]],
+            "Persisted Bins": self._dict_table(list(bins)),
+        }
+        self._write_workbook(path, sheets)
+        return path
+
+    def export_calibration_bins_csv(self, calibration_audit_id: str, bins: Iterable[dict[str, object]]) -> Path:
+        path = self.settings.exports_dir / f"calibration_bins_{calibration_audit_id}.csv"
+        rows = [self._calibration_bin_row(calibration_audit_id, row) for row in bins]
+        with path.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=CALIBRATION_BIN_COLUMNS)
+            writer.writeheader()
+            writer.writerows(rows)
+        return path
+
+    def export_calibration_bins_xlsx(self, calibration_audit_id: str, bins: Iterable[dict[str, object]]) -> Path:
+        path = self.settings.exports_dir / f"calibration_bins_{calibration_audit_id}.xlsx"
+        rows = [self._calibration_bin_row(calibration_audit_id, row) for row in bins]
+        self._write_workbook(
+            path,
+            {"Calibration Bins": [CALIBRATION_BIN_COLUMNS, *[[row.get(column) for column in CALIBRATION_BIN_COLUMNS] for row in rows]]},
+        )
+        return path
+
+    def export_calibration_metrics_json(self, audit: dict[str, object]) -> Path:
+        audit_id = str(audit.get("calibration_audit_id") or "latest")
+        path = self.settings.exports_dir / f"calibration_metrics_{audit_id}.json"
+        path.write_text(json.dumps(audit, indent=2, default=str, allow_nan=False), encoding="utf-8")
+        return path
+
+    def export_model_comparison_xlsx(self, comparison: dict[str, object]) -> Path:
+        comparison_id = str(comparison.get("comparison_id") or "latest")
+        path = self.settings.exports_dir / f"model_comparison_{comparison_id}.xlsx"
+        ranking = list(comparison.get("robustness_ranking") or [])
+        sheets = {
+            "Summary": [["metric", "value"], *[[key, self._cell_value(value)] for key, value in dict(comparison.get("summary") or {}).items()]],
+            "Models": [MODEL_COMPARISON_COLUMNS, *[[row.get(column) for column in MODEL_COMPARISON_COLUMNS] for row in ranking]],
+            "Validation Metrics": self._dict_table(comparison.get("validation_reports")),
+            "Replay Metrics": self._dict_table(comparison.get("replay_run_ids")),
+            "Sensitivity Metrics": [["status", "message"], ["not_applicable", "Sensitivity details are included only when linked to validation artifacts."]],
+            "Calibration Metrics": self._dict_table(comparison.get("calibration_audits")),
+            "Warnings": [["warning"], *[[warning] for warning in list(comparison.get("warnings") or [])]],
+            "Config": [["key", "value"], ["comparison_type", comparison.get("comparison_type")], ["diagnostic_only", True]],
+        }
+        self._write_workbook(path, sheets)
+        return path
+
     def _signal_row(self, signal: Signal) -> dict[str, object]:
         payload = signal.model_dump(mode="json")
         payload["side"] = signal.side.value
@@ -459,7 +550,8 @@ class ExportService:
         return {column: payload.get(column) for column in SIGNAL_COLUMNS}
 
     def _replay_trade_row(self, trade: dict[str, object]) -> dict[str, object]:
-        return {column: trade.get(column) for column in REPLAY_TRADE_COLUMNS}
+        metadata = dict(trade.get("metadata") or {})
+        return {column: trade.get(column, metadata.get(column)) for column in REPLAY_TRADE_COLUMNS}
 
     def _sensitivity_scenario_row(self, scenario: dict[str, object], sensitivity_run_id: str) -> dict[str, object]:
         metrics = dict(scenario.get("summary_metrics") or {})
@@ -531,6 +623,22 @@ class ExportService:
             "suppression_reasons": " | ".join(str(value) for value in list(audit.get("suppression_reasons") or [])),
             "warnings": " | ".join(str(value) for value in list(audit.get("warnings") or [])),
         }
+
+    def _calibration_bin_row(self, calibration_audit_id: str, bin_row: dict[str, object]) -> dict[str, object]:
+        metrics = dict(bin_row.get("metrics") or bin_row)
+        row = {
+            "calibration_audit_id": calibration_audit_id,
+            "bin_type": bin_row.get("bin_type"),
+            "bin_key": bin_row.get("bin_key"),
+            "sample_size": bin_row.get("sample_size"),
+            "observed_average_r": bin_row.get("observed_average_r"),
+            "observed_win_rate": bin_row.get("observed_win_rate"),
+            "profit_factor": bin_row.get("profit_factor"),
+            "max_drawdown_r": bin_row.get("max_drawdown_r"),
+            "same_bar_ambiguity_rate": metrics.get("same_bar_ambiguity_rate"),
+            "fragility_flag_rate": metrics.get("fragility_flag_rate"),
+        }
+        return {column: row.get(column) for column in CALIBRATION_BIN_COLUMNS}
 
     def _replay_workbook_sheets(
         self,
@@ -631,6 +739,15 @@ class ExportService:
                 else:
                     rows.append([len(rows), item])
         return rows
+
+    def _dict_table(self, payload: object) -> list[list[object]]:
+        rows = list(payload) if isinstance(payload, list) else []
+        if not rows:
+            return [["status", "message"], ["empty", "No rows available."]]
+        if not all(isinstance(row, dict) for row in rows):
+            return [["value"], *[[self._cell_value(row)] for row in rows]]
+        columns = sorted({str(key) for row in rows for key in row.keys()})
+        return [columns, *[[self._cell_value(row.get(column)) for column in columns] for row in rows]]
 
     def _write_sheet(self, sheet, columns: list[str], rows: list[dict[str, object]]) -> None:
         sheet.append(columns)

@@ -76,3 +76,8 @@ The engine records worst/median/best scenarios, robustness score, fragility flag
 - score audits and exports must remain secret-free.
 
 The replay-aware model is deterministic evidence selection. It does not convert replay into execution-grade fills, live tradability, or profitability claims.
+## Phase 9 Update
+
+Phase 9 implements score calibration audits. The audit joins persisted score audits to replay outcomes, computes score/grade/action bins, monotonicity, rank correlation, bucket separation, stability by symbol/setup/regime/time, warnings, and rejection reasons.
+
+The audit is available through `/models/{model_version}/calibration-audit`, persists to `model_calibration_audits` and `model_calibration_bins`, and exports to XLSX/CSV/JSON. It remains a replay-ranking diagnostic, not probability calibration or profitability proof.

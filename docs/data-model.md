@@ -38,3 +38,11 @@ Signals include timestamp, ticker, side, entry/stop/targets, R metrics, confiden
 `make db-inspect` verifies the migration revision plus critical lookup indexes on bars, features, candidate signals, labels, simulated trades, replay runs, replay sensitivity, comparisons, live signals, validation reports, scanner runs, and pipeline build windows. It also verifies the unique constraints that preserve idempotent upserts for bars, features, candidate signals, labels, pipeline build windows, and active model scope.
 
 `simulated_trades` stores skipped candidates in the same table as taken trades with `status = SKIPPED` and a populated `skip_reason`. Metrics are computed from taken simulated trades; candidate counts and skip rates include both taken and skipped rows. Phase 8 replay-aware training preserves skipped rows but treats overlap, portfolio limit, cooldown, duplicate, missing future bars, and stale-data skips as unobserved outcomes rather than losses.
+
+## Phase 9 Update
+
+Alembic is now `0006_phase9_calibration`. New persisted tables are `model_calibration_audits`, `model_calibration_bins`, and `model_comparisons`.
+
+`replay_runs` and `simulated_trades` carry counterfactual replay via existing JSON payloads. Counterfactual runs use `simulation_type = model_training_counterfactual`; per-trade metadata stores replay purpose, candidate-quality label, counterfactual observed status, portfolio-blocked marker, concurrency count, overlap group, and concurrency bucket.
+
+`model_calibration_audits` stores score/grade/action bins, rank correlation, monotonicity, separation metrics, stability metrics, warnings, rejection reasons, and provenance. `model_calibration_bins` stores the bin rows used by exports and audit drilldowns. `model_comparisons` stores diagnostic model comparison payloads and never auto-activates a model.

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import date, datetime, timedelta
 from enum import Enum
 from hashlib import sha256
@@ -18,6 +18,10 @@ RTH_START_MINUTE = 9 * 60 + 30
 RTH_END_MINUTE = 16 * 60
 SIMULATION_TYPE_REPLAY = "candidate_market_replay"
 SIMULATION_TYPE_LABEL_DERIVED = "label_derived"
+SIMULATION_TYPE_COUNTERFACTUAL = "model_training_counterfactual"
+REPLAY_PURPOSE_PORTFOLIO = "portfolio_execution"
+REPLAY_PURPOSE_COUNTERFACTUAL = "model_training_counterfactual"
+COUNTERFACTUAL_RESULT_LABEL = "candidate_quality_evidence"
 
 
 class ReplaySkipReason(str, Enum):
@@ -48,6 +52,8 @@ class ExecutionAssumption(str, Enum):
 
 @dataclass(frozen=True)
 class ReplayConfig:
+    replay_purpose: str = REPLAY_PURPOSE_PORTFOLIO
+    simulation_type: str = SIMULATION_TYPE_REPLAY
     symbols: tuple[str, ...] = ()
     intervals: tuple[str, ...] = ("1min",)
     start: datetime | None = None
@@ -71,6 +77,8 @@ class ReplayConfig:
     minimum_reward_risk: float = 1.0
     minimum_confidence: float | None = None
     allow_overlapping_trades: bool = False
+    enforce_portfolio_constraints: bool = True
+    enforce_symbol_overlap: bool = True
     max_open_trades_per_symbol: int = 1
     max_open_trades_portfolio: int = 10
     cooldown_bars_after_loss: int = 0
@@ -82,10 +90,26 @@ class ReplayConfig:
     close_at_session_end: bool = True
     feature_warmup_bars: int = 1
     allow_stale: bool = False
+    counterfactual_include_invalid_candidates: bool = False
+    counterfactual_result_label: str = COUNTERFACTUAL_RESULT_LABEL
 
     @classmethod
     def from_payload(cls, payload: dict[str, Any]) -> ReplayConfig:
         data = dict(payload)
+        replay_purpose = str(data.get("replay_purpose") or data.get("purpose") or REPLAY_PURPOSE_PORTFOLIO)
+        simulation_type = str(
+            data.get("simulation_type")
+            or (SIMULATION_TYPE_COUNTERFACTUAL if replay_purpose == REPLAY_PURPOSE_COUNTERFACTUAL else SIMULATION_TYPE_REPLAY)
+        )
+        if simulation_type == SIMULATION_TYPE_COUNTERFACTUAL:
+            replay_purpose = REPLAY_PURPOSE_COUNTERFACTUAL
+        is_counterfactual = replay_purpose == REPLAY_PURPOSE_COUNTERFACTUAL
+        enforce_portfolio_constraints = data.get("enforce_portfolio_constraints")
+        if enforce_portfolio_constraints is None:
+            enforce_portfolio_constraints = not is_counterfactual
+        enforce_symbol_overlap = data.get("enforce_symbol_overlap")
+        if enforce_symbol_overlap is None:
+            enforce_symbol_overlap = not is_counterfactual
         symbols = tuple(normalize_symbols(list(data.get("symbols") or [])))
         intervals = tuple(str(value) for value in data.get("intervals") or ("1min",))
         sides_payload = data.get("sides") or (Side.LONG.value, Side.SHORT.value)
@@ -97,6 +121,8 @@ class ReplayConfig:
             if isinstance(data.get(key), str):
                 data[key] = _parse_datetime(data[key])
         return cls(
+            replay_purpose=replay_purpose,
+            simulation_type=simulation_type,
             symbols=symbols,
             intervals=intervals,
             start=data.get("start"),
@@ -121,7 +147,9 @@ class ReplayConfig:
             minimum_confidence=(
                 None if data.get("minimum_confidence") is None else float(data.get("minimum_confidence"))
             ),
-            allow_overlapping_trades=bool(data.get("allow_overlapping_trades", False)),
+            allow_overlapping_trades=bool(data.get("allow_overlapping_trades", is_counterfactual)),
+            enforce_portfolio_constraints=bool(enforce_portfolio_constraints),
+            enforce_symbol_overlap=bool(enforce_symbol_overlap),
             max_open_trades_per_symbol=int(data.get("max_open_trades_per_symbol") or 1),
             max_open_trades_portfolio=int(data.get("max_open_trades_portfolio") or 10),
             cooldown_bars_after_loss=int(data.get("cooldown_bars_after_loss") or 0),
@@ -135,6 +163,8 @@ class ReplayConfig:
             close_at_session_end=bool(data.get("close_at_session_end", True)),
             feature_warmup_bars=int(data.get("feature_warmup_bars") or 1),
             allow_stale=bool(data.get("allow_stale", False)),
+            counterfactual_include_invalid_candidates=bool(data.get("counterfactual_include_invalid_candidates", False)),
+            counterfactual_result_label=str(data.get("counterfactual_result_label") or COUNTERFACTUAL_RESULT_LABEL),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -267,6 +297,7 @@ class CandidateMarketReplayEngine:
         features_by_key = self._features_by_key(features)
         selected_candidates = self._filter_candidates(candidates, config)
         selected_candidates.sort(key=self._candidate_priority)
+        overlap_context = self._candidate_overlap_context(selected_candidates, config)
 
         trades: list[SimulatedTrade] = []
         decisions: list[ReplayDecision] = []
@@ -282,11 +313,13 @@ class CandidateMarketReplayEngine:
             side = str(candidate["side"])
             setup_type = str(candidate["setup_type"])
             candidate_id = str(candidate.get("candidate_id") or self._candidate_id(candidate))
+            candidate_context = overlap_context.get(candidate_id, {})
             market_regime = self._candidate_market_regime(candidate, features_by_key)
             time_bucket = self._candidate_time_bucket(candidate, features_by_key)
             duplicate_key = (symbol, interval, timestamp.isoformat(), side, setup_type)
             if duplicate_key in seen_keys:
                 trade = self._skip(run_id, candidate, ReplaySkipReason.DUPLICATE_CANDIDATE, market_regime, time_bucket)
+                trade = self._with_metadata(trade, config, candidate_context, portfolio_blocked=True)
                 trades.append(trade)
                 decisions.append(ReplayDecision(candidate_id, "SKIPPED", ReplaySkipReason.DUPLICATE_CANDIDATE.value))
                 continue
@@ -305,6 +338,17 @@ class CandidateMarketReplayEngine:
             )
             if skip_reason is not None:
                 trade = self._skip(run_id, candidate, skip_reason, market_regime, time_bucket)
+                trade = self._with_metadata(
+                    trade,
+                    config,
+                    candidate_context,
+                    portfolio_blocked=skip_reason
+                    in {
+                        ReplaySkipReason.OVERLAPPING_TRADE,
+                        ReplaySkipReason.PORTFOLIO_TRADE_LIMIT,
+                        ReplaySkipReason.COOLDOWN_ACTIVE,
+                    },
+                )
                 trades.append(trade)
                 decisions.append(ReplayDecision(candidate_id, "SKIPPED", skip_reason.value))
                 continue
@@ -312,12 +356,13 @@ class CandidateMarketReplayEngine:
             group_bars = bars_by_key.get((symbol, interval), [])
             feature = features_by_key.get((symbol, interval, timestamp))
             trade = self._simulate_candidate(run_id, candidate, group_bars, feature, config, market_regime, time_bucket)
+            trade = self._with_metadata(trade, config, candidate_context)
             trades.append(trade)
             if trade.status == "SKIPPED":
                 decisions.append(ReplayDecision(candidate_id, "SKIPPED", trade.skip_reason))
                 continue
             decisions.append(ReplayDecision(candidate_id, "TAKEN", trade_id=trade.trade_id))
-            if trade.exit_timestamp_utc:
+            if trade.exit_timestamp_utc and config.replay_purpose != REPLAY_PURPOSE_COUNTERFACTUAL:
                 open_until_symbol.setdefault(symbol, []).append(trade.exit_timestamp_utc)
                 open_until_setup[(symbol, setup_type)] = trade.exit_timestamp_utc
                 interval_minutes = self._interval_minutes(interval)
@@ -332,7 +377,7 @@ class CandidateMarketReplayEngine:
         metrics = self.metrics(run_id, trades, config)
         return ReplayRun(
             replay_run_id=run_id,
-            simulation_type=SIMULATION_TYPE_REPLAY,
+            simulation_type=config.simulation_type,
             config=config,
             metrics=metrics,
             trades=tuple(trades),
@@ -343,6 +388,16 @@ class CandidateMarketReplayEngine:
     def metrics(self, replay_run_id: str, trades: list[SimulatedTrade], config: ReplayConfig) -> dict[str, Any]:
         taken = [trade for trade in trades if trade.status == "TAKEN"]
         skipped = [trade for trade in trades if trade.status == "SKIPPED"]
+        invalid_skip_reasons = {
+            ReplaySkipReason.INVALID_RISK_PLAN.value,
+            ReplaySkipReason.INSUFFICIENT_REWARD_RISK.value,
+            ReplaySkipReason.INSUFFICIENT_CONTEXT.value,
+            ReplaySkipReason.DATA_QUALITY_BLOCK.value,
+            ReplaySkipReason.OUTSIDE_SESSION.value,
+            ReplaySkipReason.MISSING_ENTRY_BAR.value,
+            ReplaySkipReason.NO_FUTURE_BARS.value,
+        }
+        is_counterfactual = config.replay_purpose == REPLAY_PURPOSE_COUNTERFACTUAL
         returns = [trade.realized_r for trade in taken]
         winners = [trade for trade in taken if trade.realized_r > 0]
         losers = [trade for trade in taken if trade.realized_r < 0]
@@ -355,15 +410,37 @@ class CandidateMarketReplayEngine:
         drawdown_series = self._drawdown_series(equity)
         skip_breakdown = dict(Counter(trade.skip_reason or "unknown" for trade in skipped))
         daily_r = self._daily_r(taken)
+        concurrency_values = [
+            int(trade.metadata.get("concurrent_candidate_count_at_signal") or 1)
+            for trade in trades
+        ]
+        overlap_values = [
+            max(0, int(trade.metadata.get("concurrent_candidate_count_at_signal") or 1) - 1)
+            for trade in trades
+        ]
+        warnings = []
+        if is_counterfactual:
+            warnings.append(
+                "Counterfactual replay is candidate-quality evidence only; metrics are not executable portfolio P/L."
+            )
         return {
             "replay_run_id": replay_run_id,
-            "simulation_type": SIMULATION_TYPE_REPLAY,
+            "simulation_type": config.simulation_type,
+            "replay_purpose": config.replay_purpose,
+            "candidate_quality_mode": is_counterfactual,
+            "portfolio_constraints_enabled": config.enforce_portfolio_constraints,
+            "symbol_overlap_enabled": config.enforce_symbol_overlap,
+            "candidate_quality_label": config.counterfactual_result_label if is_counterfactual else None,
+            "counterfactual_warning": warnings[0] if warnings else None,
             "start": config.start.isoformat() if config.start else None,
             "end": config.end.isoformat() if config.end else None,
             "symbols": list(config.symbols),
             "intervals": list(config.intervals),
             "config_summary": config.to_dict(),
             "total_candidates": len(trades),
+            "valid_candidates": len([trade for trade in trades if trade.status == "TAKEN" or trade.skip_reason not in invalid_skip_reasons]),
+            "invalid_skipped_candidates": len([trade for trade in skipped if trade.skip_reason in invalid_skip_reasons]),
+            "observed_candidate_outcomes": len(taken),
             "candidates_taken": len(taken),
             "candidates_skipped": len(skipped),
             "skip_rate": len(skipped) / len(trades) if trades else 0.0,
@@ -407,7 +484,18 @@ class CandidateMarketReplayEngine:
             "daily_r_series": daily_r,
             "trade_r_series": returns,
             "drawdown_series": drawdown_series,
-            "warnings": [],
+            "candidate_concurrency_summary": {
+                "max_concurrent_candidates": max(concurrency_values) if concurrency_values else 0,
+                "average_concurrent_candidates": mean(concurrency_values) if concurrency_values else 0.0,
+                "concurrency_bucket_counts": dict(Counter(self._concurrency_bucket(value) for value in concurrency_values)),
+            },
+            "overlap_density_summary": {
+                "max_overlap_density": max(overlap_values) if overlap_values else 0,
+                "average_overlap_density": mean(overlap_values) if overlap_values else 0.0,
+                "overlapped_candidate_count": len([value for value in overlap_values if value > 0]),
+            },
+            "is_portfolio_pnl": not is_counterfactual,
+            "warnings": warnings,
             "data_quality_summary": self._data_quality_summary(trades),
         }
 
@@ -589,17 +677,17 @@ class CandidateMarketReplayEngine:
         confidence = self._float_or_none(candidate.get("confidence_score") or candidate.get("signal_score"))
         if config.minimum_confidence is not None and confidence is not None and confidence < config.minimum_confidence:
             return ReplaySkipReason.DATA_QUALITY_BLOCK
-        if timestamp <= cooldown_until.get(symbol, datetime.min.replace(tzinfo=UTC)):
+        if config.enforce_portfolio_constraints and timestamp <= cooldown_until.get(symbol, datetime.min.replace(tzinfo=UTC)):
             return ReplaySkipReason.COOLDOWN_ACTIVE
         active_symbol = [value for value in open_until_symbol.get(symbol, []) if value > timestamp]
         active_portfolio = [
             trade for trade in trades if trade.status == "TAKEN" and trade.exit_timestamp_utc and trade.exit_timestamp_utc > timestamp
         ]
-        if not config.allow_overlapping_trades and len(active_symbol) >= config.max_open_trades_per_symbol:
+        if config.enforce_symbol_overlap and not config.allow_overlapping_trades and len(active_symbol) >= config.max_open_trades_per_symbol:
             return ReplaySkipReason.OVERLAPPING_TRADE
-        if len(active_portfolio) >= config.max_open_trades_portfolio:
+        if config.enforce_portfolio_constraints and len(active_portfolio) >= config.max_open_trades_portfolio:
             return ReplaySkipReason.PORTFOLIO_TRADE_LIMIT
-        if config.one_trade_per_setup_per_symbol_until_exit and timestamp <= open_until_setup.get(
+        if config.enforce_symbol_overlap and config.one_trade_per_setup_per_symbol_until_exit and timestamp <= open_until_setup.get(
             (symbol, setup_type),
             datetime.min.replace(tzinfo=UTC),
         ):
@@ -839,6 +927,75 @@ class CandidateMarketReplayEngine:
 
     def _data_quality_summary(self, trades: list[SimulatedTrade]) -> dict[str, Any]:
         return {"skipped": dict(Counter(trade.skip_reason or "none" for trade in trades if trade.status == "SKIPPED"))}
+
+    def _with_metadata(
+        self,
+        trade: SimulatedTrade,
+        config: ReplayConfig,
+        candidate_context: dict[str, Any] | None = None,
+        *,
+        portfolio_blocked: bool | None = None,
+    ) -> SimulatedTrade:
+        candidate_context = candidate_context or {}
+        is_counterfactual = config.replay_purpose == REPLAY_PURPOSE_COUNTERFACTUAL
+        counterfactual_observed = bool(is_counterfactual and trade.status == "TAKEN")
+        metadata = {
+            **dict(trade.metadata or {}),
+            "replay_purpose": config.replay_purpose,
+            "simulation_type": config.simulation_type,
+            "candidate_quality_mode": is_counterfactual,
+            "candidate_quality_label": config.counterfactual_result_label if is_counterfactual else None,
+            "counterfactual_observed": counterfactual_observed,
+            "counterfactual_status": "COUNTERFACTUAL_OBSERVED" if counterfactual_observed else None,
+            "portfolio_blocked_in_execution_replay": portfolio_blocked,
+            "portfolio_constraints_enabled": config.enforce_portfolio_constraints,
+            "symbol_overlap_enabled": config.enforce_symbol_overlap,
+            "concurrent_candidate_count_at_signal": int(candidate_context.get("concurrent_candidate_count_at_signal") or 1),
+            "overlap_density": int(candidate_context.get("overlap_density") or 0),
+            "overlap_group_id": candidate_context.get("overlap_group_id"),
+            "concurrency_bucket": self._concurrency_bucket(int(candidate_context.get("concurrent_candidate_count_at_signal") or 1)),
+            "counterfactual_warning": (
+                "candidate_quality_evidence_not_portfolio_pnl"
+                if is_counterfactual
+                else None
+            ),
+        }
+        return replace(trade, metadata=metadata)
+
+    def _candidate_overlap_context(self, candidates: list[dict[str, Any]], config: ReplayConfig) -> dict[str, dict[str, Any]]:
+        by_symbol_interval: dict[tuple[str, str], list[dict[str, Any]]] = {}
+        for candidate in candidates:
+            symbol = str(candidate.get("symbol") or "")
+            interval = str(candidate.get("interval") or "1min")
+            by_symbol_interval.setdefault((symbol, interval), []).append(candidate)
+        context: dict[str, dict[str, Any]] = {}
+        for (symbol, interval), rows in by_symbol_interval.items():
+            window_minutes = max(config.max_hold_minutes, self._interval_minutes(interval))
+            for candidate in rows:
+                timestamp = _candidate_timestamp(candidate)
+                candidate_id = str(candidate.get("candidate_id") or self._candidate_id(candidate))
+                concurrent = [
+                    other
+                    for other in rows
+                    if abs((_candidate_timestamp(other) - timestamp).total_seconds()) <= window_minutes * 60
+                ]
+                concurrent_ids = sorted(str(other.get("candidate_id") or self._candidate_id(other)) for other in concurrent)
+                group_seed = f"{symbol}:{interval}:{timestamp.date().isoformat()}:{','.join(concurrent_ids)}"
+                context[candidate_id] = {
+                    "concurrent_candidate_count_at_signal": len(concurrent),
+                    "overlap_density": max(0, len(concurrent) - 1),
+                    "overlap_group_id": "overlap_" + sha256(group_seed.encode("utf-8")).hexdigest()[:16] if len(concurrent) > 1 else None,
+                }
+        return context
+
+    def _concurrency_bucket(self, count: int) -> str:
+        if count <= 1:
+            return "solo"
+        if count == 2:
+            return "pair"
+        if count <= 4:
+            return "cluster"
+        return "crowded"
 
     def _run_id(self, config: ReplayConfig) -> str:
         digest = sha256(str(config.to_dict()).encode("utf-8")).hexdigest()[:24]

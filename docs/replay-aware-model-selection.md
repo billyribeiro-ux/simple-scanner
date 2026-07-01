@@ -92,3 +92,10 @@ Score audits persist the action, grade, component scores, suppression reasons, e
 ## Counterfactual Replay Status
 
 Phase 8 documents the candidate outcome dataset design but does not add an independent counterfactual replay purpose. Portfolio-overlap skips remain unobserved unless a future explicit `model_training_counterfactual` replay mode independently simulates each candidate and labels that output as non-portfolio evidence.
+## Phase 9 Update
+
+Replay-aware training now defaults to `outcome_source = counterfactual_preferred`. When `model_training_counterfactual` replay runs are supplied, the evidence cube uses those independent candidate-quality outcomes before falling back to portfolio replay. Portfolio replay outcomes remain separately tracked for constraint analysis.
+
+Training accepts `counterfactual_replay_run_ids`, `portfolio_replay_run_ids`, `require_counterfactual`, `minimum_counterfactual_outcomes`, `maximum_portfolio_only_fraction`, overlap-density filters, and concurrency-bucket filters. Model artifacts record the selected replay IDs, outcome source, counterfactual observed count, portfolio observed count, and portfolio-only fraction.
+
+This remains deterministic evidence scoring, not black-box ML, not self-learning, and not a profitability claim.

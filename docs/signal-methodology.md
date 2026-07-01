@@ -17,6 +17,8 @@ Phase 7 adds replay provenance, stale gating, sensitivity analysis, and label-vs
 
 Phase 8 adds `replay_aware_baseline`, an explainable replay-outcome evidence model and meta-scorer. When active, the scanner uses persisted replay evidence cells to score generated candidates as `TAKE`, `WATCH`, or `SUPPRESS`, persists score audits, and emits `NO_TRADE` when replay evidence is missing or suppression rules fire. When no active replay-aware model exists, scanner output falls back to the prior baseline with warning `no_replay_aware_model_active`.
 
+Phase 9 adds counterfactual candidate-quality evidence and calibration guardrails. If the active replay-aware model requires calibration and the latest or selected audit is missing or failed, actionable TAKE output is suppressed and the scanner emits `calibration_required_or_failed`. Signal reasons include model version, outcome source, calibration status, score audit ID, and evidence keys when available.
+
 Replay suppresses or skips candidates when the next entry bar is missing, the candidate is outside the configured session, signal-time stop/target context is invalid, reward/risk is insufficient, overlap or portfolio limits are reached, cooldown is active, context is insufficient, regime/time filters block the signal, the candidate is duplicated, future bars are unavailable, or data-quality checks fail.
 
 ## Phase 2 Implementation Status

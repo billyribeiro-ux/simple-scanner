@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import builtins
 import json
 from datetime import date, datetime, timedelta
 from typing import Any
@@ -14,6 +15,7 @@ from app.backtesting.audit import (
 )
 from app.backtesting.engine import BacktestEngine
 from app.backtesting.replay import (
+    SIMULATION_TYPE_COUNTERFACTUAL,
     SIMULATION_TYPE_LABEL_DERIVED,
     SIMULATION_TYPE_REPLAY,
     CandidateMarketReplayEngine,
@@ -27,6 +29,7 @@ from app.db.repositories import RepositoryRegistry
 from app.exports.service import ExportService
 from app.features.engine import FEATURE_SET_VERSION, FeatureEngine
 from app.labels.engine import LABEL_CONFIG_VERSION, LabelingEngine
+from app.models.calibration_audit import ScoreCalibrationAuditEngine
 from app.models.engine import ModelEngine
 from app.models.replay_evidence import (
     REPLAY_AWARE_MODEL_TYPE,
@@ -252,6 +255,22 @@ class ValidationWorkflowService:
         require_sensitivity: bool = False,
         minimum_robustness_score: float = 0.0,
         allow_stale_replay_validation: bool = False,
+        training_replay_run_ids: list[str] | None = None,
+        validation_replay_run_ids: list[str] | None = None,
+        test_replay_run_ids: list[str] | None = None,
+        counterfactual_training_replay_run_ids: list[str] | None = None,
+        portfolio_validation_replay_run_ids: list[str] | None = None,
+        train_start: datetime | None = None,
+        train_end: datetime | None = None,
+        validation_start: datetime | None = None,
+        validation_end: datetime | None = None,
+        test_start: datetime | None = None,
+        test_end: datetime | None = None,
+        embargo_minutes: int = 0,
+        require_counterfactual_training: bool = False,
+        require_portfolio_validation: bool = False,
+        calibration_audit_required: bool = False,
+        calibration_audit_id: str | None = None,
     ) -> dict[str, Any]:
         if validation_mode == REPLAY_AWARE_VALIDATION_MODE:
             return self._validate_replay_aware(
@@ -262,6 +281,22 @@ class ValidationWorkflowService:
                 require_sensitivity=require_sensitivity,
                 minimum_robustness_score=minimum_robustness_score,
                 allow_stale_replay_validation=allow_stale_replay_validation,
+                training_replay_run_ids=training_replay_run_ids,
+                validation_replay_run_ids=validation_replay_run_ids,
+                test_replay_run_ids=test_replay_run_ids,
+                counterfactual_training_replay_run_ids=counterfactual_training_replay_run_ids,
+                portfolio_validation_replay_run_ids=portfolio_validation_replay_run_ids,
+                train_start=train_start,
+                train_end=train_end,
+                validation_start=validation_start,
+                validation_end=validation_end,
+                test_start=test_start,
+                test_end=test_end,
+                embargo_minutes=embargo_minutes,
+                require_counterfactual_training=require_counterfactual_training,
+                require_portfolio_validation=require_portfolio_validation,
+                calibration_audit_required=calibration_audit_required,
+                calibration_audit_id=calibration_audit_id,
             )
         if validation_mode == SIMULATION_TYPE_REPLAY:
             replay, selection = self._select_replay_run(
@@ -464,6 +499,22 @@ class ValidationWorkflowService:
         require_sensitivity: bool,
         minimum_robustness_score: float,
         allow_stale_replay_validation: bool,
+        training_replay_run_ids: list[str] | None,
+        validation_replay_run_ids: list[str] | None,
+        test_replay_run_ids: list[str] | None,
+        counterfactual_training_replay_run_ids: list[str] | None,
+        portfolio_validation_replay_run_ids: list[str] | None,
+        train_start: datetime | None,
+        train_end: datetime | None,
+        validation_start: datetime | None,
+        validation_end: datetime | None,
+        test_start: datetime | None,
+        test_end: datetime | None,
+        embargo_minutes: int,
+        require_counterfactual_training: bool,
+        require_portfolio_validation: bool,
+        calibration_audit_required: bool,
+        calibration_audit_id: str | None,
     ) -> dict[str, Any]:
         if not model_version:
             return self._save_replay_aware_report(
@@ -481,13 +532,31 @@ class ValidationWorkflowService:
                 model_version,
                 {"activation_decision": "rejected", "rejection_reasons": ["model_is_not_replay_aware"]},
             )
-        replay_runs = self._validation_replay_runs(model, replay_run_id, replay_filter, allow_latest_replay_fallback)
+        explicit_training_ids = [*(training_replay_run_ids or []), *(counterfactual_training_replay_run_ids or [])]
+        explicit_validation_ids = [*(validation_replay_run_ids or []), *(portfolio_validation_replay_run_ids or [])]
+        explicit_test_ids = list(test_replay_run_ids or [])
+        explicit_ids = list(dict.fromkeys([*explicit_training_ids, *explicit_validation_ids, *explicit_test_ids]))
+        replay_runs = (
+            [run for replay_id in explicit_ids if (run := self.repos.replays.get(replay_id)) is not None]
+            if explicit_ids
+            else self._validation_replay_runs(model, replay_run_id, replay_filter, allow_latest_replay_fallback)
+        )
         if not replay_runs:
             return self._save_replay_aware_report(
                 model_version,
                 {"activation_decision": "rejected", "rejection_reasons": ["replay_run_selection_required"]},
             )
         replay_ids = [str(run["replay_run_id"]) for run in replay_runs]
+        missing_explicit = sorted(set(explicit_ids) - set(replay_ids))
+        if missing_explicit:
+            return self._save_replay_aware_report(
+                model_version,
+                {
+                    "activation_decision": "rejected",
+                    "rejection_reasons": ["explicit_replay_run_not_found"],
+                    "missing_replay_run_ids": missing_explicit,
+                },
+            )
         stale_replays = [run for run in replay_runs if self._replay_stale_status(run)["status"] != "clean"]
         if stale_replays and not allow_stale_replay_validation:
             return self._save_replay_aware_report(
@@ -542,6 +611,7 @@ class ValidationWorkflowService:
             training_start=start,
             training_end=end,
             allow_stale=allow_stale_replay_validation,
+            outcome_source=str(model.get("outcome_source") or "counterfactual_preferred"),
         )
         if len(rows) < 3:
             return self._save_replay_aware_report(
@@ -554,17 +624,54 @@ class ValidationWorkflowService:
                 },
             )
         rows.sort(key=lambda row: row["signal_timestamp_utc"])
-        split_index = max(1, int(len(rows) * 0.6))
-        validation_rows = rows[split_index:]
+        if explicit_ids:
+            training_id_set = set(explicit_training_ids)
+            validation_id_set = set(explicit_validation_ids)
+            test_id_set = set(explicit_test_ids)
+            training_pool = [row for row in rows if row.get("replay_run_id") in training_id_set] or rows[: max(1, int(len(rows) * 0.6))]
+            validation_rows = [row for row in rows if row.get("replay_run_id") in validation_id_set]
+            test_rows = [row for row in rows if row.get("replay_run_id") in test_id_set]
+            if not validation_rows and not test_rows:
+                validation_rows = [row for row in rows if row not in training_pool]
+            split_index = len(training_pool)
+        else:
+            split_index = max(1, int(len(rows) * 0.6))
+            training_pool = rows[:split_index]
+            validation_rows = rows[split_index:]
+            test_rows = []
+        validation_rows = self._filter_rows_by_window(validation_rows, validation_start, validation_end)
+        test_rows = self._filter_rows_by_window(test_rows, test_start, test_end)
+        if train_start or train_end:
+            training_pool = self._filter_rows_by_window(training_pool, train_start, train_end)
+        embargo_cutoff = self._max_row_time(training_pool)
+        validation_first = self._min_row_time(validation_rows or test_rows)
+        rejection_reasons: list[str] = []
+        if embargo_cutoff and validation_first and validation_first < embargo_cutoff + timedelta(minutes=embargo_minutes):
+            rejection_reasons.append("embargo_violation")
+        if require_counterfactual_training and not any(row.get("candidate_quality_source") == "counterfactual" and row.get("observed_outcome") for row in training_pool):
+            rejection_reasons.append("counterfactual_training_required")
+        if require_portfolio_validation:
+            validation_run_ids = set(explicit_validation_ids or replay_ids)
+            portfolio_validation_available = any(
+                run.get("simulation_type") == SIMULATION_TYPE_REPLAY and run.get("replay_run_id") in validation_run_ids
+                for run in replay_runs
+            )
+            if not portfolio_validation_available:
+                rejection_reasons.append("portfolio_validation_required")
+        if calibration_audit_required:
+            audit = self.repos.model_calibration_audits.get(calibration_audit_id) if calibration_audit_id else self.repos.model_calibration_audits.latest(model_version)
+            if audit is None:
+                rejection_reasons.append("calibration_audit_required")
         selected_rows: list[dict[str, Any]] = []
         suppressed_rows: list[dict[str, Any]] = []
         score_rows: list[dict[str, Any]] = []
-        for row in validation_rows:
+        scored_validation_rows = [*validation_rows, *test_rows]
+        for row in scored_validation_rows:
             row_time = datetime.fromisoformat(str(row["signal_timestamp_utc"]).replace("Z", "+00:00"))
             train_rows = [
                 prior
-                for prior in rows
-                if datetime.fromisoformat(str(prior["signal_timestamp_utc"]).replace("Z", "+00:00")) < row_time
+                for prior in training_pool
+                if datetime.fromisoformat(str(prior["signal_timestamp_utc"]).replace("Z", "+00:00")) < row_time - timedelta(minutes=embargo_minutes)
             ]
             cube = EvidenceCubeBuilder().build(
                 train_rows,
@@ -578,7 +685,7 @@ class ValidationWorkflowService:
                 suppressed_rows.append(row)
         summary = summarize_outcome_rows(selected_rows, minimum_cell_sample_size=1)
         criteria = dict(model.get("activation_criteria") or {})
-        rejection_reasons = self._replay_aware_rejection_reasons(
+        rejection_reasons.extend(self._replay_aware_rejection_reasons(
             summary,
             selected_rows,
             leakage_warnings=[],
@@ -587,32 +694,44 @@ class ValidationWorkflowService:
             maximum_drawdown_r=float(criteria.get("maximum_drawdown_r") or -10.0),
             maximum_symbol_profit_share=float(criteria.get("maximum_symbol_profit_share") or 0.70),
             maximum_setup_profit_share=float(criteria.get("maximum_setup_profit_share") or 0.80),
-        )
+        ))
+        rejection_reasons = sorted(set(rejection_reasons))
         payload = {
             "model_version": model_version,
             "validation_mode": REPLAY_AWARE_VALIDATION_MODE,
             "replay_run_ids": replay_ids,
+            "training_replay_run_ids": explicit_training_ids or replay_ids[:split_index],
+            "validation_replay_run_ids": explicit_validation_ids or replay_ids,
+            "test_replay_run_ids": explicit_test_ids,
             "summary": {
                 **summary,
                 "selected_candidate_count": len(selected_rows),
                 "suppressed_candidate_count": len(suppressed_rows),
                 "scored_candidate_count": len(score_rows),
+                "training_candidate_count": len(training_pool),
+                "validation_candidate_count": len(validation_rows),
+                "test_candidate_count": len(test_rows),
+                "embargo_minutes": embargo_minutes,
             },
             "windows": [
                 {
                     "window_id": "replay-aware-wf-001",
                     "split": {
-                        "train_start": rows[0]["signal_timestamp_utc"],
-                        "train_end": rows[split_index - 1]["signal_timestamp_utc"],
+                        "train_start": train_start.isoformat() if train_start else (training_pool[0]["signal_timestamp_utc"] if training_pool else None),
+                        "train_end": train_end.isoformat() if train_end else (training_pool[-1]["signal_timestamp_utc"] if training_pool else None),
                         "validation_start": validation_rows[0]["signal_timestamp_utc"] if validation_rows else None,
                         "validation_end": validation_rows[-1]["signal_timestamp_utc"] if validation_rows else None,
-                        "test_start": validation_rows[0]["signal_timestamp_utc"] if validation_rows else None,
-                        "test_end": validation_rows[-1]["signal_timestamp_utc"] if validation_rows else None,
+                        "test_start": test_start.isoformat() if test_start else (test_rows[0]["signal_timestamp_utc"] if test_rows else None),
+                        "test_end": test_end.isoformat() if test_end else (test_rows[-1]["signal_timestamp_utc"] if test_rows else None),
                     },
                     "metrics": {
                         "selected_candidate_count": len(selected_rows),
                         "suppressed_candidate_count": len(suppressed_rows),
                         "no_future_leakage_enforced": True,
+                        "embargo_minutes": embargo_minutes,
+                        "training_replay_run_ids": explicit_training_ids,
+                        "validation_replay_run_ids": explicit_validation_ids,
+                        "test_replay_run_ids": explicit_test_ids,
                     },
                     "accepted": not rejection_reasons,
                     "rejection_reasons": rejection_reasons,
@@ -680,6 +799,40 @@ class ValidationWorkflowService:
             output[key] = summarize_outcome_rows(bucket, minimum_cell_sample_size=1)
         return output
 
+    def _filter_rows_by_window(
+        self,
+        rows: list[dict[str, Any]],
+        start: datetime | None,
+        end: datetime | None,
+    ) -> list[dict[str, Any]]:
+        if start is None and end is None:
+            return rows
+        output = []
+        for row in rows:
+            timestamp = datetime.fromisoformat(str(row["signal_timestamp_utc"]).replace("Z", "+00:00"))
+            if start and timestamp < start:
+                continue
+            if end and timestamp > end:
+                continue
+            output.append(row)
+        return output
+
+    def _min_row_time(self, rows: list[dict[str, Any]]) -> datetime | None:
+        timestamps = [
+            datetime.fromisoformat(str(row["signal_timestamp_utc"]).replace("Z", "+00:00"))
+            for row in rows
+            if row.get("signal_timestamp_utc")
+        ]
+        return min(timestamps) if timestamps else None
+
+    def _max_row_time(self, rows: list[dict[str, Any]]) -> datetime | None:
+        timestamps = [
+            datetime.fromisoformat(str(row["signal_timestamp_utc"]).replace("Z", "+00:00"))
+            for row in rows
+            if row.get("signal_timestamp_utc")
+        ]
+        return max(timestamps) if timestamps else None
+
     def _replay_aware_rejection_reasons(
         self,
         summary: dict[str, Any],
@@ -737,7 +890,15 @@ class ModelTrainingService:
         setup_types: list[str] | None = None,
         sides: list[str] | None = None,
         replay_run_ids: list[str] | None = None,
+        counterfactual_replay_run_ids: list[str] | None = None,
+        portfolio_replay_run_ids: list[str] | None = None,
         replay_filter: dict[str, Any] | None = None,
+        outcome_source: str = "counterfactual_preferred",
+        require_counterfactual: bool = False,
+        minimum_counterfactual_outcomes: int = 0,
+        maximum_portfolio_only_fraction: float = 1.0,
+        overlap_density_filters: list[str] | None = None,
+        concurrency_bucket_filters: list[str] | None = None,
         sensitivity_required: bool = False,
         minimum_observed_outcomes: int = 5,
         minimum_cell_sample_size: int = 5,
@@ -757,7 +918,15 @@ class ModelTrainingService:
                 training_end=training_end,
                 min_samples=min_samples,
                 replay_run_ids=replay_run_ids,
+                counterfactual_replay_run_ids=counterfactual_replay_run_ids,
+                portfolio_replay_run_ids=portfolio_replay_run_ids,
                 replay_filter=replay_filter,
+                outcome_source=outcome_source,
+                require_counterfactual=require_counterfactual,
+                minimum_counterfactual_outcomes=minimum_counterfactual_outcomes,
+                maximum_portfolio_only_fraction=maximum_portfolio_only_fraction,
+                overlap_density_filters=overlap_density_filters,
+                concurrency_bucket_filters=concurrency_bucket_filters,
                 sensitivity_required=sensitivity_required,
                 minimum_observed_outcomes=minimum_observed_outcomes,
                 minimum_cell_sample_size=minimum_cell_sample_size,
@@ -797,7 +966,15 @@ class ModelTrainingService:
         training_end: datetime,
         min_samples: int,
         replay_run_ids: list[str] | None,
+        counterfactual_replay_run_ids: list[str] | None,
+        portfolio_replay_run_ids: list[str] | None,
         replay_filter: dict[str, Any] | None,
+        outcome_source: str,
+        require_counterfactual: bool,
+        minimum_counterfactual_outcomes: int,
+        maximum_portfolio_only_fraction: float,
+        overlap_density_filters: list[str] | None,
+        concurrency_bucket_filters: list[str] | None,
         sensitivity_required: bool,
         minimum_observed_outcomes: int,
         minimum_cell_sample_size: int,
@@ -809,7 +986,12 @@ class ModelTrainingService:
     ) -> dict[str, Any]:
         selected_symbols = normalize_symbols(symbols or get_settings().symbol_list)
         selected_intervals = intervals or ["1min"]
-        replay_runs = self._training_replay_runs(replay_run_ids, replay_filter)
+        replay_runs = self._training_replay_runs(
+            replay_run_ids,
+            replay_filter,
+            counterfactual_replay_run_ids=counterfactual_replay_run_ids,
+            portfolio_replay_run_ids=portfolio_replay_run_ids,
+        )
         replay_runs = [
             run
             for run in replay_runs
@@ -862,6 +1044,11 @@ class ModelTrainingService:
                 training_start=training_start,
                 training_end=training_end,
                 allow_stale=allow_stale,
+                outcome_source=outcome_source,
+                counterfactual_replay_run_ids=counterfactual_replay_run_ids,
+                portfolio_replay_run_ids=portfolio_replay_run_ids,
+                overlap_density_filters=overlap_density_filters,
+                concurrency_bucket_filters=concurrency_bucket_filters,
             )
         except ValueError as exc:
             return {
@@ -875,6 +1062,26 @@ class ModelTrainingService:
         if sides:
             outcome_rows = [row for row in outcome_rows if str(row.get("side")) in set(sides)]
         observed = [row for row in outcome_rows if row.get("observed_outcome")]
+        counterfactual_observed = [row for row in observed if row.get("candidate_quality_source") == "counterfactual"]
+        portfolio_observed = [row for row in observed if row.get("candidate_quality_source") == "portfolio"]
+        portfolio_only_fraction = len(portfolio_observed) / len(observed) if observed else 0.0
+        if (require_counterfactual or outcome_source == "counterfactual_only") and not counterfactual_observed:
+            return {
+                "trained": False,
+                "reason": "counterfactual_replay_required",
+                "model_type": REPLAY_AWARE_MODEL_TYPE,
+                "outcome_source": outcome_source,
+                "counterfactual_observed_count": 0,
+            }
+        if minimum_counterfactual_outcomes and len(counterfactual_observed) < minimum_counterfactual_outcomes:
+            return {
+                "trained": False,
+                "reason": "minimum_counterfactual_outcomes_not_met",
+                "model_type": REPLAY_AWARE_MODEL_TYPE,
+                "outcome_source": outcome_source,
+                "counterfactual_observed_count": len(counterfactual_observed),
+                "minimum_counterfactual_outcomes": minimum_counterfactual_outcomes,
+            }
         if len(observed) < minimum_observed_outcomes:
             return {
                 "trained": False,
@@ -887,6 +1094,7 @@ class ModelTrainingService:
         merged_scoring_config = default_scoring_config(
             {
                 **scoring_config,
+                "outcome_source": outcome_source,
                 "minimum_observed_outcomes": minimum_observed_outcomes,
                 "minimum_cell_sample_size": minimum_cell_sample_size,
                 "shrinkage_strength": shrinkage_strength,
@@ -900,9 +1108,17 @@ class ModelTrainingService:
             warnings.append("some_training_replay_runs_missing_sensitivity")
         if allow_stale:
             warnings.append("allow_stale_training_enabled")
+        if not counterfactual_observed:
+            warnings.append("portfolio_only_replay_outcomes_used")
+        if portfolio_only_fraction > maximum_portfolio_only_fraction:
+            warnings.append("maximum_portfolio_only_fraction_exceeded")
         rejection_reasons = []
         if len(observed) < min_samples:
             rejection_reasons.append("minimum_requested_samples_not_met")
+        if portfolio_only_fraction > maximum_portfolio_only_fraction:
+            rejection_reasons.append("portfolio_only_fraction_above_threshold")
+        counterfactual_ids = [str(run["replay_run_id"]) for run in replay_runs if run.get("simulation_type") == SIMULATION_TYPE_COUNTERFACTUAL]
+        portfolio_ids = [str(run["replay_run_id"]) for run in replay_runs if run.get("simulation_type") == SIMULATION_TYPE_REPLAY]
         model_version = f"amd-replay-aware-{training_end.strftime('%Y%m%d')}-{datetime.now(UTC).strftime('%H%M%S')}"
         model = {
             "trained": True,
@@ -919,6 +1135,13 @@ class ModelTrainingService:
             "setup_types": sorted(set(str(row.get("setup_type")) for row in outcome_rows)),
             "sides": sorted(set(str(row.get("side")) for row in outcome_rows)),
             "replay_run_ids": replay_ids,
+            "counterfactual_replay_run_ids": counterfactual_ids,
+            "portfolio_replay_run_ids": portfolio_ids,
+            "outcome_source": outcome_source,
+            "require_counterfactual": require_counterfactual,
+            "minimum_counterfactual_outcomes": minimum_counterfactual_outcomes,
+            "maximum_portfolio_only_fraction": maximum_portfolio_only_fraction,
+            "portfolio_only_fraction": portfolio_only_fraction,
             "sensitivity_run_ids": [
                 str(run.get("sensitivity_run_id"))
                 for runs in sensitivities_by_run.values()
@@ -928,6 +1151,8 @@ class ModelTrainingService:
             "input_fingerprints": sorted({str(run.get("input_fingerprint")) for run in replay_runs if run.get("input_fingerprint")}),
             "candidate_fingerprints": sorted({str(run.get("candidate_fingerprint")) for run in replay_runs if run.get("candidate_fingerprint")}),
             "candidate_outcome_row_count": len(outcome_rows),
+            "counterfactual_observed_count": len(counterfactual_observed),
+            "portfolio_observed_count": len(portfolio_observed),
             "evidence_cell_count": len(cube.cells),
             "config_hash": model_config_hash(merged_scoring_config),
             "scoring_config": merged_scoring_config,
@@ -951,7 +1176,26 @@ class ModelTrainingService:
         self,
         replay_run_ids: list[str] | None,
         replay_filter: dict[str, Any] | None,
+        *,
+        counterfactual_replay_run_ids: list[str] | None = None,
+        portfolio_replay_run_ids: list[str] | None = None,
     ) -> list[dict[str, Any]]:
+        explicit_ids = [
+            *(counterfactual_replay_run_ids or []),
+            *(portfolio_replay_run_ids or []),
+            *(replay_run_ids or []),
+        ]
+        if explicit_ids:
+            seen: set[str] = set()
+            runs = []
+            for replay_id in explicit_ids:
+                if replay_id in seen:
+                    continue
+                seen.add(replay_id)
+                run = self.repos.replays.get(replay_id)
+                if run is not None:
+                    runs.append(run)
+            return runs
         if replay_run_ids:
             return [run for replay_id in replay_run_ids if (run := self.repos.replays.get(replay_id)) is not None]
         if replay_filter:
@@ -966,7 +1210,7 @@ class ModelTrainingService:
         start: datetime,
         end: datetime,
     ) -> bool:
-        if replay.get("simulation_type") != SIMULATION_TYPE_REPLAY:
+        if replay.get("simulation_type") not in {SIMULATION_TYPE_REPLAY, SIMULATION_TYPE_COUNTERFACTUAL}:
             return False
         replay_symbols = {str(symbol).upper() for symbol in replay.get("symbols") or []}
         if replay_symbols and set(symbols).isdisjoint(replay_symbols):
@@ -1004,7 +1248,19 @@ class ModelActivationService:
         self.repos = repos
         self.settings = settings or get_settings()
 
-    def activate(self, model_version: str, validation_mode: str = SIMULATION_TYPE_LABEL_DERIVED) -> dict[str, Any]:
+    def activate(
+        self,
+        model_version: str,
+        validation_mode: str = SIMULATION_TYPE_LABEL_DERIVED,
+        *,
+        calibration_audit_required: bool = False,
+        calibration_audit_id: str | None = None,
+        require_monotonic_score_bins: bool = False,
+        require_take_outperforms_watch: bool = False,
+        minimum_high_grade_samples: int | None = None,
+        minimum_rank_correlation_score: float | None = None,
+        max_allowed_calibration_warnings: int | None = None,
+    ) -> dict[str, Any]:
         model = self.repos.model_runs.get(model_version) or ModelEngine().load(model_version)
         if not model or model.get("model_version") == "untrained-baseline":
             return {"activated": False, "reason": "model_not_found", "model_version": model_version}
@@ -1037,9 +1293,30 @@ class ModelActivationService:
                 "rejection_reasons": report.get("rejection_reasons") or [],
                 "report_id": report.get("report_id"),
             }
+        calibration_metadata = self._calibration_gate(
+            model,
+            calibration_audit_required=calibration_audit_required,
+            calibration_audit_id=calibration_audit_id,
+            require_monotonic_score_bins=require_monotonic_score_bins,
+            require_take_outperforms_watch=require_take_outperforms_watch,
+            minimum_high_grade_samples=minimum_high_grade_samples,
+            minimum_rank_correlation_score=minimum_rank_correlation_score,
+            max_allowed_calibration_warnings=max_allowed_calibration_warnings,
+        )
+        if calibration_metadata["status"] == "failed":
+            return {
+                "activated": False,
+                "reason": "calibration_gate_failed",
+                "model_version": model_version,
+                "validation_mode": validation_mode,
+                "report_id": report.get("report_id"),
+                "calibration": calibration_metadata,
+            }
         model["active"] = True
         model["activation_decision"] = "accepted"
         model["activation_validation_mode"] = validation_mode
+        model["calibration"] = calibration_metadata
+        model["calibration_required"] = bool(calibration_metadata.get("required"))
         active = self.repos.active_models.activate(model, validation_report_id=report.get("report_id"))
         self.settings.model_artifacts_dir.mkdir(parents=True, exist_ok=True)
         (self.settings.model_artifacts_dir / "active_model.json").write_text(
@@ -1055,7 +1332,68 @@ class ModelActivationService:
             "replay_run_selection": report.get("replay_run_selection"),
             "sensitivity_run_id": report.get("sensitivity_run_id"),
             "sensitivity_summary": report.get("sensitivity_summary"),
+            "calibration": calibration_metadata,
             "active_model": active,
+        }
+
+    def _calibration_gate(
+        self,
+        model: dict[str, Any],
+        *,
+        calibration_audit_required: bool,
+        calibration_audit_id: str | None,
+        require_monotonic_score_bins: bool,
+        require_take_outperforms_watch: bool,
+        minimum_high_grade_samples: int | None,
+        minimum_rank_correlation_score: float | None,
+        max_allowed_calibration_warnings: int | None,
+    ) -> dict[str, Any]:
+        criteria = dict(model.get("activation_criteria") or {})
+        required = bool(calibration_audit_required or criteria.get("calibration_audit_required"))
+        audit_id = calibration_audit_id or criteria.get("calibration_audit_id")
+        audit = self.repos.model_calibration_audits.get(str(audit_id)) if audit_id else self.repos.model_calibration_audits.latest(str(model["model_version"]))
+        if not required and audit is None:
+            return {"required": False, "status": "not_required", "calibration_audit_id": None, "calibration_warnings": []}
+        if audit is None:
+            return {
+                "required": required,
+                "status": "failed",
+                "reason": "calibration_audit_required",
+                "calibration_audit_id": audit_id,
+                "calibration_warnings": [],
+            }
+        warnings = list(audit.get("calibration_warnings") or audit.get("warnings") or [])
+        reasons = list(audit.get("rejection_reasons") or [])
+        monotonicity_pass = bool(audit.get("monotonicity_pass"))
+        rank = float(audit.get("rank_correlation_score") or 0.0)
+        separation = dict(audit.get("separation_metrics") or {})
+        high_grade_samples = sum(
+            int(row.get("sample_size") or 0)
+            for row in audit.get("grade_bins") or []
+            if str(row.get("bin_key") or "").startswith("A")
+        )
+        if (require_monotonic_score_bins or criteria.get("require_monotonic_score_bins")) and not monotonicity_pass:
+            reasons.append("score_bins_not_monotonic")
+        if (require_take_outperforms_watch or criteria.get("require_take_outperforms_watch")) and float(separation.get("take_minus_watch_average_r") or 0.0) <= 0:
+            reasons.append("take_does_not_outperform_watch")
+        min_high = minimum_high_grade_samples if minimum_high_grade_samples is not None else criteria.get("minimum_high_grade_samples")
+        if min_high is not None and high_grade_samples < int(min_high):
+            reasons.append("minimum_high_grade_samples_not_met")
+        min_rank = minimum_rank_correlation_score if minimum_rank_correlation_score is not None else criteria.get("minimum_rank_correlation_score")
+        if min_rank is not None and rank < float(min_rank):
+            reasons.append("rank_correlation_below_threshold")
+        max_warnings = max_allowed_calibration_warnings if max_allowed_calibration_warnings is not None else criteria.get("max_allowed_calibration_warnings")
+        if max_warnings is not None and len(warnings) > int(max_warnings):
+            reasons.append("too_many_calibration_warnings")
+        status = "failed" if reasons else "passed"
+        return {
+            "required": required,
+            "status": status,
+            "calibration_audit_id": audit.get("calibration_audit_id"),
+            "monotonicity_pass": monotonicity_pass,
+            "rank_correlation_score": rank,
+            "calibration_warnings": warnings,
+            "rejection_reasons": sorted(set(reasons)),
         }
 
 
@@ -1137,6 +1475,169 @@ class ReplayAwareScoringService:
                 symbol=symbol,
             ),
         }
+
+
+class CalibrationAuditService:
+    def __init__(self, repos: RepositoryRegistry) -> None:
+        self.repos = repos
+        self.engine = ScoreCalibrationAuditEngine()
+
+    def create(self, model_version: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        payload = payload or {}
+        model = self.repos.model_runs.get(model_version)
+        if model is None:
+            return {"status": "not_found", "model_version": model_version}
+        replay_run_ids = [str(value) for value in payload.get("replay_run_ids") or model.get("counterfactual_replay_run_ids") or model.get("replay_run_ids") or []]
+        outcome_source = str(payload.get("outcome_source") or model.get("outcome_source") or "counterfactual_preferred")
+        score_audits = self.repos.candidate_score_audits.list(model_version, limit=100_000)
+        outcome_rows = self._outcome_rows(
+            model,
+            replay_run_ids,
+            outcome_source=outcome_source,
+        )
+        audit = self.engine.run(
+            model_version=model_version,
+            score_audits=score_audits,
+            outcome_rows=outcome_rows,
+            replay_run_ids=replay_run_ids,
+            validation_report_id=payload.get("validation_report_id"),
+            outcome_source=outcome_source,
+            config={
+                "score_bins": payload.get("score_bins"),
+                "minimum_high_grade_samples": payload.get("minimum_high_grade_samples", 5),
+                "require_monotonic_score_bins": payload.get("require_monotonic_score_bins", False),
+                "require_take_outperforms_watch": payload.get("require_take_outperforms_watch", False),
+                "minimum_rank_correlation_score": payload.get("minimum_rank_correlation_score"),
+                "max_allowed_calibration_warnings": payload.get("max_allowed_calibration_warnings"),
+            },
+        )
+        saved = self.repos.model_calibration_audits.save(audit)
+        return {"status": "ok", **saved}
+
+    def list(self, model_version: str, limit: int = 100, offset: int = 0) -> dict[str, Any]:
+        return {
+            "model_version": model_version,
+            "limit": limit,
+            "offset": offset,
+            "calibration_audits": self.repos.model_calibration_audits.list(model_version, limit=limit, offset=offset),
+        }
+
+    def get(self, calibration_audit_id: str) -> dict[str, Any]:
+        audit = self.repos.model_calibration_audits.get(calibration_audit_id)
+        return audit or {"status": "not_found", "calibration_audit_id": calibration_audit_id}
+
+    def bins(self, calibration_audit_id: str, limit: int = 500, offset: int = 0, bin_type: str | None = None) -> dict[str, Any]:
+        return {
+            "calibration_audit_id": calibration_audit_id,
+            "limit": limit,
+            "offset": offset,
+            "bins": self.repos.model_calibration_audits.list_bins(
+                calibration_audit_id,
+                limit=limit,
+                offset=offset,
+                bin_type=bin_type,
+            ),
+        }
+
+    def _outcome_rows(self, model: dict[str, Any], replay_run_ids: builtins.list[str], *, outcome_source: str) -> builtins.list[dict[str, Any]]:
+        replay_runs = [run for replay_id in replay_run_ids if (run := self.repos.replays.get(replay_id)) is not None]
+        trades_by_run = {str(run["replay_run_id"]): self.repos.replays.list_trades(str(run["replay_run_id"]), limit=100_000) for run in replay_runs}
+        timestamps = [
+            datetime.fromisoformat(str(trade.get("signal_timestamp_utc")).replace("Z", "+00:00"))
+            for trades in trades_by_run.values()
+            for trade in trades
+            if trade.get("signal_timestamp_utc")
+        ]
+        start = min(timestamps) if timestamps else self._parse_optional_datetime(model.get("training_start"))
+        end = max(timestamps) if timestamps else self._parse_optional_datetime(model.get("training_end"))
+        features = self.repos.features.query(symbols=model.get("symbols"), intervals=model.get("intervals"), start=start, end=end)
+        candidates = self.repos.candidate_signals.query(symbols=model.get("symbols"), intervals=model.get("intervals"), start=start, end=end)
+        return CandidateOutcomeDatasetBuilder().build(
+            replay_runs=replay_runs,
+            trades_by_run=trades_by_run,
+            features=features,
+            candidates=candidates,
+            training_start=start,
+            training_end=end,
+            allow_stale=True,
+            outcome_source=outcome_source,
+        )
+
+    def _parse_optional_datetime(self, value: Any) -> datetime | None:
+        if value is None:
+            return None
+        if isinstance(value, datetime):
+            return value
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+
+
+class ModelComparisonService:
+    def __init__(self, repos: RepositoryRegistry) -> None:
+        self.repos = repos
+
+    def compare(self, payload: dict[str, Any]) -> dict[str, Any]:
+        model_versions = [str(value) for value in payload.get("model_versions") or []]
+        models = [model for version in model_versions if (model := self.repos.model_runs.get(version)) is not None]
+        validation_reports = [
+            report
+            for report in self.repos.validation_reports.list_all()
+            if report.get("model_version") in model_versions
+            or report.get("report_id") in set(payload.get("validation_report_ids") or [])
+        ]
+        calibration_ids = [str(value) for value in payload.get("calibration_audit_ids") or []]
+        calibrations = [
+            audit
+            for audit_id in calibration_ids
+            if (audit := self.repos.model_calibration_audits.get(audit_id)) is not None
+        ]
+        if not calibration_ids:
+            calibrations = [
+                audit
+                for version in model_versions
+                if (audit := self.repos.model_calibration_audits.latest(version)) is not None
+            ]
+        summary = {
+            "model_count": len(models),
+            "validation_report_count": len(validation_reports),
+            "calibration_audit_count": len(calibrations),
+            "diagnostic_only": True,
+            "warnings": ["Model comparison is a research artifact and does not auto-activate a model."],
+        }
+        ranking = sorted(
+            [
+                {
+                    "model_version": model.get("model_version"),
+                    "observed_outcome_count": (model.get("metrics") or {}).get("observed_outcome_count"),
+                    "average_r": (model.get("metrics") or {}).get("average_r"),
+                    "profit_factor": (model.get("metrics") or {}).get("profit_factor"),
+                    "active": bool(model.get("active")),
+                }
+                for model in models
+            ],
+            key=lambda row: (float(row.get("average_r") or 0.0), float(row.get("profit_factor") or 0.0)),
+            reverse=True,
+        )
+        comparison = {
+            "comparison_type": "model_comparison",
+            "model_versions": model_versions,
+            "validation_report_ids": payload.get("validation_report_ids") or [report.get("report_id") for report in validation_reports],
+            "calibration_audit_ids": calibration_ids or [str(audit.get("calibration_audit_id")) for audit in calibrations if audit.get("calibration_audit_id")],
+            "replay_run_ids": payload.get("replay_run_ids") or [],
+            "comparison_window": payload.get("comparison_window") or {},
+            "models": models,
+            "validation_reports": validation_reports,
+            "calibration_audits": calibrations,
+            "robustness_ranking": ranking,
+            "recommended_for_review": ranking[0]["model_version"] if ranking else None,
+            "summary": summary,
+            "warnings": summary["warnings"],
+            "created_at": datetime.now(UTC).isoformat(),
+        }
+        saved = self.repos.model_comparisons.save(comparison)
+        return {"status": "ok", **saved}
+
+    def get(self, comparison_id: str) -> dict[str, Any]:
+        return self.repos.model_comparisons.get(comparison_id) or {"status": "not_found", "comparison_id": comparison_id}
 
 
 class BacktestService:
@@ -1223,9 +1724,11 @@ class BacktestService:
             list(config.intervals) or sorted({bar.interval for bar in bars}) or ["1min"],
             config.start,
             config.end,
-            SIMULATION_TYPE_REPLAY,
+            config.simulation_type,
             {
                 "replay_run_id": run.replay_run_id,
+                "simulation_type": config.simulation_type,
+                "replay_purpose": config.replay_purpose,
                 "total_candidates": run.metrics.get("total_candidates"),
                 "total_trades": run.metrics.get("total_trades"),
             },
@@ -1316,6 +1819,71 @@ class BacktestService:
             "label_summary": label_summary,
             "replay_summary": replay_summary,
             "summary": summary,
+            "created_at": datetime.now(UTC).isoformat(),
+        }
+        saved = self.repos.backtest_comparisons.save(comparison)
+        return {"status": "ok", **saved}
+
+    def compare_counterfactual_vs_portfolio(self, payload: dict[str, Any]) -> dict[str, Any]:
+        counterfactual_id = str(payload.get("counterfactual_replay_run_id") or "")
+        portfolio_id = str(payload.get("portfolio_replay_run_id") or "")
+        counterfactual = self.repos.replays.get(counterfactual_id)
+        portfolio = self.repos.replays.get(portfolio_id)
+        if counterfactual is None:
+            return {"status": "not_found", "counterfactual_replay_run_id": counterfactual_id}
+        if portfolio is None:
+            return {"status": "not_found", "portfolio_replay_run_id": portfolio_id}
+        warnings = ["Counterfactual-vs-portfolio comparison is analytical and not a trading instruction."]
+        if counterfactual.get("simulation_type") != SIMULATION_TYPE_COUNTERFACTUAL:
+            warnings.append("counterfactual_run_has_unexpected_simulation_type")
+        if portfolio.get("simulation_type") != SIMULATION_TYPE_REPLAY:
+            warnings.append("portfolio_run_has_unexpected_simulation_type")
+        counterfactual_trades = self.repos.replays.list_trades(counterfactual_id, limit=100_000)
+        portfolio_trades = self.repos.replays.list_trades(portfolio_id, limit=100_000)
+        symbols = {str(symbol).upper() for symbol in payload.get("symbols") or []}
+        setups = {str(setup) for setup in payload.get("setups") or []}
+        if symbols:
+            counterfactual_trades = [trade for trade in counterfactual_trades if str(trade.get("symbol") or "").upper() in symbols]
+            portfolio_trades = [trade for trade in portfolio_trades if str(trade.get("symbol") or "").upper() in symbols]
+        if setups:
+            counterfactual_trades = [trade for trade in counterfactual_trades if str(trade.get("setup_type") or "") in setups]
+            portfolio_trades = [trade for trade in portfolio_trades if str(trade.get("setup_type") or "") in setups]
+        portfolio_by_candidate = {str(trade.get("candidate_id")): trade for trade in portfolio_trades if trade.get("candidate_id")}
+        observed_counterfactual = [trade for trade in counterfactual_trades if str(trade.get("status")) == "TAKEN"]
+        portfolio_executed = [trade for trade in portfolio_trades if str(trade.get("status")) == "TAKEN"]
+        portfolio_skipped = [trade for trade in portfolio_trades if str(trade.get("status")) == "SKIPPED"]
+        constraint_skips = {"overlapping_trade", "portfolio_trade_limit", "cooldown_active"}
+        missed_edge = []
+        for trade in observed_counterfactual:
+            portfolio_trade = portfolio_by_candidate.get(str(trade.get("candidate_id")))
+            if portfolio_trade and str(portfolio_trade.get("skip_reason")) in constraint_skips:
+                missed_edge.append(trade)
+        summary = {
+            "counterfactual_replay_run_id": counterfactual_id,
+            "portfolio_replay_run_id": portfolio_id,
+            "independent_candidate_count": len(observed_counterfactual),
+            "portfolio_executed_count": len(portfolio_executed),
+            "portfolio_skipped_count": len(portfolio_skipped),
+            "counterfactual_expectancy": self._average_r(observed_counterfactual),
+            "portfolio_expectancy": self._average_r(portfolio_executed),
+            "overlap_cost_estimate": sum(max(float(trade.get("realized_r") or 0.0), 0.0) for trade in missed_edge),
+            "missed_edge_due_to_portfolio_constraints": len(missed_edge),
+            "constraint_drag": self._average_r(observed_counterfactual) - self._average_r(portfolio_executed),
+            "concurrency_hotspots": self._concurrency_hotspots(observed_counterfactual),
+            "per_symbol_constraint_drag": self._constraint_drag(observed_counterfactual, portfolio_executed, "symbol"),
+            "per_setup_constraint_drag": self._constraint_drag(observed_counterfactual, portfolio_executed, "setup_type"),
+            "warnings": warnings,
+        }
+        comparison = {
+            "comparison_type": "counterfactual_vs_portfolio",
+            "label_run_id": counterfactual_id,
+            "replay_run_id": portfolio_id,
+            "counterfactual_replay_run_id": counterfactual_id,
+            "portfolio_replay_run_id": portfolio_id,
+            "summary": summary,
+            "counterfactual_summary": counterfactual.get("summary_metrics") or {},
+            "portfolio_summary": portfolio.get("summary_metrics") or {},
+            "warnings": warnings,
             "created_at": datetime.now(UTC).isoformat(),
         }
         saved = self.repos.backtest_comparisons.save(comparison)
@@ -1416,6 +1984,31 @@ class BacktestService:
             "status": "material_disagreement" if flags else "aligned_with_tolerance",
         }
 
+    def _average_r(self, trades: list[dict[str, Any]]) -> float:
+        values = [float(trade.get("realized_r") or 0.0) for trade in trades]
+        return sum(values) / len(values) if values else 0.0
+
+    def _constraint_drag(self, counterfactual: list[dict[str, Any]], portfolio: list[dict[str, Any]], field: str) -> dict[str, dict[str, float]]:
+        keys = sorted({str(trade.get(field) or "unknown") for trade in [*counterfactual, *portfolio]})
+        output = {}
+        for key in keys:
+            cf_rows = [trade for trade in counterfactual if str(trade.get(field) or "unknown") == key]
+            pf_rows = [trade for trade in portfolio if str(trade.get(field) or "unknown") == key]
+            output[key] = {
+                "counterfactual_expectancy": self._average_r(cf_rows),
+                "portfolio_expectancy": self._average_r(pf_rows),
+                "constraint_drag": self._average_r(cf_rows) - self._average_r(pf_rows),
+            }
+        return output
+
+    def _concurrency_hotspots(self, trades: list[dict[str, Any]]) -> dict[str, int]:
+        hotspots: dict[str, int] = {}
+        for trade in trades:
+            metadata = dict(trade.get("metadata") or {})
+            bucket = str(metadata.get("concurrency_bucket") or "unknown")
+            hotspots[bucket] = hotspots.get(bucket, 0) + 1
+        return hotspots
+
 
 class ExportWorkflowService:
     def __init__(self, repos: RepositoryRegistry, exporter: ExportService | None = None) -> None:
@@ -1455,7 +2048,7 @@ class ExportWorkflowService:
                 path,
                 len(trades),
                 replay_run_id,
-                {"simulation_type": SIMULATION_TYPE_REPLAY, "created_at": datetime.now(UTC).isoformat(), "filters": replay.get("config") or {}},
+                {"simulation_type": replay.get("simulation_type"), "created_at": datetime.now(UTC).isoformat(), "filters": replay.get("config") or {}},
             )
             return {"status": "ok", "kind": kind, "path": str(path), "rows": len(trades), "export": record}
         if kind == "xlsx":
@@ -1466,7 +2059,7 @@ class ExportWorkflowService:
                 path,
                 len(trades),
                 replay_run_id,
-                {"simulation_type": SIMULATION_TYPE_REPLAY, "created_at": datetime.now(UTC).isoformat(), "filters": replay.get("config") or {}},
+                {"simulation_type": replay.get("simulation_type"), "created_at": datetime.now(UTC).isoformat(), "filters": replay.get("config") or {}},
             )
             return {"status": "ok", "kind": kind, "path": str(path), "rows": len(trades), "export": record}
         raise ValueError("replay trade export kind must be csv or xlsx")
@@ -1485,7 +2078,7 @@ class ExportWorkflowService:
                 summary_path,
                 1,
                 replay_run_id,
-                {"simulation_type": SIMULATION_TYPE_REPLAY, "created_at": datetime.now(UTC).isoformat(), "filters": replay.get("config") or {}},
+                {"simulation_type": replay.get("simulation_type"), "created_at": datetime.now(UTC).isoformat(), "filters": replay.get("config") or {}},
             ),
             self.repos.exports.record(
                 "replay_metrics",
@@ -1493,7 +2086,7 @@ class ExportWorkflowService:
                 metrics_path,
                 1,
                 replay_run_id,
-                {"simulation_type": SIMULATION_TYPE_REPLAY, "created_at": datetime.now(UTC).isoformat(), "filters": replay.get("config") or {}},
+                {"simulation_type": replay.get("simulation_type"), "created_at": datetime.now(UTC).isoformat(), "filters": replay.get("config") or {}},
             ),
         ]
         return {"status": "ok", "paths": [str(summary_path), str(metrics_path)], "exports": records}
@@ -1629,6 +2222,73 @@ class ExportWorkflowService:
             {"validation_mode": REPLAY_AWARE_VALIDATION_MODE, "report_id": report.get("report_id")},
         )
         return {"status": "ok", "path": str(path), "rows": 1, "export": record}
+
+    def export_calibration_audit(self, calibration_audit_id: str) -> dict[str, Any]:
+        audit = self.repos.model_calibration_audits.get(calibration_audit_id)
+        if audit is None:
+            return {"status": "not_found", "calibration_audit_id": calibration_audit_id}
+        bins = self.repos.model_calibration_audits.list_bins(calibration_audit_id, limit=100_000)
+        path = self.exporter.export_calibration_audit_xlsx(audit, bins)
+        record = self.repos.exports.record(
+            "calibration_audit",
+            "xlsx",
+            path,
+            len(bins),
+            calibration_audit_id,
+            {"model_version": audit.get("model_version"), "calibration_audit_id": calibration_audit_id},
+        )
+        return {"status": "ok", "path": str(path), "rows": len(bins), "export": record}
+
+    def export_calibration_bins(self, calibration_audit_id: str, kind: str) -> dict[str, Any]:
+        audit = self.repos.model_calibration_audits.get(calibration_audit_id)
+        if audit is None:
+            return {"status": "not_found", "calibration_audit_id": calibration_audit_id}
+        bins = self.repos.model_calibration_audits.list_bins(calibration_audit_id, limit=100_000)
+        if kind == "csv":
+            path = self.exporter.export_calibration_bins_csv(calibration_audit_id, bins)
+        elif kind == "xlsx":
+            path = self.exporter.export_calibration_bins_xlsx(calibration_audit_id, bins)
+        else:
+            raise ValueError("calibration bin export kind must be csv or xlsx")
+        record = self.repos.exports.record(
+            "calibration_bins",
+            kind,
+            path,
+            len(bins),
+            calibration_audit_id,
+            {"model_version": audit.get("model_version"), "calibration_audit_id": calibration_audit_id},
+        )
+        return {"status": "ok", "kind": kind, "path": str(path), "rows": len(bins), "export": record}
+
+    def export_calibration_metrics(self, calibration_audit_id: str) -> dict[str, Any]:
+        audit = self.repos.model_calibration_audits.get(calibration_audit_id)
+        if audit is None:
+            return {"status": "not_found", "calibration_audit_id": calibration_audit_id}
+        path = self.exporter.export_calibration_metrics_json(audit)
+        record = self.repos.exports.record(
+            "calibration_metrics",
+            "json",
+            path,
+            1,
+            calibration_audit_id,
+            {"model_version": audit.get("model_version"), "calibration_audit_id": calibration_audit_id},
+        )
+        return {"status": "ok", "path": str(path), "rows": 1, "export": record}
+
+    def export_model_comparison(self, comparison_id: str) -> dict[str, Any]:
+        comparison = self.repos.model_comparisons.get(comparison_id)
+        if comparison is None:
+            return {"status": "not_found", "comparison_id": comparison_id}
+        path = self.exporter.export_model_comparison_xlsx(comparison)
+        record = self.repos.exports.record(
+            "model_comparison",
+            "xlsx",
+            path,
+            len(comparison.get("models") or []),
+            comparison_id,
+            {"comparison_type": comparison.get("comparison_type"), "diagnostic_only": True},
+        )
+        return {"status": "ok", "path": str(path), "rows": len(comparison.get("models") or []), "export": record}
 
     def _sensitivity_export_payload(self, sensitivity: dict[str, Any], export_scope: str) -> dict[str, Any]:
         return {

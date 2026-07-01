@@ -71,3 +71,8 @@ When an active `replay_aware_baseline` model exists, the scanner scores generate
 ## Limits
 
 The meta-score is not a fill model, not a broker instruction, and not a proof of future returns. Replay remains OHLCV-based and assumption-driven; sensitivity and divergence flags are risk controls, not guarantees.
+## Phase 9 Update
+
+Meta-score audits now carry `outcome_source`, and score calibration audits can evaluate whether `signal_quality_score`, grade buckets, and TAKE/WATCH/SUPPRESS actions rank replay outcomes monotonically. The audit is ranking validation only; the score is still not a calibrated probability.
+
+Activation can require a calibration audit. Scanner output reports calibration status through reasons/warnings and suppresses TAKE when a calibration-required active model is missing or failing calibration.

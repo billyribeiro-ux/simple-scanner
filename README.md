@@ -109,6 +109,7 @@ FastAPI selects the repository backend explicitly:
 
 - `label_derived`: the existing fast evidence mode that simulates from leakage-safe labels.
 - `candidate_market_replay`: replay mode that starts from persisted candidates, enters at next-bar open, replays raw bars chronologically, records skipped candidates, computes metrics from simulated trades, and persists provenance hashes/fingerprints.
+- `model_training_counterfactual`: independent per-candidate replay for candidate-quality evidence. It disables portfolio overlap/cooldown/max-open constraints by default and is not portfolio P/L.
 
 Replay exports are available through `POST /exports/replay-summary.xlsx`, `POST /exports/replay-trades.csv`, and `POST /exports/replay-trades.xlsx` with `run_id` set to the replay run ID.
 
@@ -151,6 +152,33 @@ Replay-aware exports:
 - `POST /exports/replay-aware-validation.xlsx`
 
 The replay-aware score is an explainable evidence score, not a calibrated probability or profitability claim.
+
+## Phase 9 Counterfactual And Calibration
+
+Run counterfactual replay by posting to `/backtest/replay` with `replay_purpose = model_training_counterfactual`. Train `replay_aware_baseline` with `outcome_source = counterfactual_preferred`, `counterfactual_replay_run_ids`, and optional `portfolio_replay_run_ids`.
+
+Calibration audits:
+
+- `POST /models/{model_version}/calibration-audit`
+- `GET /models/{model_version}/calibration-audits`
+- `GET /models/calibration-audits/{calibration_audit_id}`
+- `GET /models/calibration-audits/{calibration_audit_id}/bins`
+
+Diagnostic comparisons:
+
+- `POST /models/compare`
+- `POST /backtest/compare-counterfactual-vs-portfolio`
+- `GET /backtest/counterfactual-comparisons/{comparison_id}`
+
+Calibration exports:
+
+- `POST /exports/calibration-audit.xlsx`
+- `POST /exports/calibration-bins.csv`
+- `POST /exports/calibration-bins.xlsx`
+- `POST /exports/calibration-metrics.json`
+- `POST /exports/model-comparison.xlsx`
+
+Activation can require calibration with `calibration_audit_required=true`. If the active replay-aware model requires calibration and the audit is missing or failed, scanner output suppresses actionable TAKE and emits `calibration_required_or_failed`.
 
 ## Default Universe
 

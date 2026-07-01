@@ -19,8 +19,11 @@ from app.models.engine import ModelEngine
 from app.schemas.market import (
     BacktestComparisonRequest,
     BacktestRequest,
+    CalibrationAuditRequest,
+    CounterfactualComparisonRequest,
     ExportRequest,
     IngestRequest,
+    ModelComparisonRequest,
     ReplayBacktestRequest,
     ScannerStartRequest,
     ScoreCandidatesRequest,
@@ -29,12 +32,14 @@ from app.schemas.market import (
 )
 from app.services.workflows import (
     BacktestService,
+    CalibrationAuditService,
     DailyReviewService,
     DataIngestionService,
     ExportWorkflowService,
     FeatureBuildService,
     LabelBuildService,
     ModelActivationService,
+    ModelComparisonService,
     ModelTrainingService,
     ReplayAwareScoringService,
     ValidationWorkflowService,
@@ -174,7 +179,15 @@ async def train_model(request: TrainRequest) -> dict[str, object]:
         setup_types=request.setup_types,
         sides=request.sides,
         replay_run_ids=request.replay_run_ids,
+        counterfactual_replay_run_ids=request.counterfactual_replay_run_ids,
+        portfolio_replay_run_ids=request.portfolio_replay_run_ids,
         replay_filter=request.replay_filter,
+        outcome_source=request.outcome_source,
+        require_counterfactual=request.require_counterfactual,
+        minimum_counterfactual_outcomes=request.minimum_counterfactual_outcomes,
+        maximum_portfolio_only_fraction=request.maximum_portfolio_only_fraction,
+        overlap_density_filters=request.overlap_density_filters,
+        concurrency_bucket_filters=request.concurrency_bucket_filters,
         sensitivity_required=request.sensitivity_required,
         minimum_observed_outcomes=request.minimum_observed_outcomes,
         minimum_cell_sample_size=request.minimum_cell_sample_size,
@@ -214,8 +227,31 @@ async def validate_model(
     require_sensitivity: bool = False,
     minimum_robustness_score: float = 0.0,
     allow_stale_replay_validation: bool = False,
+    training_replay_run_ids: str | None = None,
+    validation_replay_run_ids: str | None = None,
+    test_replay_run_ids: str | None = None,
+    counterfactual_training_replay_run_ids: str | None = None,
+    portfolio_validation_replay_run_ids: str | None = None,
+    train_start: datetime | None = None,
+    train_end: datetime | None = None,
+    validation_start: datetime | None = None,
+    validation_end: datetime | None = None,
+    test_start: datetime | None = None,
+    test_end: datetime | None = None,
+    embargo_minutes: int = 0,
+    require_counterfactual_training: bool = False,
+    require_portfolio_validation: bool = False,
+    calibration_audit_required: bool = False,
+    calibration_audit_id: str | None = None,
 ) -> dict[str, object]:
     parsed_filter = json.loads(replay_filter) if replay_filter else None
+    def parsed_ids(value: str | None) -> list[str] | None:
+        if not value:
+            return None
+        if value.strip().startswith("["):
+            return [str(item) for item in json.loads(value)]
+        return [item.strip() for item in value.split(",") if item.strip()]
+
     return ValidationWorkflowService(repos()).validate(
         model_version=model_version,
         validation_mode=validation_mode,
@@ -226,12 +262,48 @@ async def validate_model(
         require_sensitivity=require_sensitivity,
         minimum_robustness_score=minimum_robustness_score,
         allow_stale_replay_validation=allow_stale_replay_validation,
+        training_replay_run_ids=parsed_ids(training_replay_run_ids),
+        validation_replay_run_ids=parsed_ids(validation_replay_run_ids),
+        test_replay_run_ids=parsed_ids(test_replay_run_ids),
+        counterfactual_training_replay_run_ids=parsed_ids(counterfactual_training_replay_run_ids),
+        portfolio_validation_replay_run_ids=parsed_ids(portfolio_validation_replay_run_ids),
+        train_start=train_start,
+        train_end=train_end,
+        validation_start=validation_start,
+        validation_end=validation_end,
+        test_start=test_start,
+        test_end=test_end,
+        embargo_minutes=embargo_minutes,
+        require_counterfactual_training=require_counterfactual_training,
+        require_portfolio_validation=require_portfolio_validation,
+        calibration_audit_required=calibration_audit_required,
+        calibration_audit_id=calibration_audit_id,
     )
 
 
 @router.post("/models/activate")
-async def activate_model(model_version: str, validation_mode: str = "label_derived") -> dict[str, object]:
-    return ModelActivationService(repos()).activate(model_version, validation_mode=validation_mode)
+async def activate_model(
+    model_version: str,
+    validation_mode: str = "label_derived",
+    calibration_audit_required: bool = False,
+    calibration_audit_id: str | None = None,
+    require_monotonic_score_bins: bool = False,
+    require_take_outperforms_watch: bool = False,
+    minimum_high_grade_samples: int | None = None,
+    minimum_rank_correlation_score: float | None = None,
+    max_allowed_calibration_warnings: int | None = None,
+) -> dict[str, object]:
+    return ModelActivationService(repos()).activate(
+        model_version,
+        validation_mode=validation_mode,
+        calibration_audit_required=calibration_audit_required,
+        calibration_audit_id=calibration_audit_id,
+        require_monotonic_score_bins=require_monotonic_score_bins,
+        require_take_outperforms_watch=require_take_outperforms_watch,
+        minimum_high_grade_samples=minimum_high_grade_samples,
+        minimum_rank_correlation_score=minimum_rank_correlation_score,
+        max_allowed_calibration_warnings=max_allowed_calibration_warnings,
+    )
 
 
 @router.get("/models")
@@ -266,6 +338,40 @@ async def model_score_audits(
     symbol: str | None = None,
 ) -> dict[str, object]:
     return ReplayAwareScoringService(repos()).score_audits(model_version, limit=limit, offset=offset, symbol=symbol)
+
+
+@router.post("/models/{model_version}/calibration-audit")
+async def create_calibration_audit(
+    model_version: str,
+    request: CalibrationAuditRequest | None = None,
+) -> dict[str, object]:
+    payload = request.model_dump(mode="json") if request else {}
+    return CalibrationAuditService(repos()).create(model_version, payload)
+
+
+@router.get("/models/{model_version}/calibration-audits")
+async def list_calibration_audits(model_version: str, limit: int = 100, offset: int = 0) -> dict[str, object]:
+    return CalibrationAuditService(repos()).list(model_version, limit=limit, offset=offset)
+
+
+@router.get("/models/calibration-audits/{calibration_audit_id}")
+async def get_calibration_audit(calibration_audit_id: str) -> dict[str, object]:
+    return CalibrationAuditService(repos()).get(calibration_audit_id)
+
+
+@router.get("/models/calibration-audits/{calibration_audit_id}/bins")
+async def get_calibration_audit_bins(
+    calibration_audit_id: str,
+    limit: int = 500,
+    offset: int = 0,
+    bin_type: str | None = None,
+) -> dict[str, object]:
+    return CalibrationAuditService(repos()).bins(calibration_audit_id, limit=limit, offset=offset, bin_type=bin_type)
+
+
+@router.post("/models/compare")
+async def compare_models(request: ModelComparisonRequest) -> dict[str, object]:
+    return ModelComparisonService(repos()).compare(request.model_dump(mode="json"))
 
 
 @router.get("/models/{model_version}")
@@ -319,6 +425,17 @@ async def replay_sensitivity_for_run(replay_run_id: str) -> dict[str, object]:
 @router.post("/backtest/compare-label-vs-replay")
 async def compare_label_vs_replay(request: BacktestComparisonRequest) -> dict[str, object]:
     return BacktestService(repos()).compare_label_vs_replay(request.model_dump(mode="json"))
+
+
+@router.post("/backtest/compare-counterfactual-vs-portfolio")
+async def compare_counterfactual_vs_portfolio(request: CounterfactualComparisonRequest) -> dict[str, object]:
+    return BacktestService(repos()).compare_counterfactual_vs_portfolio(request.model_dump(mode="json"))
+
+
+@router.get("/backtest/counterfactual-comparisons/{comparison_id}")
+async def counterfactual_comparison(comparison_id: str) -> dict[str, object]:
+    comparison = BacktestService(repos()).get_comparison(comparison_id)
+    return comparison or {"comparison_id": comparison_id, "status": "not_found"}
 
 
 @router.get("/backtest/comparisons/{comparison_id}")
@@ -508,6 +625,41 @@ async def export_score_audits_xlsx(request: ExportRequest) -> dict[str, object]:
 @router.post("/exports/replay-aware-validation.xlsx")
 async def export_replay_aware_validation_xlsx(request: ExportRequest) -> dict[str, object]:
     return ExportWorkflowService(repos()).export_replay_aware_validation(request.run_id)
+
+
+@router.post("/exports/calibration-audit.xlsx")
+async def export_calibration_audit_xlsx(request: ExportRequest) -> dict[str, object]:
+    if not request.run_id:
+        return {"status": "error", "reason": "run_id_required"}
+    return ExportWorkflowService(repos()).export_calibration_audit(request.run_id)
+
+
+@router.post("/exports/calibration-bins.csv")
+async def export_calibration_bins_csv(request: ExportRequest) -> dict[str, object]:
+    if not request.run_id:
+        return {"status": "error", "reason": "run_id_required"}
+    return ExportWorkflowService(repos()).export_calibration_bins(request.run_id, "csv")
+
+
+@router.post("/exports/calibration-bins.xlsx")
+async def export_calibration_bins_xlsx(request: ExportRequest) -> dict[str, object]:
+    if not request.run_id:
+        return {"status": "error", "reason": "run_id_required"}
+    return ExportWorkflowService(repos()).export_calibration_bins(request.run_id, "xlsx")
+
+
+@router.post("/exports/calibration-metrics.json")
+async def export_calibration_metrics_json(request: ExportRequest) -> dict[str, object]:
+    if not request.run_id:
+        return {"status": "error", "reason": "run_id_required"}
+    return ExportWorkflowService(repos()).export_calibration_metrics(request.run_id)
+
+
+@router.post("/exports/model-comparison.xlsx")
+async def export_model_comparison_xlsx(request: ExportRequest) -> dict[str, object]:
+    if not request.run_id:
+        return {"status": "error", "reason": "run_id_required"}
+    return ExportWorkflowService(repos()).export_model_comparison(request.run_id)
 
 
 @router.get("/exports/{export_id}")

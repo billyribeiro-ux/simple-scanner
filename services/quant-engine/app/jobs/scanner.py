@@ -219,8 +219,12 @@ class ScannerState:
             score = scorer.score(payload, latest_feature, model_version=model_version)
             scored.append((payload, score))
         candidate_payload, best_score = max(scored, key=lambda item: float(item[1].get("signal_quality_score") or 0.0))
-        get_repository_registry().candidate_score_audits.save(score_audit_from_score(best_score))
-        side_value = candidate_payload["side"] if best_score["action"] == "TAKE" else Side.NO_TRADE.value
+        saved_audit = get_repository_registry().candidate_score_audits.save(score_audit_from_score(best_score))
+        calibration = self._calibration_status(model)
+        action = str(best_score["action"])
+        if action == "TAKE" and calibration["suppress_take"]:
+            action = "SUPPRESS"
+        side_value = candidate_payload["side"] if action == "TAKE" else Side.NO_TRADE.value
         side = Side(side_value) if side_value in {Side.LONG.value, Side.SHORT.value} else Side.NO_TRADE
         entry = candidate_payload.get("entry_price") if side != Side.NO_TRADE else None
         stop = candidate_payload.get("stop_price") if side != Side.NO_TRADE else None
@@ -229,13 +233,23 @@ class ScannerState:
         target_3 = candidate_payload.get("target_3") if side != Side.NO_TRADE else None
         risk = abs(float(entry) - float(stop)) if entry is not None and stop is not None else None
         reasons = [
-            f"replay-aware action: {best_score['action']}",
+            f"replay-aware action: {action}",
+            f"model_version: {model_version}",
+            f"outcome_source: {model.get('outcome_source') or best_score.get('outcome_source') or 'unspecified'}",
+            f"calibration_status: {calibration['status']}",
+            f"score_audit_id: {saved_audit.get('score_id')}",
             *list(best_score.get("positive_reason_codes") or []),
             *list(best_score.get("suppression_reasons") or []),
         ]
         warnings = list(best_score.get("warning_codes") or [])
-        if best_score["action"] != "TAKE":
+        warnings.extend(calibration["warnings"])
+        if calibration["suppress_take"]:
+            warnings.append("calibration_required_or_failed")
+            reasons.extend(calibration["rejection_reasons"])
+        if action != "TAKE":
             reasons.append("replay-aware meta-scorer did not approve TAKE")
+        if best_score.get("evidence_cell_keys_used"):
+            reasons.append(f"evidence_cell_keys_used: {','.join(str(key) for key in best_score.get('evidence_cell_keys_used') or [])}")
         return Signal(
             timestamp=datetime.now(UTC),
             ticker=latest_bar.symbol,
@@ -251,7 +265,7 @@ class ScannerState:
             reward_risk_to_t3=2.5 if risk and target_3 is not None else None,
             expected_r=float(best_score.get("expected_r_estimate") or 0.0),
             confidence_score=round(float(best_score.get("signal_quality_score") or 0.0) / 100.0, 4),
-            signal_grade=str(best_score.get("grade") or "NO_TRADE"),
+            signal_grade=str(best_score.get("grade") or "NO_TRADE") if action == "TAKE" else "NO_TRADE",
             setup_type=str(candidate_payload.get("setup_type") or "no trade suppression"),
             market_regime=str(latest_feature.get("market_regime") or "mixed_uncertain"),
             ticker_regime=str(latest_feature.get("ticker_regime") or "mixed_uncertain"),
@@ -265,6 +279,32 @@ class ScannerState:
             training_end=self._maybe_dt(model.get("training_end")),
             data_source=data_source,
         )
+
+    def _calibration_status(self, model: dict[str, Any]) -> dict[str, Any]:
+        criteria = dict(model.get("activation_criteria") or {})
+        required = bool(model.get("calibration_required") or criteria.get("calibration_audit_required") or (model.get("calibration") or {}).get("required"))
+        if not required:
+            return {"status": "not_required", "warnings": [], "rejection_reasons": [], "suppress_take": False}
+        repository = get_repository_registry()
+        audit_id = criteria.get("calibration_audit_id") or (model.get("calibration") or {}).get("calibration_audit_id")
+        audit = repository.model_calibration_audits.get(str(audit_id)) if audit_id else repository.model_calibration_audits.latest(str(model.get("model_version")))
+        if audit is None:
+            return {
+                "status": "missing",
+                "warnings": ["calibration_required_or_failed"],
+                "rejection_reasons": ["calibration_audit_required"],
+                "suppress_take": True,
+            }
+        warnings = list(audit.get("calibration_warnings") or audit.get("warnings") or [])
+        rejection_reasons = list(audit.get("rejection_reasons") or [])
+        status = "failed" if rejection_reasons else "passed"
+        return {
+            "status": status,
+            "warnings": warnings,
+            "rejection_reasons": rejection_reasons,
+            "suppress_take": status != "passed",
+            "calibration_audit_id": audit.get("calibration_audit_id"),
+        }
 
     def _replay_evidence_cells(self, model_version: str) -> list[dict[str, Any]]:
         cached = self._replay_model_cache.get(model_version)

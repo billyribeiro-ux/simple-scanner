@@ -122,3 +122,15 @@ The smoke test:
 - It does not prove live FMP entitlement.
 - It does not validate profitability or execution quality.
 - Replay smoke is still mocked-provider OHLCV simulation; it verifies persistence and API/export wiring, not live fill realism.
+
+## Phase 9 Coverage
+
+The persisted API smoke now covers:
+
+- counterfactual replay with `simulation_type = model_training_counterfactual`;
+- replay-aware training with `outcome_source = counterfactual_preferred`;
+- calibration audit create/list/get/bins;
+- model comparison;
+- counterfactual-vs-portfolio comparison;
+- calibration audit XLSX, calibration bins CSV/XLSX, calibration metrics JSON, and model comparison XLSX exports;
+- reopened SQLite/Postgres repository reads for calibration audits, model comparisons, and counterfactual comparisons.

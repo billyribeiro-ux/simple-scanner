@@ -1,6 +1,11 @@
 PYTHON ?= python3
 PYTHON314 ?= python3.14
 SERVICE_DIR := services/quant-engine
+LOCAL_POSTGRES_USER ?= amd
+LOCAL_POSTGRES_PASSWORD ?= amd
+LOCAL_POSTGRES_HOST ?= localhost
+LOCAL_POSTGRES_PORT ?= 15432
+LOCAL_POSTGRES_DB ?= adaptive_market_decoder
 
 .PHONY: help doctor setup setup-backend require-backend-venv quant-test backend-test backend-lint backend-typecheck api-smoke api-smoke-sqlite api-smoke-postgres repository-parity-test replay-test replay-sensitivity-test export-test fmp-smoke dev api-dev web-dev db-up db-down db-migrate db-inspect db-diagnostics db-reset-dev ingest features labels train validate backtest scanner export test lint typecheck
 
@@ -84,12 +89,20 @@ api-smoke-sqlite: require-backend-venv
 	cd $(SERVICE_DIR) && PYTHONPATH=. .venv/bin/python -m pytest tests/test_persisted_api_smoke.py::test_persisted_api_vertical_slice_sqlite
 
 api-smoke-postgres: require-backend-venv
-	@DATABASE_URL="$${DATABASE_URL:-postgresql+psycopg://amd:amd@localhost:15432/adaptive_market_decoder}" \
+	@DEFAULT_DATABASE_SCHEME="postgresql+psycopg"; \
+		DEFAULT_DATABASE_AUTH="$(LOCAL_POSTGRES_USER):$(LOCAL_POSTGRES_PASSWORD)"; \
+		DEFAULT_DATABASE_HOST="$(LOCAL_POSTGRES_HOST):$(LOCAL_POSTGRES_PORT)"; \
+		DEFAULT_DATABASE_URL="$${DEFAULT_DATABASE_SCHEME}://$${DEFAULT_DATABASE_AUTH}@$${DEFAULT_DATABASE_HOST}/$(LOCAL_POSTGRES_DB)"; \
+		DATABASE_URL="$${DATABASE_URL:-$${DEFAULT_DATABASE_URL}}" \
 		PYTHONPATH=$(SERVICE_DIR) \
 		$(SERVICE_DIR)/.venv/bin/python -m pytest $(SERVICE_DIR)/tests/test_persisted_api_smoke.py::test_persisted_api_vertical_slice_postgres
 
 repository-parity-test: require-backend-venv
-	@DATABASE_URL="$${DATABASE_URL:-postgresql+psycopg://amd:amd@localhost:15432/adaptive_market_decoder}" \
+	@DEFAULT_DATABASE_SCHEME="postgresql+psycopg"; \
+		DEFAULT_DATABASE_AUTH="$(LOCAL_POSTGRES_USER):$(LOCAL_POSTGRES_PASSWORD)"; \
+		DEFAULT_DATABASE_HOST="$(LOCAL_POSTGRES_HOST):$(LOCAL_POSTGRES_PORT)"; \
+		DEFAULT_DATABASE_URL="$${DEFAULT_DATABASE_SCHEME}://$${DEFAULT_DATABASE_AUTH}@$${DEFAULT_DATABASE_HOST}/$(LOCAL_POSTGRES_DB)"; \
+		DATABASE_URL="$${DATABASE_URL:-$${DEFAULT_DATABASE_URL}}" \
 		PYTHONPATH=$(SERVICE_DIR) \
 		$(SERVICE_DIR)/.venv/bin/python -m pytest $(SERVICE_DIR)/tests/test_repository_parity.py
 

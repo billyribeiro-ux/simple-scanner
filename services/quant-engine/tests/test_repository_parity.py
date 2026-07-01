@@ -273,6 +273,25 @@ def test_repository_core_contract_parity(tmp_path, monkeypatch, backend: str) ->
         }
     )
     assert score_audit["score_id"] == "score-parity"
+    calibration = repo.model_calibration_audits.save(
+        {
+            "calibration_audit_id": "calibration-parity",
+            "model_version": "parity-model-accepted",
+            "validation_report_id": None,
+            "replay_run_ids": ["parity-replay"],
+            "outcome_source": "counterfactual_preferred",
+            "score_bins": [{"bin_key": "75-85", "sample_size": 1, "observed_average_r": 1.5}],
+            "grade_bins": [{"bin_key": "A", "sample_size": 1, "observed_average_r": 1.5}],
+            "action_bins": [{"bin_key": "TAKE", "sample_size": 1, "observed_average_r": 1.5}],
+            "rank_correlation_score": 1.0,
+            "monotonicity_pass": True,
+            "separation_metrics": {"take_minus_watch_average_r": 1.5},
+            "stability_metrics": {"by_symbol": [{"bin_key": "AAPL", "sample_size": 1}]},
+            "calibration_warnings": [],
+            "rejection_reasons": [],
+        }
+    )
+    assert calibration["calibration_audit_id"] == "calibration-parity"
     rejected = repo.validation_reports.save(
         {
             "model_version": "parity-model-accepted",
@@ -433,6 +452,16 @@ def test_repository_core_contract_parity(tmp_path, monkeypatch, backend: str) ->
             "replay_summary": {"total_trades": 1},
         }
     )
+    model_comparison = repo.model_comparisons.save(
+        {
+            "comparison_type": "model_comparison",
+            "model_versions": ["parity-model-accepted"],
+            "validation_report_ids": [accepted["report_id"]],
+            "calibration_audit_ids": ["calibration-parity"],
+            "replay_run_ids": ["parity-replay"],
+            "summary": {"diagnostic_only": True},
+        }
+    )
     replay_windows = repo.pipeline_windows.mark_built(
         "replay",
         ["AAPL"],
@@ -455,6 +484,9 @@ def test_repository_core_contract_parity(tmp_path, monkeypatch, backend: str) ->
     assert reopened.model_runs.get("parity-model-accepted")["model_version"] == "parity-model-accepted"
     assert reopened.model_evidence_cells.count("parity-model-accepted") == 1
     assert reopened.candidate_score_audits.list("parity-model-accepted")[0]["score_id"] == "score-parity"
+    assert reopened.model_calibration_audits.get("calibration-parity")["model_version"] == "parity-model-accepted"
+    assert reopened.model_calibration_audits.list_bins("calibration-parity")
+    assert reopened.model_comparisons.get(model_comparison["comparison_id"])["comparison_type"] == "model_comparison"
     assert reopened.validation_reports.latest(model_version="parity-model-accepted")["activation_decision"] == "accepted"
     assert reopened.active_models.get_active()["model_version"] == "parity-model-accepted"
     assert reopened.scanner_runs.latest()["scanner_run_id"] == scanner_run_id

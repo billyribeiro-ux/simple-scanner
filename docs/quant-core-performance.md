@@ -48,3 +48,10 @@ The Phase 2 quant core favors deterministic, testable Python loops over prematur
 5. Add Postgres indexes for high-volume evidence-cell dimensions and score-audit filters if model history grows beyond local V1 scale.
 6. Add Timescale compression/retention policies for old raw bars, replay trades, score audits, and sensitivity scenarios after export reproducibility is proven.
 7. Move evidence aggregation to Polars/Pandas or a database grouped query when replay outcome row count makes Python aggregation the bottleneck.
+
+## Phase 9 Performance Notes
+
+- Counterfactual replay reuses the batched replay path and avoids per-candidate database queries. Complexity remains bounded by sorted bars/features plus per-candidate hold-window scans.
+- Candidate overlap context is computed in memory by symbol/interval. This is acceptable for local V1, but high-volume candidate sets should move overlap-density calculations to grouped vectorized code.
+- Calibration audit joins score audits to outcome rows in memory, then groups into score, grade, action, symbol, setup, regime, and time buckets. This is linear in loaded audits/outcomes plus small fixed bin counts.
+- Model comparison loads persisted model/report/audit payloads and sorts model summaries; it is diagnostic-only and not on the scanner hot path.

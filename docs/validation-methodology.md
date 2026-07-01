@@ -52,3 +52,8 @@ Still partial:
 - Replay validation is only as trustworthy as the selected replay window and assumptions; review `config_hash`, `input_fingerprint`, and sensitivity flags before using it for model activation decisions.
 - Replay-aware validation is deterministic and no-leakage, but V1 uses persisted replay outcome rows instead of a separate counterfactual replay mode for every skipped portfolio-overlap candidate.
 - Calibration/Brier scoring is not real until a probability model exists.
+## Phase 9 Replay-Aware Windows
+
+`replay_aware_walk_forward` now accepts explicit training, validation, and test replay run IDs plus optional train/validation/test timestamp windows and `embargo_minutes`. It can require counterfactual training data, require portfolio validation data, and require a calibration audit.
+
+Validation scores candidates with training-only evidence and persists replay run IDs, candidate counts, embargo metadata, and calibration requirements in the validation report. Weak score ordering can be rejected through calibration audit gates.

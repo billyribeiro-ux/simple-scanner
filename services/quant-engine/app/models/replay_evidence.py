@@ -9,7 +9,12 @@ from statistics import mean, median, pstdev
 from typing import Any
 
 from app.backtesting.audit import stable_hash
-from app.backtesting.replay import SIMULATION_TYPE_REPLAY
+from app.backtesting.replay import (
+    REPLAY_PURPOSE_COUNTERFACTUAL,
+    REPLAY_PURPOSE_PORTFOLIO,
+    SIMULATION_TYPE_COUNTERFACTUAL,
+    SIMULATION_TYPE_REPLAY,
+)
 from app.schemas.market import Side
 from app.utils.time import UTC
 
@@ -172,15 +177,29 @@ class CandidateOutcomeDatasetBuilder:
         training_start: datetime | None = None,
         training_end: datetime | None = None,
         allow_stale: bool = False,
+        outcome_source: str = "counterfactual_preferred",
+        counterfactual_replay_run_ids: list[str] | None = None,
+        portfolio_replay_run_ids: list[str] | None = None,
+        overlap_density_filters: list[str] | None = None,
+        concurrency_bucket_filters: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         features_by_key = {_feature_key(feature): feature for feature in features or []}
         candidates_by_id = {str(candidate.get("candidate_id")): candidate for candidate in candidates or [] if candidate.get("candidate_id")}
         sensitivities_by_run = sensitivities_by_run or {}
         comparisons_by_run = comparisons_by_run or {}
+        selected_counterfactual_ids = set(counterfactual_replay_run_ids or [])
+        selected_portfolio_ids = set(portfolio_replay_run_ids or [])
+        overlap_density_filters = set(overlap_density_filters or [])
+        concurrency_bucket_filters = set(concurrency_bucket_filters or [])
         rows: list[dict[str, Any]] = []
         for replay_run in replay_runs:
             replay_run_id = str(replay_run.get("replay_run_id") or "")
-            if not replay_run_id or replay_run.get("simulation_type") != SIMULATION_TYPE_REPLAY:
+            simulation_type = str(replay_run.get("simulation_type") or "")
+            if not replay_run_id or simulation_type not in {SIMULATION_TYPE_REPLAY, SIMULATION_TYPE_COUNTERFACTUAL}:
+                continue
+            if selected_counterfactual_ids and simulation_type == SIMULATION_TYPE_COUNTERFACTUAL and replay_run_id not in selected_counterfactual_ids:
+                continue
+            if selected_portfolio_ids and simulation_type == SIMULATION_TYPE_REPLAY and replay_run_id not in selected_portfolio_ids:
                 continue
             stale_status = _stale_status(replay_run)
             if stale_status.get("status") != "clean" and not allow_stale:
@@ -188,6 +207,7 @@ class CandidateOutcomeDatasetBuilder:
             sensitivity = (sensitivities_by_run.get(replay_run_id) or [None])[0]
             comparison_flags = _comparison_flags(comparisons_by_run.get(replay_run_id) or [])
             config = dict(replay_run.get("config") or {})
+            replay_purpose = str(config.get("replay_purpose") or replay_run.get("replay_purpose") or (REPLAY_PURPOSE_COUNTERFACTUAL if simulation_type == SIMULATION_TYPE_COUNTERFACTUAL else REPLAY_PURPOSE_PORTFOLIO))
             for trade in trades_by_run.get(replay_run_id, []):
                 timestamp = _parse_datetime(trade.get("signal_timestamp_utc"))
                 if training_start and timestamp < training_start:
@@ -199,11 +219,32 @@ class CandidateOutcomeDatasetBuilder:
                 feature = features_by_key.get((symbol, interval, timestamp))
                 candidate = candidates_by_id.get(str(trade.get("candidate_id") or "")) or {}
                 skip_reason = trade.get("skip_reason")
-                observed = self._is_observed(trade)
+                metadata = dict(trade.get("metadata") or {})
+                observed = self._is_observed(trade, simulation_type=simulation_type)
                 suppression_eligible = str(skip_reason or "") in SUPPRESSION_SKIP_REASONS
+                overlap_density = int(metadata.get("overlap_density") or 0)
+                concurrency_bucket = str(metadata.get("concurrency_bucket") or _concurrency_bucket(metadata.get("concurrent_candidate_count_at_signal")))
+                if overlap_density_filters and str(overlap_density) not in overlap_density_filters and concurrency_bucket not in overlap_density_filters:
+                    continue
+                if concurrency_bucket_filters and concurrency_bucket not in concurrency_bucket_filters:
+                    continue
+                is_counterfactual = simulation_type == SIMULATION_TYPE_COUNTERFACTUAL or replay_purpose == REPLAY_PURPOSE_COUNTERFACTUAL
+                candidate_quality_available = bool(is_counterfactual and observed)
+                portfolio_available = bool((not is_counterfactual) and observed)
                 row = {
                     "candidate_id": trade.get("candidate_id"),
                     "replay_run_id": replay_run_id,
+                    "simulation_type": simulation_type,
+                    "replay_purpose": replay_purpose,
+                    "candidate_quality_outcome_available": candidate_quality_available,
+                    "portfolio_execution_outcome_available": portfolio_available,
+                    "portfolio_constraint_skip_reason": str(skip_reason) if str(skip_reason or "") in UNOBSERVED_SKIP_REASONS else None,
+                    "counterfactual_realized_r": _finite_float(trade.get("realized_r"), 0.0) if candidate_quality_available else None,
+                    "portfolio_realized_r": _finite_float(trade.get("realized_r"), 0.0) if portfolio_available else None,
+                    "counterfactual_vs_portfolio_delta": None,
+                    "overlap_density": overlap_density,
+                    "concurrency_bucket": concurrency_bucket,
+                    "candidate_quality_source": "counterfactual" if candidate_quality_available else ("portfolio" if portfolio_available else "unobserved"),
                     "symbol": symbol,
                     "interval": interval,
                     "side": str(trade.get("side") or candidate.get("side") or "UNKNOWN"),
@@ -254,18 +295,56 @@ class CandidateOutcomeDatasetBuilder:
                     "candidate_payload": candidate,
                 }
                 rows.append(row)
-        return sorted(rows, key=lambda row: (str(row["signal_timestamp_utc"]), str(row["symbol"]), str(row["setup_type"])))
+        selected_rows = self._select_outcome_rows(rows, outcome_source=outcome_source)
+        return sorted(selected_rows, key=lambda row: (str(row["signal_timestamp_utc"]), str(row["symbol"]), str(row["setup_type"])))
 
-    def _is_observed(self, trade: dict[str, Any]) -> bool:
+    def _is_observed(self, trade: dict[str, Any], *, simulation_type: str = SIMULATION_TYPE_REPLAY) -> bool:
         status = str(trade.get("status") or "").upper()
         skip_reason = str(trade.get("skip_reason") or "")
-        if status == "TAKEN":
+        if status in {"TAKEN", "COUNTERFACTUAL_OBSERVED"}:
+            return True
+        if simulation_type == SIMULATION_TYPE_COUNTERFACTUAL and (trade.get("metadata") or {}).get("counterfactual_observed"):
             return True
         if status == "SKIPPED" and skip_reason in UNOBSERVED_SKIP_REASONS:
             return False
         if status == "SKIPPED":
             return False
         return False
+
+    def _select_outcome_rows(self, rows: list[dict[str, Any]], *, outcome_source: str) -> list[dict[str, Any]]:
+        if outcome_source == "mixed_allowed":
+            return rows
+        if outcome_source == "counterfactual_only":
+            return [row for row in rows if row.get("replay_purpose") == REPLAY_PURPOSE_COUNTERFACTUAL]
+        if outcome_source == "portfolio_only":
+            return [row for row in rows if row.get("replay_purpose") != REPLAY_PURPOSE_COUNTERFACTUAL]
+        by_candidate: dict[str, dict[str, list[dict[str, Any]]]] = defaultdict(lambda: {"counterfactual": [], "portfolio": []})
+        unmatched: list[dict[str, Any]] = []
+        for row in rows:
+            candidate_id = str(row.get("candidate_id") or "")
+            if not candidate_id:
+                unmatched.append(row)
+                continue
+            bucket = "counterfactual" if row.get("replay_purpose") == REPLAY_PURPOSE_COUNTERFACTUAL else "portfolio"
+            by_candidate[candidate_id][bucket].append(row)
+        selected: list[dict[str, Any]] = []
+        for candidate_rows in by_candidate.values():
+            counterfactual_rows = candidate_rows["counterfactual"]
+            portfolio_rows = candidate_rows["portfolio"]
+            if counterfactual_rows:
+                row = dict(counterfactual_rows[0])
+                portfolio = portfolio_rows[0] if portfolio_rows else None
+                if portfolio:
+                    row["portfolio_execution_outcome_available"] = bool(portfolio.get("portfolio_execution_outcome_available"))
+                    row["portfolio_constraint_skip_reason"] = portfolio.get("skip_reason") if not portfolio.get("portfolio_execution_outcome_available") else None
+                    row["portfolio_realized_r"] = portfolio.get("portfolio_realized_r")
+                    if row.get("counterfactual_realized_r") is not None and row.get("portfolio_realized_r") is not None:
+                        row["counterfactual_vs_portfolio_delta"] = _finite_float(row.get("counterfactual_realized_r"), 0.0) - _finite_float(row.get("portfolio_realized_r"), 0.0)
+                selected.append(row)
+            else:
+                selected.extend(portfolio_rows)
+        selected.extend(unmatched)
+        return selected
 
 
 class EvidenceCubeBuilder:
@@ -519,6 +598,7 @@ class ReplayAwareMetaScorer:
             "warnings": warning_codes,
             "evidence_cell_keys_used": evidence_cell_keys_used,
             "model_version": model_version,
+            "outcome_source": self.config.get("outcome_source") or "unspecified",
             "scoring_config_version": SCORING_CONFIG_VERSION,
             "created_at": datetime.now(UTC).isoformat(),
         }
@@ -589,6 +669,8 @@ def summarize_outcome_rows(rows: list[dict[str, Any]], *, minimum_cell_sample_si
     profit_factor = _profit_factor(returns)
     sample_size = len(rows)
     observed_count = len(observed)
+    outcome_sources = Counter(str(row.get("candidate_quality_source") or "unknown") for row in rows)
+    replay_purposes = Counter(str(row.get("replay_purpose") or "unknown") for row in rows)
     return {
         "sample_size": sample_size,
         "taken_count": len(taken),
@@ -620,6 +702,10 @@ def summarize_outcome_rows(rows: list[dict[str, Any]], *, minimum_cell_sample_si
         "lower_bound_r": lower_bound,
         "evidence_quality_grade": evidence_quality_grade(observed_count, lower_bound, profit_factor, fragility_flags, minimum_cell_sample_size),
         "skip_breakdown": dict(Counter(str(row.get("skip_reason") or "none") for row in skipped)),
+        "outcome_sources": dict(outcome_sources),
+        "replay_purposes": dict(replay_purposes),
+        "counterfactual_observed_count": len([row for row in observed if row.get("candidate_quality_source") == "counterfactual"]),
+        "portfolio_observed_count": len([row for row in observed if row.get("candidate_quality_source") == "portfolio"]),
     }
 
 
@@ -737,6 +823,7 @@ def score_audit_from_score(score: dict[str, Any]) -> dict[str, Any]:
         "suppression_reasons": score.get("suppression_reasons") or [],
         "evidence_cell_keys_used": score.get("evidence_cell_keys_used") or [],
         "warnings": score.get("warning_codes") or [],
+        "outcome_source": score.get("outcome_source") or "unspecified",
         "created_at": score.get("created_at") or datetime.now(UTC).isoformat(),
     }
 
@@ -747,6 +834,10 @@ def training_summary(rows: list[dict[str, Any]], cells: list[dict[str, Any]]) ->
     return {
         "candidate_outcome_rows": len(rows),
         "observed_outcome_count": len(observed),
+        "counterfactual_observed_count": len([row for row in observed if row.get("candidate_quality_source") == "counterfactual"]),
+        "portfolio_observed_count": len([row for row in observed if row.get("candidate_quality_source") == "portfolio"]),
+        "outcome_sources": dict(Counter(str(row.get("candidate_quality_source") or "unknown") for row in rows)),
+        "replay_purposes": dict(Counter(str(row.get("replay_purpose") or "unknown") for row in rows)),
         "taken_count": len([row for row in rows if row.get("status") == "TAKEN"]),
         "skipped_count": len([row for row in rows if row.get("status") == "SKIPPED"]),
         "evidence_cell_count": len(cells),
@@ -849,6 +940,17 @@ def _maybe_float(value: Any) -> float | None:
     except (TypeError, ValueError):
         return None
     return parsed if isfinite(parsed) else None
+
+
+def _concurrency_bucket(value: Any) -> str:
+    count = int(_finite_float(value, 1.0))
+    if count <= 1:
+        return "solo"
+    if count == 2:
+        return "pair"
+    if count <= 4:
+        return "cluster"
+    return "crowded"
 
 
 def _finite_float(value: Any, default: float) -> float:

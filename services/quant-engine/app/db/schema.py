@@ -217,6 +217,58 @@ candidate_score_audits = sa.Table(
     sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
 )
 
+model_calibration_audits = sa.Table(
+    "model_calibration_audits",
+    metadata,
+    sa.Column("id", sa.String(96), primary_key=True),
+    sa.Column("calibration_audit_id", sa.String(96), nullable=False, unique=True, index=True),
+    sa.Column("model_version", sa.String(128), nullable=False, index=True),
+    sa.Column("validation_report_id", sa.String(96)),
+    sa.Column("replay_run_ids_json", sa.JSON, nullable=False, server_default=sa.text("'[]'::jsonb")),
+    sa.Column("outcome_source", sa.String(64), nullable=False),
+    sa.Column("score_bins_json", sa.JSON, nullable=False, server_default=sa.text("'[]'::jsonb")),
+    sa.Column("grade_bins_json", sa.JSON, nullable=False, server_default=sa.text("'[]'::jsonb")),
+    sa.Column("action_bins_json", sa.JSON, nullable=False, server_default=sa.text("'[]'::jsonb")),
+    sa.Column("rank_correlation_score", sa.Numeric(18, 6), nullable=False, server_default="0"),
+    sa.Column("monotonicity_pass", sa.Boolean, nullable=False, server_default=sa.text("false")),
+    sa.Column("separation_metrics_json", sa.JSON, nullable=False, server_default=sa.text("'{}'::jsonb")),
+    sa.Column("stability_metrics_json", sa.JSON, nullable=False, server_default=sa.text("'{}'::jsonb")),
+    sa.Column("warnings_json", sa.JSON, nullable=False, server_default=sa.text("'[]'::jsonb")),
+    sa.Column("rejection_reasons_json", sa.JSON, nullable=False, server_default=sa.text("'[]'::jsonb")),
+    sa.Column("payload_json", sa.JSON, nullable=False),
+    sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+)
+
+model_calibration_bins = sa.Table(
+    "model_calibration_bins",
+    metadata,
+    sa.Column("id", sa.String(96), primary_key=True),
+    sa.Column("calibration_audit_id", sa.String(96), nullable=False, index=True),
+    sa.Column("bin_type", sa.String(32), nullable=False, index=True),
+    sa.Column("bin_key", sa.String(64), nullable=False),
+    sa.Column("sample_size", sa.Integer, nullable=False, server_default="0"),
+    sa.Column("observed_average_r", sa.Numeric(18, 6), nullable=False, server_default="0"),
+    sa.Column("observed_win_rate", sa.Numeric(18, 6), nullable=False, server_default="0"),
+    sa.Column("profit_factor", sa.Numeric(18, 6), nullable=False, server_default="0"),
+    sa.Column("max_drawdown_r", sa.Numeric(18, 6), nullable=False, server_default="0"),
+    sa.Column("metrics_json", sa.JSON, nullable=False, server_default=sa.text("'{}'::jsonb")),
+    sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+)
+
+model_comparisons = sa.Table(
+    "model_comparisons",
+    metadata,
+    sa.Column("comparison_id", sa.String(96), primary_key=True),
+    sa.Column("comparison_type", sa.String(64), nullable=False),
+    sa.Column("model_versions_json", sa.JSON, nullable=False, server_default=sa.text("'[]'::jsonb")),
+    sa.Column("validation_report_ids_json", sa.JSON, nullable=False, server_default=sa.text("'[]'::jsonb")),
+    sa.Column("calibration_audit_ids_json", sa.JSON, nullable=False, server_default=sa.text("'[]'::jsonb")),
+    sa.Column("replay_run_ids_json", sa.JSON, nullable=False, server_default=sa.text("'[]'::jsonb")),
+    sa.Column("summary_json", sa.JSON, nullable=False, server_default=sa.text("'{}'::jsonb")),
+    sa.Column("payload_json", sa.JSON, nullable=False),
+    sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+)
+
 active_models = sa.Table(
     "active_models",
     metadata,

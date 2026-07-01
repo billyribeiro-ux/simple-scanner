@@ -147,3 +147,11 @@ The aligned table set is:
 - Replay-aware meta-scoring is deterministic evidence scoring, not calibrated probability and not profitability proof.
 - Replay is simulated from OHLCV bars and does not prove actual fills, liquidity, or profitability.
 - No broker execution, order routing, WebSocket entitlement path, options, gamma, Greeks, or internals were added.
+
+## Phase 9 Persistence Update
+
+PostgreSQL now verifies Alembic revision `0006_phase9_calibration`. SQLite bootstrap and Postgres migrations both include `model_calibration_audits`, `model_calibration_bins`, and `model_comparisons`.
+
+Counterfactual replay persists in the existing `replay_runs` and `simulated_trades` tables using JSON metadata. Calibration audits and model comparisons use dedicated repositories exposed through the registry as `model_calibration_audits` and `model_comparisons`.
+
+New persisted API/export surfaces include calibration audit create/list/get/bins, model comparison, counterfactual-vs-portfolio comparison, calibration audit XLSX, calibration bins CSV/XLSX, calibration metrics JSON, and model comparison XLSX.

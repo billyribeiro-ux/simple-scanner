@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import builtins
 import json
 import math
 import os
@@ -45,6 +46,9 @@ EXPECTED_TABLES = {
     "labels",
     "live_signals",
     "model_artifacts",
+    "model_calibration_audits",
+    "model_calibration_bins",
+    "model_comparisons",
     "model_evidence_cells",
     "model_runs",
     "pipeline_build_windows",
@@ -58,7 +62,7 @@ EXPECTED_TABLES = {
     "validation_reports",
     "validation_windows",
 }
-EXPECTED_ALEMBIC_REVISION = "0005_phase8_replay_aware_models"
+EXPECTED_ALEMBIC_REVISION = "0006_phase9_calibration"
 
 
 def _now_iso() -> str:
@@ -516,6 +520,61 @@ class SQLiteStore:
 
                     CREATE INDEX IF NOT EXISTS ix_score_audits_symbol_ts
                         ON candidate_score_audits(symbol, timestamp_utc);
+
+                    CREATE TABLE IF NOT EXISTS model_calibration_audits (
+                        id TEXT PRIMARY KEY,
+                        calibration_audit_id TEXT NOT NULL UNIQUE,
+                        model_version TEXT NOT NULL,
+                        validation_report_id TEXT,
+                        replay_run_ids_json TEXT DEFAULT '[]',
+                        outcome_source TEXT NOT NULL,
+                        score_bins_json TEXT DEFAULT '[]',
+                        grade_bins_json TEXT DEFAULT '[]',
+                        action_bins_json TEXT DEFAULT '[]',
+                        rank_correlation_score REAL NOT NULL DEFAULT 0,
+                        monotonicity_pass INTEGER NOT NULL DEFAULT 0,
+                        separation_metrics_json TEXT DEFAULT '{}',
+                        stability_metrics_json TEXT DEFAULT '{}',
+                        warnings_json TEXT DEFAULT '[]',
+                        rejection_reasons_json TEXT DEFAULT '[]',
+                        payload_json TEXT NOT NULL,
+                        created_at TEXT NOT NULL
+                    );
+
+                    CREATE INDEX IF NOT EXISTS ix_calibration_audits_model_created
+                        ON model_calibration_audits(model_version, created_at);
+
+                    CREATE TABLE IF NOT EXISTS model_calibration_bins (
+                        id TEXT PRIMARY KEY,
+                        calibration_audit_id TEXT NOT NULL,
+                        bin_type TEXT NOT NULL,
+                        bin_key TEXT NOT NULL,
+                        sample_size INTEGER NOT NULL DEFAULT 0,
+                        observed_average_r REAL NOT NULL DEFAULT 0,
+                        observed_win_rate REAL NOT NULL DEFAULT 0,
+                        profit_factor REAL NOT NULL DEFAULT 0,
+                        max_drawdown_r REAL NOT NULL DEFAULT 0,
+                        metrics_json TEXT DEFAULT '{}',
+                        created_at TEXT NOT NULL
+                    );
+
+                    CREATE INDEX IF NOT EXISTS ix_calibration_bins_audit_type
+                        ON model_calibration_bins(calibration_audit_id, bin_type);
+
+                    CREATE TABLE IF NOT EXISTS model_comparisons (
+                        comparison_id TEXT PRIMARY KEY,
+                        comparison_type TEXT NOT NULL,
+                        model_versions_json TEXT DEFAULT '[]',
+                        validation_report_ids_json TEXT DEFAULT '[]',
+                        calibration_audit_ids_json TEXT DEFAULT '[]',
+                        replay_run_ids_json TEXT DEFAULT '[]',
+                        summary_json TEXT DEFAULT '{}',
+                        payload_json TEXT NOT NULL,
+                        created_at TEXT NOT NULL
+                    );
+
+                    CREATE INDEX IF NOT EXISTS ix_model_comparisons_created
+                        ON model_comparisons(created_at);
 
                     CREATE TABLE IF NOT EXISTS active_models (
                         active_model_id TEXT PRIMARY KEY,
@@ -1173,7 +1232,7 @@ class FeatureRepository:
         intervals: Iterable[str] | None = None,
         start: datetime | None = None,
         end: datetime | None = None,
-    ) -> list[dict[str, Any]]:
+    ) -> builtins.list[dict[str, Any]]:
         clauses: list[str] = []
         params: list[Any] = []
         normalized_symbols = [normalize_symbol(symbol) for symbol in symbols or []]
@@ -1268,7 +1327,7 @@ class CandidateSignalRepository:
         end: datetime | None = None,
         sides: Iterable[str] | None = None,
         setup_types: Iterable[str] | None = None,
-    ) -> list[dict[str, Any]]:
+    ) -> builtins.list[dict[str, Any]]:
         clauses: list[str] = []
         params: list[Any] = []
         normalized_symbols = [normalize_symbol(symbol) for symbol in symbols or []]
@@ -1876,6 +1935,227 @@ class CandidateScoreAuditRepository:
         return data
 
 
+class CalibrationAuditRepository:
+    def __init__(self, store: SQLiteStore) -> None:
+        self.store = store
+
+    def save(self, audit: dict[str, Any]) -> dict[str, Any]:
+        payload = _payload(audit)
+        created_at = str(payload.get("created_at") or _now_iso())
+        audit_id = str(payload.get("calibration_audit_id") or _stable_id("calibration", payload.get("model_version"), created_at))
+        row_id = str(payload.get("id") or _stable_id("calibration_audit", audit_id))
+        score_bins = list(payload.get("score_bins") or [])
+        grade_bins = list(payload.get("grade_bins") or [])
+        action_bins = list(payload.get("action_bins") or [])
+        bins = [
+            *(dict(item) | {"bin_type": "score"} for item in score_bins),
+            *(dict(item) | {"bin_type": "grade"} for item in grade_bins),
+            *(dict(item) | {"bin_type": "action"} for item in action_bins),
+        ]
+        row_payload = payload | {"id": row_id, "calibration_audit_id": audit_id, "created_at": created_at}
+        with self.store._lock:
+            connection = self.store.connect()
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO model_calibration_audits(
+                        id, calibration_audit_id, model_version, validation_report_id, replay_run_ids_json,
+                        outcome_source, score_bins_json, grade_bins_json, action_bins_json,
+                        rank_correlation_score, monotonicity_pass, separation_metrics_json,
+                        stability_metrics_json, warnings_json, rejection_reasons_json, payload_json, created_at
+                    )
+                    VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(calibration_audit_id) DO UPDATE SET
+                        score_bins_json=excluded.score_bins_json,
+                        grade_bins_json=excluded.grade_bins_json,
+                        action_bins_json=excluded.action_bins_json,
+                        rank_correlation_score=excluded.rank_correlation_score,
+                        monotonicity_pass=excluded.monotonicity_pass,
+                        separation_metrics_json=excluded.separation_metrics_json,
+                        stability_metrics_json=excluded.stability_metrics_json,
+                        warnings_json=excluded.warnings_json,
+                        rejection_reasons_json=excluded.rejection_reasons_json,
+                        payload_json=excluded.payload_json
+                    """,
+                    (
+                        row_id,
+                        audit_id,
+                        str(row_payload["model_version"]),
+                        row_payload.get("validation_report_id"),
+                        _json_dumps(row_payload.get("replay_run_ids") or []),
+                        str(row_payload.get("outcome_source") or "counterfactual_preferred"),
+                        _json_dumps(score_bins),
+                        _json_dumps(grade_bins),
+                        _json_dumps(action_bins),
+                        float(row_payload.get("rank_correlation_score") or 0.0),
+                        bool(row_payload.get("monotonicity_pass")),
+                        _json_dumps(row_payload.get("separation_metrics") or {}),
+                        _json_dumps(row_payload.get("stability_metrics") or {}),
+                        _json_dumps(row_payload.get("calibration_warnings") or row_payload.get("warnings") or []),
+                        _json_dumps(row_payload.get("rejection_reasons") or []),
+                        _json_dumps(row_payload),
+                        created_at,
+                    ),
+                )
+                connection.execute("DELETE FROM model_calibration_bins WHERE calibration_audit_id = ?", (audit_id,))
+                connection.executemany(
+                    """
+                    INSERT INTO model_calibration_bins(
+                        id, calibration_audit_id, bin_type, bin_key, sample_size, observed_average_r,
+                        observed_win_rate, profit_factor, max_drawdown_r, metrics_json, created_at
+                    )
+                    VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    [
+                        (
+                            _stable_id("calibration_bin", audit_id, bin_item.get("bin_type"), bin_item.get("bin_key") or bin_item.get("label")),
+                            audit_id,
+                            str(bin_item.get("bin_type") or "score"),
+                            str(bin_item.get("bin_key") or bin_item.get("label") or "unknown"),
+                            int(bin_item.get("sample_size") or 0),
+                            float(bin_item.get("observed_average_r") or bin_item.get("average_r") or 0.0),
+                            float(bin_item.get("observed_win_rate") or bin_item.get("win_rate") or 0.0),
+                            float(bin_item.get("profit_factor") or 0.0),
+                            float(bin_item.get("max_drawdown_r") or 0.0),
+                            _json_dumps(bin_item),
+                            created_at,
+                        )
+                        for bin_item in bins
+                    ],
+                )
+                connection.commit()
+            finally:
+                if str(self.store.path) != ":memory:":
+                    connection.close()
+        return row_payload | {"bins_written": len(bins)}
+
+    def get(self, calibration_audit_id: str) -> dict[str, Any] | None:
+        connection = self.store.connect()
+        try:
+            row = connection.execute(
+                "SELECT payload_json FROM model_calibration_audits WHERE calibration_audit_id = ?",
+                (calibration_audit_id,),
+            ).fetchone()
+            return _json_loads(row["payload_json"]) if row else None
+        finally:
+            if str(self.store.path) != ":memory:":
+                connection.close()
+
+    def latest(self, model_version: str) -> dict[str, Any] | None:
+        items = self.list(model_version, limit=1)
+        return items[0] if items else None
+
+    def list(self, model_version: str, limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:
+        connection = self.store.connect()
+        try:
+            rows = connection.execute(
+                """
+                SELECT payload_json FROM model_calibration_audits
+                WHERE model_version = ?
+                ORDER BY created_at DESC
+                LIMIT ? OFFSET ?
+                """,
+                (model_version, limit, offset),
+            ).fetchall()
+            return [_json_loads(row["payload_json"]) for row in rows]
+        finally:
+            if str(self.store.path) != ":memory:":
+                connection.close()
+
+    def list_bins(
+        self,
+        calibration_audit_id: str,
+        limit: int = 500,
+        offset: int = 0,
+        bin_type: str | None = None,
+    ) -> builtins.list[dict[str, Any]]:
+        clauses = ["calibration_audit_id = ?"]
+        params: list[Any] = [calibration_audit_id]
+        if bin_type:
+            clauses.append("bin_type = ?")
+            params.append(bin_type)
+        sql = "SELECT * FROM model_calibration_bins WHERE " + " AND ".join(clauses)  # noqa: S608 - fixed clauses.
+        sql += " ORDER BY bin_type, bin_key LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
+        connection = self.store.connect()
+        try:
+            output = []
+            for row in connection.execute(sql, params).fetchall():
+                data = dict(row)
+                data["metrics"] = _json_loads(data.pop("metrics_json"))
+                output.append(data)
+            return output
+        finally:
+            if str(self.store.path) != ":memory:":
+                connection.close()
+
+
+class ModelComparisonRepository:
+    def __init__(self, store: SQLiteStore) -> None:
+        self.store = store
+
+    def save(self, comparison: dict[str, Any]) -> dict[str, Any]:
+        payload = _payload(comparison)
+        created_at = str(payload.get("created_at") or _now_iso())
+        comparison_id = str(payload.get("comparison_id") or _stable_id("model_comparison", payload.get("comparison_type") or "model_comparison", created_at))
+        row_payload = payload | {"comparison_id": comparison_id, "created_at": created_at}
+        with self.store._lock:
+            connection = self.store.connect()
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO model_comparisons(
+                        comparison_id, comparison_type, model_versions_json, validation_report_ids_json,
+                        calibration_audit_ids_json, replay_run_ids_json, summary_json, payload_json, created_at
+                    )
+                    VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(comparison_id) DO UPDATE SET
+                        summary_json=excluded.summary_json,
+                        payload_json=excluded.payload_json
+                    """,
+                    (
+                        comparison_id,
+                        str(row_payload.get("comparison_type") or "model_comparison"),
+                        _json_dumps(row_payload.get("model_versions") or []),
+                        _json_dumps(row_payload.get("validation_report_ids") or []),
+                        _json_dumps(row_payload.get("calibration_audit_ids") or []),
+                        _json_dumps(row_payload.get("replay_run_ids") or []),
+                        _json_dumps(row_payload.get("summary") or {}),
+                        _json_dumps(row_payload),
+                        created_at,
+                    ),
+                )
+                connection.commit()
+            finally:
+                if str(self.store.path) != ":memory:":
+                    connection.close()
+        return row_payload
+
+    def get(self, comparison_id: str) -> dict[str, Any] | None:
+        connection = self.store.connect()
+        try:
+            row = connection.execute(
+                "SELECT payload_json FROM model_comparisons WHERE comparison_id = ?",
+                (comparison_id,),
+            ).fetchone()
+            return _json_loads(row["payload_json"]) if row else None
+        finally:
+            if str(self.store.path) != ":memory:":
+                connection.close()
+
+    def list_all(self, limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:
+        connection = self.store.connect()
+        try:
+            rows = connection.execute(
+                "SELECT payload_json FROM model_comparisons ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                (limit, offset),
+            ).fetchall()
+            return [_json_loads(row["payload_json"]) for row in rows]
+        finally:
+            if str(self.store.path) != ":memory:":
+                connection.close()
+
+
 class ActiveModelRepository:
     def __init__(self, store: SQLiteStore, model_runs: ModelRunRepository) -> None:
         self.store = store
@@ -2324,8 +2604,12 @@ class ReplayRepository:
         )
 
     def _matches_filter(self, replay_run: dict[str, Any], replay_filter: dict[str, Any]) -> bool:
-        if str(replay_run.get("simulation_type")) != "candidate_market_replay":
+        if replay_filter.get("simulation_type") and str(replay_run.get("simulation_type")) != str(replay_filter["simulation_type"]):
             return False
+        if replay_filter.get("replay_purpose"):
+            config = dict(replay_run.get("config") or {})
+            if str(config.get("replay_purpose") or replay_run.get("replay_purpose") or "") != str(replay_filter["replay_purpose"]):
+                return False
         symbols = [normalize_symbol(str(symbol)) for symbol in replay_filter.get("symbols") or []]
         if symbols and set(symbols) - {normalize_symbol(str(symbol)) for symbol in replay_run.get("symbols") or []}:
             return False
@@ -2907,6 +3191,8 @@ class RepositoryRegistry:
         self.model_runs = ModelRunRepository(self.store, self.settings)
         self.model_evidence_cells = ModelEvidenceCellRepository(self.store)
         self.candidate_score_audits = CandidateScoreAuditRepository(self.store)
+        self.model_calibration_audits = CalibrationAuditRepository(self.store)
+        self.model_comparisons = ModelComparisonRepository(self.store)
         self.active_models = ActiveModelRepository(self.store, self.model_runs)
         self.live_signals = LiveSignalRepository(self.store)
         self.scanner_runs = ScannerRunRepository(self.store)

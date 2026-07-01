@@ -176,7 +176,15 @@ class TrainRequest(BaseModel):
     setup_types: list[str] | None = None
     sides: list[str] | None = None
     replay_run_ids: list[str] | None = None
+    counterfactual_replay_run_ids: list[str] | None = None
+    portfolio_replay_run_ids: list[str] | None = None
     replay_filter: dict[str, Any] | None = None
+    outcome_source: str = "counterfactual_preferred"
+    require_counterfactual: bool = False
+    minimum_counterfactual_outcomes: int = 0
+    maximum_portfolio_only_fraction: float = 1.0
+    overlap_density_filters: list[str] | None = None
+    concurrency_bucket_filters: list[str] | None = None
     sensitivity_required: bool = False
     minimum_observed_outcomes: int = 5
     minimum_cell_sample_size: int = 5
@@ -195,6 +203,8 @@ class BacktestRequest(BaseModel):
 
 
 class ReplayBacktestRequest(BaseModel):
+    replay_purpose: str = "portfolio_execution"
+    simulation_type: str | None = None
     symbols: list[str] | None = None
     intervals: list[Literal["1min", "5min", "15min"]] = ["1min"]
     start: datetime
@@ -218,6 +228,8 @@ class ReplayBacktestRequest(BaseModel):
     minimum_reward_risk: float = 1.0
     minimum_confidence: float | None = None
     allow_overlapping_trades: bool = False
+    enforce_portfolio_constraints: bool | None = None
+    enforce_symbol_overlap: bool | None = None
     max_open_trades_per_symbol: int = 1
     max_open_trades_portfolio: int = 10
     cooldown_bars_after_loss: int = 0
@@ -227,6 +239,8 @@ class ReplayBacktestRequest(BaseModel):
     market_regime_filter: list[str] = Field(default_factory=list)
     time_bucket_filter: list[str] = Field(default_factory=list)
     allow_stale: bool = False
+    counterfactual_include_invalid_candidates: bool = False
+    counterfactual_result_label: str = "candidate_quality_evidence"
 
 
 class SensitivityRequest(BaseModel):
@@ -245,6 +259,33 @@ class BacktestComparisonRequest(BaseModel):
     replay_run_id: str
     label_run_id: str | None = None
     symbols: list[str] | None = None
+
+
+class CounterfactualComparisonRequest(BaseModel):
+    counterfactual_replay_run_id: str
+    portfolio_replay_run_id: str
+    symbols: list[str] | None = None
+    setups: list[str] | None = None
+
+
+class CalibrationAuditRequest(BaseModel):
+    validation_report_id: str | None = None
+    replay_run_ids: list[str] | None = None
+    outcome_source: str = "counterfactual_preferred"
+    score_bins: list[float] | None = None
+    minimum_high_grade_samples: int = 5
+    require_monotonic_score_bins: bool = False
+    require_take_outperforms_watch: bool = False
+    minimum_rank_correlation_score: float | None = None
+    max_allowed_calibration_warnings: int | None = None
+
+
+class ModelComparisonRequest(BaseModel):
+    model_versions: list[str]
+    validation_report_ids: list[str] | None = None
+    calibration_audit_ids: list[str] | None = None
+    replay_run_ids: list[str] | None = None
+    comparison_window: dict[str, Any] | None = None
 
 
 class ScoreCandidatesRequest(BaseModel):

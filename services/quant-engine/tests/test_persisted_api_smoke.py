@@ -363,6 +363,30 @@ def _run_persisted_api_vertical_slice(
             params={"status": "TAKEN"},
         ).json()
         assert all(trade["status"] == "TAKEN" for trade in taken_replay_trades["trades"])
+        counterfactual_replay = client.post(
+            "/backtest/replay",
+            json={
+                "symbols": ["AAPL", "SPY", "QQQ", "NVDA"],
+                "intervals": ["1min"],
+                "start": start.isoformat(),
+                "end": end.isoformat(),
+                "session": "rth",
+                "max_hold_minutes": 15,
+                "replay_purpose": "model_training_counterfactual",
+                "minimum_reward_risk": 0.5,
+                "allow_stale": False,
+                "feature_warmup_bars": 1,
+            },
+        ).json()
+        counterfactual_replay_run_id = counterfactual_replay["replay_run_id"]
+        assert counterfactual_replay["simulation_type"] == "model_training_counterfactual"
+        assert counterfactual_replay["summary_metrics"]["candidate_quality_mode"] is True
+        counterfactual_trades = client.get(
+            f"/backtest/replay/{counterfactual_replay_run_id}/trades",
+            params={"limit": 100_000},
+        ).json()
+        assert counterfactual_trades["trades"]
+        assert any((trade.get("metadata") or {}).get("counterfactual_observed") for trade in counterfactual_trades["trades"])
         combined_runs = client.get("/backtest/runs").json()
         assert replay_run_id in {
             run.get("replay_run_id") or run.get("report_id")
@@ -415,6 +439,18 @@ def _run_persisted_api_vertical_slice(
         assert comparison["status"] == "ok"
         comparison_detail = client.get(f"/backtest/comparisons/{comparison['comparison_id']}").json()
         assert comparison_detail["comparison_id"] == comparison["comparison_id"]
+        counterfactual_comparison = client.post(
+            "/backtest/compare-counterfactual-vs-portfolio",
+            json={
+                "counterfactual_replay_run_id": counterfactual_replay_run_id,
+                "portfolio_replay_run_id": replay_run_id,
+            },
+        ).json()
+        assert counterfactual_comparison["status"] == "ok"
+        counterfactual_comparison_detail = client.get(
+            f"/backtest/counterfactual-comparisons/{counterfactual_comparison['comparison_id']}"
+        ).json()
+        assert counterfactual_comparison_detail["comparison_type"] == "counterfactual_vs_portfolio"
 
         replay_aware_train = client.post(
             "/models/train",
@@ -425,7 +461,10 @@ def _run_persisted_api_vertical_slice(
                 "training_start": start.isoformat(),
                 "training_end": end.isoformat(),
                 "min_samples": 1,
-                "replay_run_ids": [replay_run_id],
+                "counterfactual_replay_run_ids": [counterfactual_replay_run_id],
+                "portfolio_replay_run_ids": [replay_run_id],
+                "outcome_source": "counterfactual_preferred",
+                "require_counterfactual": True,
                 "minimum_observed_outcomes": 1,
                 "minimum_cell_sample_size": 1,
                 "scoring_config": {"take_score_threshold": 50},
@@ -451,11 +490,40 @@ def _run_persisted_api_vertical_slice(
         assert scored_candidates["scores"]
         score_audits = client.get(f"/models/{replay_aware_model_version}/score-audits").json()
         assert score_audits["score_audits"]
+        calibration_audit = client.post(
+            f"/models/{replay_aware_model_version}/calibration-audit",
+            json={
+                "replay_run_ids": [counterfactual_replay_run_id],
+                "outcome_source": "counterfactual_only",
+                "minimum_high_grade_samples": 1,
+            },
+        ).json()
+        calibration_audit_id = calibration_audit["calibration_audit_id"]
+        assert calibration_audit["status"] == "ok"
+        assert calibration_audit["model_version"] == replay_aware_model_version
+        calibration_list = client.get(f"/models/{replay_aware_model_version}/calibration-audits").json()
+        assert calibration_audit_id in {audit["calibration_audit_id"] for audit in calibration_list["calibration_audits"]}
+        calibration_detail = client.get(f"/models/calibration-audits/{calibration_audit_id}").json()
+        assert calibration_detail["calibration_audit_id"] == calibration_audit_id
+        calibration_bins = client.get(f"/models/calibration-audits/{calibration_audit_id}/bins").json()
+        assert calibration_bins["bins"]
+        model_comparison = client.post(
+            "/models/compare",
+            json={
+                "model_versions": [replay_aware_model_version],
+                "calibration_audit_ids": [calibration_audit_id],
+                "replay_run_ids": [counterfactual_replay_run_id, replay_run_id],
+            },
+        ).json()
+        assert model_comparison["status"] == "ok"
         replay_aware_validation = client.post(
             "/models/validate",
             params={
                 "model_version": replay_aware_model_version,
                 "validation_mode": "replay_aware_walk_forward",
+                "training_replay_run_ids": counterfactual_replay_run_id,
+                "validation_replay_run_ids": counterfactual_replay_run_id,
+                "calibration_audit_id": calibration_audit_id,
             },
         ).json()
         assert replay_aware_validation["validation_mode"] == "replay_aware_walk_forward"
@@ -555,6 +623,26 @@ def _run_persisted_api_vertical_slice(
             "/exports/replay-aware-validation.xlsx",
             json={"kind": "replay-aware-validation", "run_id": replay_aware_validation["report_id"]},
         ).json()
+        calibration_audit_export = client.post(
+            "/exports/calibration-audit.xlsx",
+            json={"kind": "calibration-audit", "run_id": calibration_audit_id},
+        ).json()
+        calibration_bins_csv = client.post(
+            "/exports/calibration-bins.csv",
+            json={"kind": "calibration-bins", "run_id": calibration_audit_id},
+        ).json()
+        calibration_bins_xlsx = client.post(
+            "/exports/calibration-bins.xlsx",
+            json={"kind": "calibration-bins", "run_id": calibration_audit_id},
+        ).json()
+        calibration_metrics_json = client.post(
+            "/exports/calibration-metrics.json",
+            json={"kind": "calibration-metrics", "run_id": calibration_audit_id},
+        ).json()
+        model_comparison_export = client.post(
+            "/exports/model-comparison.xlsx",
+            json={"kind": "model-comparison", "run_id": model_comparison["comparison_id"]},
+        ).json()
         review = client.post("/review/daily").json()
         persisted_review = client.get(f"/review/daily/{review['date']}").json()
         daily_export = client.post("/exports/daily-review.xlsx", json={"kind": "daily-review"}).json()
@@ -579,6 +667,11 @@ def _run_persisted_api_vertical_slice(
         assert score_audits_csv["rows"] >= 1
         assert score_audits_xlsx["rows"] >= 1
         assert replay_aware_validation_export["status"] == "ok"
+        assert calibration_audit_export["status"] == "ok"
+        assert calibration_bins_csv["rows"] == len(calibration_bins["bins"])
+        assert calibration_bins_xlsx["rows"] == len(calibration_bins["bins"])
+        assert calibration_metrics_json["status"] == "ok"
+        assert model_comparison_export["status"] == "ok"
         assert {"Live Signals", "Model Info"} <= _sheet_names(xlsx_export["path"])
         assert {"Live Signals", "Model Info"} <= _sheet_names(backtest_export["path"])
         assert {
@@ -607,6 +700,9 @@ def _run_persisted_api_vertical_slice(
         assert {"Evidence Cells", "By Symbol", "By Setup"} <= _sheet_names(evidence_cells_xlsx["path"])
         assert {"Score Audits"} <= _sheet_names(score_audits_xlsx["path"])
         assert {"Summary", "Walk Forward Windows", "Rejection Reasons"} <= _sheet_names(replay_aware_validation_export["path"])
+        assert {"Summary", "Score Bins", "Grade Bins", "Action Bins", "Provenance"} <= _sheet_names(calibration_audit_export["path"])
+        assert {"Calibration Bins"} <= _sheet_names(calibration_bins_xlsx["path"])
+        assert {"Summary", "Models", "Calibration Metrics", "Warnings"} <= _sheet_names(model_comparison_export["path"])
         assert review["signals_fired"] + review["signals_skipped"] == len(live_signals)
         assert persisted_review["status"] == "local-file"
         assert len(daily_export["paths"]) == 3
@@ -627,8 +723,11 @@ def _run_persisted_api_vertical_slice(
     assert len(reopened.replays.list_trades(replay_run_id, limit=100_000)) == replay_trade_count
     assert reopened.replay_sensitivity.get(sensitivity_run_id)["replay_run_id"] == replay_run_id
     assert reopened.backtest_comparisons.get(comparison["comparison_id"])["replay_run_id"] == replay_run_id
+    assert reopened.backtest_comparisons.get(counterfactual_comparison["comparison_id"])["comparison_type"] == "counterfactual_vs_portfolio"
     assert reopened.model_evidence_cells.count(replay_aware_model_version) == evidence["summary"]["cell_count"]
     assert reopened.candidate_score_audits.list(replay_aware_model_version)
+    assert reopened.model_calibration_audits.get(calibration_audit_id)["model_version"] == replay_aware_model_version
+    assert reopened.model_comparisons.get(model_comparison["comparison_id"])["comparison_type"] == "model_comparison"
     assert reopened.active_models.get_active()["model_version"] == replacement_version
     assert reopened.scanner_runs.latest()["scanner_run_id"] == scanner_start["scanner_run_id"]
     assert len(reopened.live_signals.list_latest()) == len(live_signals)
@@ -652,6 +751,11 @@ def _run_persisted_api_vertical_slice(
         score_audits_csv["path"],
         score_audits_xlsx["path"],
         replay_aware_validation_export["path"],
+        calibration_audit_export["path"],
+        calibration_bins_csv["path"],
+        calibration_bins_xlsx["path"],
+        calibration_metrics_json["path"],
+        model_comparison_export["path"],
         *replay_summary_export["paths"],
         *daily_export["paths"],
         model_dir / "active_model.json",

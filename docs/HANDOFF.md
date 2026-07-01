@@ -164,9 +164,9 @@ curl -s -X POST http://localhost:8000/exports/sensitivity-summary.xlsx \
 
 ## Exact Next Recommended Phase
 
-Phase 9: counterfactual replay and calibration follow-through.
+Phase 10: calibration drift reporting, larger replay-window orchestration, and optional backend/CLI reporting polish.
 
-The next phase should add explicit `model_training_counterfactual` replay, Timescale compression/retention policies if needed, richer operational dashboards or CLI reports if requested, calibration research against sampled intraday data, and FMP entitlement follow-through. Do not add broker execution, WebSocket scope, options data, self-learning language, or profitability claims in that phase.
+The next phase should expand calibration drift diagnostics, add richer multi-window replay selection/reporting, consider Timescale compression/retention policies if volume requires them, and optionally expose Phase 9 artifacts in the frontend without changing execution boundaries. Do not add broker execution, WebSocket scope, options data, self-learning language, or profitability claims.
 
 ## Phase 8 Replay-Aware Model Selection
 
@@ -217,3 +217,49 @@ curl -s -X POST http://localhost:8000/exports/replay-aware-validation.xlsx \
 Safe to trust: deterministic replay outcome dataset rules, persisted evidence cells, shrinkage/backoff hierarchy, score audits, replay-aware activation guard, and SQLite/Postgres persistence once migration `0005_phase8_replay_aware_models` is applied.
 
 Not safe to trust: `signal_quality_score` as a calibrated probability, replay as live fill proof, portfolio-overlap skipped candidates as losses, or any output as a profitability claim.
+
+## Phase 9 Counterfactual Replay And Calibration
+
+Run counterfactual replay:
+
+```bash
+curl -s -X POST http://localhost:8000/backtest/replay \
+  -H 'content-type: application/json' \
+  -d '{"replay_purpose":"model_training_counterfactual","symbols":["AAPL"],"intervals":["1min"],"start":"2026-06-01T13:30:00Z","end":"2026-06-01T20:00:00Z"}'
+```
+
+Train replay-aware evidence from counterfactual outcomes:
+
+```bash
+curl -s -X POST http://localhost:8000/models/train \
+  -H 'content-type: application/json' \
+  -d '{"model_type":"replay_aware_baseline","outcome_source":"counterfactual_preferred","counterfactual_replay_run_ids":["{counterfactual_run_id}"],"portfolio_replay_run_ids":["{portfolio_run_id}"],"require_counterfactual":true,"training_start":"2026-06-01T13:30:00Z","training_end":"2026-06-01T20:00:00Z"}'
+```
+
+Run calibration audit:
+
+```bash
+curl -s -X POST http://localhost:8000/models/{model_version}/calibration-audit \
+  -H 'content-type: application/json' \
+  -d '{"replay_run_ids":["{counterfactual_run_id}"],"outcome_source":"counterfactual_only"}'
+```
+
+Require calibration for activation:
+
+```bash
+curl -s -X POST 'http://localhost:8000/models/activate?model_version={model_version}&validation_mode=replay_aware_walk_forward&calibration_audit_required=true&calibration_audit_id={calibration_audit_id}'
+```
+
+Compare counterfactual vs portfolio replay:
+
+```bash
+curl -s -X POST http://localhost:8000/backtest/compare-counterfactual-vs-portfolio \
+  -H 'content-type: application/json' \
+  -d '{"counterfactual_replay_run_id":"{counterfactual_run_id}","portfolio_replay_run_id":"{portfolio_run_id}"}'
+```
+
+Scanner behavior: if the active replay-aware model requires calibration and the audit is missing or failed, scanner output suppresses actionable TAKE and emits `calibration_required_or_failed`. Score reasons include model version, outcome source, calibration status, score audit ID, and evidence keys when available.
+
+Safe to trust: persisted replay/config provenance, counterfactual candidate-quality evidence, calibration warnings/rejection reasons, and activation/scanner calibration gates.
+
+Not safe to trust: counterfactual replay as executable portfolio P/L, `signal_quality_score` as calibrated probability, or any replay/calibration metric as a profitability claim.
