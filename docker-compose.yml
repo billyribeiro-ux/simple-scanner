@@ -1,0 +1,31 @@
+services:
+  postgres:
+    image: timescale/timescaledb:latest-pg17
+    container_name: adaptive-market-decoder-postgres
+    environment:
+      POSTGRES_DB: adaptive_market_decoder
+      POSTGRES_USER: amd
+      POSTGRES_PASSWORD: amd
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U amd -d adaptive_market_decoder"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: adaptive-market-decoder-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:

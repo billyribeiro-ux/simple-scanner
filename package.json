@@ -1,0 +1,20 @@
+{
+  "name": "adaptive-market-decoder",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@11.5.2",
+  "engines": {
+    "node": "24.18.0"
+  },
+  "scripts": {
+    "dev": "pnpm --filter @amd/web dev",
+    "build": "pnpm --filter @amd/shared build && pnpm --filter @amd/web build",
+    "check": "pnpm --filter @amd/shared check && pnpm --filter @amd/web check",
+    "test": "pnpm --filter @amd/shared test && pnpm --filter @amd/web test",
+    "lint": "pnpm --filter @amd/web lint"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.61.1",
+    "prettier": "^3.6.2"
+  }
+}
