@@ -73,4 +73,13 @@ The Phase 2 quant core favors deterministic, testable Python loops over prematur
 - Research-cycle jobs still rely on the existing cycle bounds such as `max_window_count`; operators should dry-run before expensive replay/window work.
 - Job lists and events are paginated by `limit` and `offset`.
 - Job payloads/results should remain compact metadata and artifact references, not large raw market-data blobs.
-- Future workerization should add explicit leases, heartbeats, retry policy, payload/result size limits, and artifact reuse by config hash before increasing throughput.
+- Phase 14 added explicit leases, heartbeats, attempt counts, stale recovery, and a bounded one-shot worker command before increasing throughput.
+- Future performance work should add payload/result size limits and artifact reuse by config hash before widening scheduler job volume.
+
+## Phase 14 Scheduler Worker Performance Notes
+
+- `make scheduler-worker-once` leases at most `3` jobs by default and is hard-capped by the same `10` job bound.
+- Lease acquisition uses the persisted queue order and avoids long-lived polling.
+- Heartbeat and release events add small constant-size writes per job.
+- Stale recovery scans only expired `RUNNING` jobs with a bounded limit.
+- The worker remains an operator command, not a hot-path scanner or autonomous loop.

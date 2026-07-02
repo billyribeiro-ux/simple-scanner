@@ -7,7 +7,7 @@ LOCAL_POSTGRES_HOST ?= localhost
 LOCAL_POSTGRES_PORT ?= 15432
 LOCAL_POSTGRES_DB ?= adaptive_market_decoder
 
-.PHONY: help doctor frontend-doctor setup setup-backend require-backend-venv quant-test backend-test backend-lint backend-typecheck api-smoke api-smoke-sqlite api-smoke-postgres repository-parity-test replay-test replay-sensitivity-test replay-window-test model-review-test research-cycle-test research-status-test scheduler-test scheduler-status export-test fmp-smoke dev api-dev web-dev db-up db-down db-migrate db-inspect db-diagnostics db-query-diagnostics db-reset-dev ingest features labels train validate backtest scanner export test lint typecheck
+.PHONY: help doctor frontend-doctor setup setup-backend require-backend-venv quant-test backend-test backend-lint backend-typecheck api-smoke api-smoke-sqlite api-smoke-postgres repository-parity-test replay-test replay-sensitivity-test replay-window-test model-review-test research-cycle-test research-status-test scheduler-test scheduler-status scheduler-worker-once scheduler-recover-stale export-test fmp-smoke dev api-dev web-dev db-up db-down db-migrate db-inspect db-diagnostics db-query-diagnostics db-reset-dev ingest features labels train validate backtest scanner export test lint typecheck
 
 help:
 	@printf "Adaptive Market Decoder commands\n\n"
@@ -44,6 +44,8 @@ help:
 	@printf "  make research-status-test Run operations research status and decision ledger tests\n"
 	@printf "  make scheduler-test      Run bounded scheduler persistence/service/API tests\n"
 	@printf "  make scheduler-status    Print non-secret local scheduler status\n"
+	@printf "  make scheduler-worker-once Run bounded local scheduler worker exactly once\n"
+	@printf "  make scheduler-recover-stale Recover stale scheduler leases once without leasing new jobs\n"
 	@printf "  make export-test        Run export workbook/CSV tests\n"
 	@printf "  make fmp-smoke           Run optional live FMP REST smoke if FMP_API_KEY is configured\n"
 	@printf "  make test lint typecheck Run backend and frontend quality gates\n"
@@ -136,10 +138,16 @@ research-status-test: require-backend-venv
 	cd $(SERVICE_DIR) && PYTHONPATH=. .venv/bin/python -m pytest tests/quant/test_phase11_research_governance.py -k "status or ledger or export"
 
 scheduler-test: require-backend-venv
-	cd $(SERVICE_DIR) && PYTHONPATH=. .venv/bin/python -m pytest tests/quant/test_phase13_scheduler.py tests/test_scheduler_api.py tests/test_phase13_docs.py
+	cd $(SERVICE_DIR) && PYTHONPATH=. .venv/bin/python -m pytest tests/quant/test_phase13_scheduler.py tests/quant/test_phase14_scheduler_worker.py tests/test_scheduler_api.py tests/test_phase13_docs.py
 
 scheduler-status: require-backend-venv
 	PYTHONPATH=$(SERVICE_DIR) $(SERVICE_DIR)/.venv/bin/python scripts/scheduler_status.py
+
+scheduler-worker-once: require-backend-venv
+	PYTHONPATH=$(SERVICE_DIR) $(SERVICE_DIR)/.venv/bin/python scripts/scheduler_worker_once.py
+
+scheduler-recover-stale: require-backend-venv
+	PYTHONPATH=$(SERVICE_DIR) $(SERVICE_DIR)/.venv/bin/python scripts/scheduler_worker_once.py --recover-only
 
 export-test: require-backend-venv
 	cd $(SERVICE_DIR) && PYTHONPATH=. .venv/bin/python -m pytest tests/test_exports.py

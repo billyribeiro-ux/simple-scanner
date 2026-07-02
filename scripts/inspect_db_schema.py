@@ -53,7 +53,7 @@ DEFAULT_POSTGRES_PASSWORD = os.environ.get("LOCAL_POSTGRES_PASSWORD", "amd")
 DEFAULT_POSTGRES_HOST = os.environ.get("LOCAL_POSTGRES_HOST", "localhost")
 DEFAULT_POSTGRES_PORT = os.environ.get("LOCAL_POSTGRES_PORT", "15432")
 DEFAULT_POSTGRES_DB = os.environ.get("LOCAL_POSTGRES_DB", "adaptive_market_decoder")
-EXPECTED_REVISION = "0009_phase13_scheduler"
+EXPECTED_REVISION = "0010_phase14_scheduler_worker"
 EXPECTED_INDEXES = {
     "ix_backtest_comparisons_replay_created",
     "ix_candidate_signals_replay_lookup",
@@ -91,6 +91,8 @@ EXPECTED_INDEXES = {
     "ix_replay_window_sets_status_created",
     "ix_scheduler_job_events_job_created",
     "ix_scheduler_job_events_type_created",
+    "ix_scheduler_jobs_lease_expires",
+    "ix_scheduler_jobs_lease_owner",
     "ix_scheduler_jobs_research_cycle",
     "ix_scheduler_jobs_status_scheduled",
     "ix_scheduler_jobs_type_status",
@@ -202,6 +204,13 @@ EXPECTED_COLUMNS = {
         "payload_json",
         "result_json",
         "warnings_json",
+        "lease_owner",
+        "lease_expires_at",
+        "heartbeat_at",
+        "attempt_count",
+        "max_attempts",
+        "timeout_seconds",
+        "last_error",
     },
     "scheduler_job_events": {"event_id", "job_id", "event_type", "metadata_json"},
     "replay_window_sets": {"window_set_id", "window_mode", "summary_json", "payload_json"},

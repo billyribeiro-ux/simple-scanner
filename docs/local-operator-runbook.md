@@ -1,6 +1,6 @@
 # Local Operator Runbook
 
-Status date: 2026-07-01
+Status date: 2026-07-02
 
 Adaptive Market Decoder is a local-first scanner and research platform. It does not route orders, place trades, connect to brokers, automatically approve proposals, automatically activate scanner models, call itself self-learning, or claim profitability.
 
@@ -102,6 +102,8 @@ Open `http://localhost:5173`.
 ```bash
 make scheduler-test
 make scheduler-status
+make scheduler-worker-once
+make scheduler-recover-stale
 ```
 
 Example create job:
@@ -121,6 +123,14 @@ curl -s -X POST http://localhost:8000/scheduler/jobs/run-pending \
 ```
 
 Scheduler jobs never approve proposals, activate models, route orders, place trades, or call broker/order routes.
+
+Example one-shot worker run:
+
+```bash
+make scheduler-worker-once
+```
+
+This leases a bounded number of queued jobs, runs them, releases leases, and exits. Use `make scheduler-recover-stale` to recover expired leases once without leasing new work.
 
 ## Recovery Procedures
 

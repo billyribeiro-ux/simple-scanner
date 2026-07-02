@@ -8,6 +8,7 @@ from sqlalchemy import create_engine, text
 
 from app.config import get_settings
 from app.db.repositories import (
+    EXPECTED_ALEMBIC_REVISION,
     EXPECTED_TABLES,
     PersistenceConfigurationError,
     RepositoryRegistry,
@@ -577,7 +578,7 @@ def test_repository_core_contract_parity(tmp_path, monkeypatch, backend: str) ->
             "warnings": [],
             "config_hash": "config-hash",
             "input_fingerprint": "input-fingerprint",
-            "database_revision": "0009_phase13_scheduler",
+            "database_revision": EXPECTED_ALEMBIC_REVISION,
             "persistence_backend": backend,
             "created_at": datetime.now(UTC).isoformat(),
         }
@@ -659,12 +660,51 @@ def test_repository_core_contract_parity(tmp_path, monkeypatch, backend: str) ->
         "Parity scheduler event.",
         {"secret_free": True},
     )
+    worker_job = repo.scheduler_jobs.save(
+        {
+            "job_id": "parity-scheduler-worker-job",
+            "job_type": "data_quality_report",
+            "status": "QUEUED",
+            "priority": 50,
+            "payload": {"symbols": ["AAPL"]},
+            "result": {},
+            "warnings": [],
+            "created_by": "test",
+            "max_attempts": 2,
+        }
+    )
+    leased_worker_job = repo.scheduler_jobs.lease(
+        "parity-scheduler-worker-job",
+        lease_owner="parity-worker",
+        lease_seconds=60,
+    )
+    assert leased_worker_job is not None
+    assert leased_worker_job["status"] == "RUNNING"
+    assert leased_worker_job["lease_owner"] == "parity-worker"
+    assert leased_worker_job["attempt_count"] == 1
+    assert leased_worker_job["lease_expires_at"]
+    heartbeat_worker_job = repo.scheduler_jobs.heartbeat(
+        "parity-scheduler-worker-job",
+        lease_owner="parity-worker",
+        lease_seconds=60,
+    )
+    assert heartbeat_worker_job is not None
+    assert heartbeat_worker_job["heartbeat_at"]
+    released_worker_job = repo.scheduler_jobs.release(
+        "parity-scheduler-worker-job",
+        lease_owner="parity-worker",
+        status="QUEUED",
+    )
+    assert released_worker_job is not None
+    assert released_worker_job["lease_owner"] is None
+    assert released_worker_job["status"] == "QUEUED"
     assert research_cycle["research_cycle_id"] == "parity-research-cycle"
     assert cycle_artifact["cycle_artifact_id"]
     assert champion_comparison["comparison_id"] == "parity-champion-comparison"
     assert proposal["proposal_id"] == "parity-proposal"
     assert decision["decision_id"] == "parity-decision"
     assert scheduler_job["job_id"] == "parity-scheduler-job"
+    assert worker_job["job_id"] == "parity-scheduler-worker-job"
     assert scheduler_event["event_id"]
 
     reopened = RepositoryRegistry(settings=get_settings())
@@ -689,6 +729,10 @@ def test_repository_core_contract_parity(tmp_path, monkeypatch, backend: str) ->
     assert reopened.model_proposals.get("parity-proposal")["status"] == "PROPOSED"
     assert reopened.model_decision_ledger.list(proposal_id="parity-proposal")[0]["decision_id"] == "parity-decision"
     assert reopened.scheduler_jobs.get("parity-scheduler-job")["status"] == "QUEUED"
+    reopened_worker_job = reopened.scheduler_jobs.get("parity-scheduler-worker-job")
+    assert reopened_worker_job["status"] == "QUEUED"
+    assert reopened_worker_job["attempt_count"] == 1
+    assert reopened_worker_job["lease_owner"] is None
     assert reopened.scheduler_jobs.list_events("parity-scheduler-job")[0]["event_type"] == "JOB_CREATED"
     assert reopened.validation_reports.latest(model_version="parity-model-accepted")["activation_decision"] == "accepted"
     assert reopened.active_models.get_active()["model_version"] == "parity-model-accepted"

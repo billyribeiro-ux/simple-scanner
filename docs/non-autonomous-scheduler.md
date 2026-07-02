@@ -1,8 +1,8 @@
 # Non-Autonomous Scheduler
 
-Status date: 2026-07-01
+Status date: 2026-07-02
 
-The Phase 13 scheduler is a bounded local queue for research-cycle preparation only. It is not an autonomous learning loop, not a trading system, and not a model deployment system.
+The scheduler is a bounded local queue for research-cycle preparation only. Phase 14 adds persisted leases and a one-shot local worker command for request-bound job hardening. It is not an autonomous learning loop, not a trading system, and not a model deployment system.
 
 ## Supported Jobs
 
@@ -31,6 +31,7 @@ Every job stores:
 - result;
 - warnings;
 - research cycle ID when available;
+- lease owner, lease expiry, heartbeat, attempt count, timeout, and last non-secret error for the one-shot worker path;
 - status timestamps;
 - failure or block reason when applicable.
 
@@ -57,6 +58,15 @@ GET /operations/scheduler-status
 ```
 
 `run-pending` is bounded. The default is `3` jobs and the hard cap is `10` jobs per request.
+
+## One-Shot Worker
+
+```bash
+make scheduler-worker-once
+make scheduler-recover-stale
+```
+
+`make scheduler-worker-once` leases at most a bounded batch, records a heartbeat, runs those jobs, releases the leases after terminal status, and exits. `make scheduler-recover-stale` recovers expired leases once without leasing new work. Neither command starts a background daemon, cron, infinite loop, or self-scheduling process.
 
 ## Guardrails
 

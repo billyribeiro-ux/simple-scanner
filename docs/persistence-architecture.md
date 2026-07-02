@@ -1,10 +1,10 @@
 # Persistence Architecture
 
-Status date: 2026-07-01
+Status date: 2026-07-02
 
 ## Summary
 
-The API route `_MEMORY` workflow state has been replaced with repository-backed persistence. The local-first API runtime uses SQLite at `data/local_repo.sqlite3` when no database URL is configured, and it uses PostgreSQL/TimescaleDB when `DATABASE_URL` points at a migrated Postgres database. Phase 13 verifies the same persisted API vertical slice against SQLite and keeps Postgres parity expectations in schema/migration tests, including candidate market replay, counterfactual replay, sensitivity, calibration audits, replay window sets/results, calibration drift reports, model review reports, research cycles, champion/challenger comparisons, model proposals, decision-ledger events, scheduler jobs/events, operations status, and exports. Postgres runtime execution is blocked in the current shell until Docker is reachable.
+The API route `_MEMORY` workflow state has been replaced with repository-backed persistence. The local-first API runtime uses SQLite at `data/local_repo.sqlite3` when no database URL is configured, and it uses PostgreSQL/TimescaleDB when `DATABASE_URL` points at a migrated Postgres database. Phase 14 verifies the same persisted API vertical slice against SQLite and Postgres, including candidate market replay, counterfactual replay, sensitivity, calibration audits, replay window sets/results, calibration drift reports, model review reports, research cycles, champion/challenger comparisons, model proposals, decision-ledger events, scheduler jobs/events, bounded scheduler worker leases, operations status, and exports.
 
 This is still a scanner, research, validation, backtest, model metadata, signal, and export platform. It is not a broker, not an order router, and not a profitability engine.
 
@@ -12,7 +12,7 @@ This is still a scanner, research, validation, backtest, model metadata, signal,
 
 - Local default: `data/local_repo.sqlite3`, ignored by git along with SQLite WAL sidecars.
 - Configured SQLite: `sqlite:///...` paths, including `AMD_SQLITE_PATH` for local test/runtime overrides.
-- PostgreSQL runtime: sync SQLAlchemy/psycopg repository store against Alembic revision `0009_phase13_scheduler` on local host port `15432`.
+- PostgreSQL runtime: sync SQLAlchemy/psycopg repository store against Alembic revision `0010_phase14_scheduler_worker` on local host port `15432`.
 - Export artifacts: `exports/`, ignored except `.gitkeep`.
 - Model artifacts: `model_artifacts/`, ignored except `.gitkeep`.
 - FMP secrets: `FMP_API_KEY` from environment or ignored env files only.
@@ -92,6 +92,7 @@ Backend selection is explicit:
 - `/scheduler/jobs/{job_id}/run` executes one queued job synchronously and writes job status/events.
 - `/scheduler/jobs/run-pending` runs a bounded pending batch.
 - `/operations/scheduler-status` reads scheduler queue status, latest job, latest failed job, and latest events without secrets.
+- `make scheduler-worker-once` is a terminal-only bounded worker path that leases queued jobs, heartbeats, records terminal status, clears leases, and exits.
 - `/data/quality-report` reads persisted bars, pipeline windows, and provider requests to report data quality.
 - `/models/validate` writes validation reports.
 - `/models/validate?validation_mode=replay_aware_walk_forward` writes replay-aware validation reports with purpose `replay_aware_validation`.
@@ -183,7 +184,7 @@ The aligned table set is:
 
 ## Current Limits
 
-- Postgres is implemented for the repository contract, and `bars` is created as a Timescale hypertable when the extension is available. Compression and retention policies remain future work.
+- Postgres is implemented and verified for the repository contract, and `bars` is created as a Timescale hypertable when the extension is available. Compression and retention policies remain future work.
 - SQLite remains the local default for no-configuration development.
 - No live FMP smoke was executed because `FMP_API_KEY` is not loaded in the process environment or ignored env files.
 - Replay-aware meta-scoring is deterministic evidence scoring, not calibrated probability and not profitability proof.
@@ -214,8 +215,14 @@ Phase 11 adds explicit governance guardrails: a research cycle never silently ac
 
 ## Phase 13 Persistence Update
 
-PostgreSQL now verifies Alembic revision `0009_phase13_scheduler`. SQLite bootstrap and Postgres migrations include `scheduler_jobs` and `scheduler_job_events`.
+PostgreSQL verified Alembic revision `0009_phase13_scheduler` before Phase 14. SQLite bootstrap and Postgres migrations include `scheduler_jobs` and `scheduler_job_events`.
 
 New persisted API surfaces include scheduler job create/list/get/run/cancel/events, bounded run-pending, and operations scheduler status. Scheduler jobs persist across repository reinitialization, record events for every transition, redact secret-like payload/result/event fields, and block `refresh_data=true` jobs before provider access when `FMP_API_KEY` is missing.
 
 The scheduler never approves proposals, rejects proposals, activates proposals, changes the active scanner model, connects to brokers, routes orders, or places trades.
+
+## Phase 14 Persistence Update
+
+PostgreSQL now verifies Alembic revision `0010_phase14_scheduler_worker`. SQLite bootstrap and Postgres migrations add nullable scheduler worker lease fields to `scheduler_jobs`: `lease_owner`, `lease_expires_at`, `heartbeat_at`, `attempt_count`, `max_attempts`, `timeout_seconds`, and `last_error`.
+
+The bounded worker path is terminal-only through `make scheduler-worker-once` and `make scheduler-recover-stale`. It leases queued jobs, records heartbeat/release events, recovers stale leases once when requested, and exits. It does not add a daemon, cron, infinite loop, automatic proposal approval, automatic model activation, broker execution, or order routing.

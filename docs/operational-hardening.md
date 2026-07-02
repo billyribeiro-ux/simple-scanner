@@ -1,10 +1,10 @@
 # Operational Hardening
 
-Status date: 2026-07-01
+Status date: 2026-07-02
 
 ## Scope
 
-Phase 13 hardens replay-aware model selection operations with a target frontend runtime check, a thin operator UI, a complete local runbook, Docker/Postgres recovery documentation, and a bounded non-autonomous scheduler for research preparation. It does not add broker execution, order routing, options data, market internals, WebSockets, calibrated ML, self-learning behavior, automatic model deployment, or profitability claims.
+Phase 14 hardens replay-aware model selection operations with verified local Docker/Postgres recovery and bounded scheduler worker leases. It does not add broker execution, order routing, options data, market internals, WebSockets, calibrated ML, self-learning behavior, automatic model deployment, or profitability claims.
 
 ## Frontend Runtime
 
@@ -38,15 +38,15 @@ Root package scripts and Playwright web-server startup call `corepack pnpm` inte
 Postgres/Timescale targets Alembic revision:
 
 ```text
-0009_phase13_scheduler
+0010_phase14_scheduler_worker
 ```
 
-`make db-inspect` expects the Phase 13 table set, replay sensitivity/comparison indexes, replay-aware evidence/score-audit indexes, calibration/drift/window/review/research-governance indexes, scheduler indexes, JSON columns, and `bars` as a Timescale hypertable when the extension is available.
+`make db-inspect` expects the Phase 14 table set, replay sensitivity/comparison indexes, replay-aware evidence/score-audit indexes, calibration/drift/window/review/research-governance indexes, scheduler and scheduler-lease indexes, JSON columns, and `bars` as a Timescale hypertable when the extension is available.
 
 Expected verified result after migration:
 
 ```text
-alembic_version=0009_phase13_scheduler
+alembic_version=0010_phase14_scheduler_worker
 missing_tables=none
 missing_indexes=none
 missing_constraints=none
@@ -94,6 +94,12 @@ Model proposals separate approval from activation. Approval writes proposal and 
 Scheduler jobs persist queue status, payloads, results, warnings, optional research cycle IDs, failed reasons, and timestamps. Scheduler events persist job lifecycle audit records. Both stores redact secret-like fields and never hold FMP keys or database credentials.
 
 The scheduler default pending-run bound is `3` jobs and the hard cap is `10` jobs per request. There is no uncontrolled background daemon, no infinite loop, and no auto-run toggle.
+
+## Phase 14 Scheduler Worker Fields
+
+`scheduler_jobs` now also stores `lease_owner`, `lease_expires_at`, `heartbeat_at`, `attempt_count`, `max_attempts`, `timeout_seconds`, and `last_error`. These fields support `make scheduler-worker-once` and `make scheduler-recover-stale`.
+
+The worker command is bounded and exits after one pass. It records `JOB_LEASED`, `JOB_HEARTBEAT`, `JOB_RELEASED`, and stale recovery events without changing proposal approval or model activation state.
 
 ## Diagnostics
 

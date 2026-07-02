@@ -521,6 +521,13 @@ scheduler_jobs = sa.Table(
     sa.Column("warnings_json", sa.JSON, nullable=False, server_default=sa.text("'[]'::jsonb")),
     sa.Column("research_cycle_id", sa.String(96), index=True),
     sa.Column("created_by", sa.String(128)),
+    sa.Column("lease_owner", sa.String(128), index=True),
+    sa.Column("lease_expires_at", sa.DateTime(timezone=True), index=True),
+    sa.Column("heartbeat_at", sa.DateTime(timezone=True)),
+    sa.Column("attempt_count", sa.Integer, nullable=False, server_default="0"),
+    sa.Column("max_attempts", sa.Integer, nullable=False, server_default="1"),
+    sa.Column("timeout_seconds", sa.Integer, nullable=False, server_default="900"),
+    sa.Column("last_error", sa.Text),
     sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
     sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
 )

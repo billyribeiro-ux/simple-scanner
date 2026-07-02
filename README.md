@@ -78,6 +78,8 @@ make research-cycle-test
 make research-status-test
 make scheduler-test
 make scheduler-status
+make scheduler-worker-once
+make scheduler-recover-stale
 make db-query-diagnostics
 make export-test
 make fmp-smoke
@@ -92,7 +94,7 @@ make test
 
 `make research-cycle-test` runs the controlled research cycle, champion/challenger, proposal lifecycle, and activation guard tests. `make research-status-test` runs the operations research-status, decision-ledger, and Phase 11 export subset.
 
-`make scheduler-test` runs the bounded non-autonomous scheduler persistence, service, API, and runbook regression tests. `make scheduler-status` prints a non-secret local scheduler queue summary.
+`make scheduler-test` runs the bounded non-autonomous scheduler persistence, service, API, one-shot worker, and runbook regression tests. `make scheduler-status` prints a non-secret local scheduler queue summary. `make scheduler-worker-once` leases and runs at most a bounded batch once, then exits; it is not a daemon. `make scheduler-recover-stale` recovers expired scheduler leases once without leasing new work.
 
 `make fmp-smoke` is optional and runs live FMP REST checks only when `FMP_API_KEY` is configured. Otherwise it skips with a non-secret message.
 
@@ -120,7 +122,7 @@ FastAPI selects the repository backend explicitly:
 8. For replay validation, pass an explicit `replay_run_id` or `replay_filter`.
 9. Run replay sensitivity and label-vs-replay comparison before treating replay evidence as model-selection input.
 10. Generate replay window sets, calibration drift reports, and model review reports when comparing model readiness across time.
-11. Use `/operations/scheduler` for bounded data-quality, dry-run, controlled research-cycle, or status-export preparation jobs.
+11. Use `/operations/scheduler` for bounded data-quality, dry-run, controlled research-cycle, or status-export preparation jobs; use `make scheduler-worker-once` only when an operator wants the local one-shot worker path.
 12. Start the scanner.
 13. Export live signals, replay summaries/trades, sensitivity artifacts, drift/model-review artifacts, history, backtests, operator status, or daily reviews.
 

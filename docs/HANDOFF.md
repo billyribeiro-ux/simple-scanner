@@ -1,10 +1,10 @@
 # Adaptive Market Decoder Handoff
 
-Report status date: 2026-07-01
+Report status date: 2026-07-02
 
 ## Executive State
 
-Phase 13 adds a local operator runbook, Docker/Postgres recovery documentation, and a bounded non-autonomous scheduler for research-cycle preparation. Node `24.18.0` is available through NVM and frontend target-runtime gates use pnpm `11.9.0` through Corepack. Python `3.14.6` is installed, `services/quant-engine/.venv` exists on Python `3.14.6`, and the SQLite/mocked-provider scheduler gates pass. Docker/Postgres verification remains blocked in this run because the local Docker socket is unavailable and Postgres on `localhost:15432` refuses connections.
+Phase 14 restores Docker/Postgres verification and adds bounded scheduler worker leases for request-bound job hardening. Node `24.18.0` remains the target runtime and frontend target-runtime gates use pnpm `11.9.0` through Corepack. Python `3.14.6` is installed, `services/quant-engine/.venv` exists on Python `3.14.6`, Postgres/TimescaleDB and Redis are healthy through Docker Compose, and Alembic now verifies at `0010_phase14_scheduler_worker`.
 
 This remains a local-first scanner, research, validation, backtest, signal, and export platform only. It is not a broker, auto-trader, order router, self-learning system, or profitability system.
 
@@ -14,7 +14,7 @@ This remains a local-first scanner, research, validation, backtest, signal, and 
 - Package manager: `pnpm@11.9.0` through Corepack
 - Python target: `3.14.6`, documented as the latest stable Python release for this project as of June 30, 2026
 - Target Node is available through NVM; use `source "$HOME/.nvm/nvm.sh" && nvm use 24.18.0`
-- Homebrew Node `25.3.0` exists but is not used for acceptance
+- Homebrew Node `25.3.0` exists but is not used for acceptance and currently fails before Corepack because a `simdjson` dynamic library is missing
 - Current local Python: `python3.14` and Homebrew `python3` report `3.14.6`
 - Backend venv: `services/quant-engine/.venv` on Python `3.14.6`
 
@@ -32,6 +32,7 @@ COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm install --frozen-lockfile
 make db-up
 make db-migrate
 make db-inspect
+make db-query-diagnostics
 ```
 
 The local Postgres/Timescale container is mapped to host port `15432` because this machine already has another Postgres on `5432` and another Docker project on `55432`.
@@ -55,6 +56,8 @@ make research-cycle-test
 make research-status-test
 make scheduler-test
 make scheduler-status
+make scheduler-worker-once
+make scheduler-recover-stale
 make export-test
 make db-query-diagnostics
 make fmp-smoke
@@ -101,6 +104,7 @@ The persisted contract now includes replay audit, sensitivity, replay-aware mode
 - `model_decision_ledger`: append-only governance events for cycle creation/completion, proposal transitions, activation requests, blocked activations, and explicit activations.
 - `scheduler_jobs`: bounded operator-queued research preparation jobs with status, priority, schedule time, payload, result, warnings, failure reason, and optional research cycle ID.
 - `scheduler_job_events`: append-only scheduler job events with event type, message, non-secret metadata, and timestamp.
+- `scheduler_jobs` Phase 14 worker fields: `lease_owner`, `lease_expires_at`, `heartbeat_at`, `attempt_count`, `max_attempts`, `timeout_seconds`, and `last_error`.
 
 Safe status fields are exposed through `GET /health`, `GET /config`, and `make doctor`: `persistence_backend`, `runtime_mode`, `database_configured`, `database_reachable`, `fallback_enabled`, and `fallback_reason`. Full database URLs, passwords, and API keys are never returned.
 
@@ -110,26 +114,26 @@ Safe status fields are exposed through `GET /health`, `GET /config`, and `make d
 - Repository-backed API route state instead of route-level `_MEMORY`.
 - SQLite local API persistence and reinitialization survival for bars, features, labels, replay runs/trades, model runs, active model, scanner runs/signals, exports, and daily reviews.
 - Postgres API persistence and reinitialization survival for the same vertical slice after `make db-migrate`.
-- Alembic migration and schema inspection expectations now target revision `0009_phase13_scheduler`; local Postgres execution is not verified in this shell because Docker is unavailable.
+- Alembic migration and schema inspection expectations now target revision `0010_phase14_scheduler_worker`; local Postgres execution is verified in this shell.
 - SQLite/Postgres repository parity for symbols, bars, features, labels, replay runs/trades, sensitivity runs/scenarios, comparisons, pipeline build windows, replay-aware evidence cells, candidate score audits, calibration audits, replay window sets/results, drift reports, model review reports, models, scanner runs, signals, provider requests, exports, and daily reviews.
 - CSV/XLSX/JSON export generation from persisted signals, replay runs/trades, replay sensitivity runs, replay-aware model summaries, evidence cells, score audits, replay-aware validation reports, calibration reports, replay window sets, calibration drift reports, model review reports, and daily reviews, with file hashes and workbook sheets recorded.
 - CSV/XLSX/JSON export generation for research cycles, model proposals, and champion/challenger comparisons from persisted source IDs, with file hashes and workbook sheet names recorded.
 - Approval of a model proposal is separate from activation. Explicit proposal activation requires `confirm_manual_activation=true`, accepted validation, non-blocking readiness, and a proposal recommendation that is eligible for activation.
 - The Phase 12 operator UI enforces approval/activation separation with a disabled activation panel until the proposal is approved, the confirmation checkbox is checked, and `ACTIVATE SCANNER MODEL` is typed.
-- The Phase 13 scheduler can queue and run data-quality reports, research-cycle dry-runs/runs, research-cycle exports, and operator-status exports; it cannot approve, reject, activate, deploy, route orders, or place trades.
+- The scheduler can queue and run data-quality reports, research-cycle dry-runs/runs, research-cycle exports, and operator-status exports; it cannot approve, reject, activate, deploy, route orders, or place trades.
+- The Phase 14 one-shot scheduler worker can lease, heartbeat, recover stale leases, release, and complete bounded queued jobs without starting a daemon or autonomous loop.
 - Activation guard requiring a persisted accepted validation report; replay-aware models specifically require accepted `replay_aware_walk_forward` validation.
 - Secret redaction behavior and absence of the supplied FMP key from repo files.
 
 ## What Is Not Safe To Trust Yet
 
 - Live FMP entitlement coverage. The live smoke was not run because `FMP_API_KEY` is not loaded into the process environment or ignored env files.
-- Current Postgres compose verification. Docker socket `/Users/billyribeiro/.docker/run/docker.sock` was unavailable in the Phase 12 run, so compose startup, migrations, schema inspection, and query diagnostics could not be re-run against Postgres.
 - Market replay as execution-grade reality. Replay is now auditable and sensitivity-tested, but fills are still simulated from OHLCV with conservative same-bar rules, configurable slippage/spread, and no true market depth.
 - Model calibration as a live probability. Calibration/drift reports are operational diagnostics, not calibrated probability estimates.
 - Live trading readiness. No broker execution or order routing exists.
 - Fully automated adaptation. Research cycles can compare and propose, but they do not silently activate models or mutate scanner behavior.
 
-## Phase 13 Operator Runbook And Scheduler
+## Phase 14 Operator Runbook, Postgres, And Scheduler
 
 Primary docs:
 
@@ -137,6 +141,10 @@ Primary docs:
 - `docs/operator-daily-procedure.md`
 - `docs/non-autonomous-scheduler.md`
 - `docs/docker-postgres-troubleshooting.md`
+- `docs/status/PHASE_14_PLAN_2026-07-01.md`
+- `docs/status/PHASE_14_COMPLETION_2026-07-01.md`
+- `docs/status/PHASE_14_POSTGRES_VERIFICATION_2026-07-01.md`
+- `docs/status/PHASE_14_SCHEDULER_WORKER_2026-07-01.md`
 
 Recover Docker/Postgres:
 
@@ -152,7 +160,7 @@ make db-inspect
 make db-query-diagnostics
 ```
 
-In this Phase 13 run, `docker info`, `docker compose ps`, `make db-up`, `make db-migrate`, `make db-inspect`, and `make db-query-diagnostics` remain blocked because the active Docker socket is missing. Do not claim Postgres recovery until these commands pass.
+In this Phase 14 run, `docker info`, `docker compose ps`, `make db-up`, `make db-migrate`, `make db-inspect`, `make db-query-diagnostics`, `make api-smoke-postgres`, and `make repository-parity-test` passed.
 
 Daily operator setup:
 
@@ -162,6 +170,8 @@ nvm use 24.18.0
 COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack prepare pnpm@11.9.0 --activate
 make doctor
 make scheduler-status
+make scheduler-worker-once
+make scheduler-recover-stale
 make api-dev
 make web-dev
 ```
@@ -186,6 +196,8 @@ curl -s http://localhost:8000/scheduler/jobs
 curl -s http://localhost:8000/scheduler/jobs/{job_id}
 curl -s http://localhost:8000/scheduler/jobs/{job_id}/events
 make scheduler-status
+make scheduler-worker-once
+make scheduler-recover-stale
 ```
 
 Confirm the scheduler does not activate models:
@@ -367,12 +379,12 @@ curl -s -X POST http://localhost:8000/exports/sensitivity-summary.xlsx \
 
 ## Current Blockers
 
-- Docker Desktop/daemon is not reachable from this shell. `docker compose up -d postgres redis`, `docker compose ps`, `make db-migrate`, `make db-inspect`, and `make db-query-diagnostics` are blocked until the Docker socket exists and Postgres is listening on `localhost:15432`.
 - Optional live FMP smoke requires `FMP_API_KEY` to be configured outside the committed repo.
+- Frontend acceptance still requires using Node `24.18.0` through NVM because the Homebrew Node `25.3.0` binary on this machine fails before Corepack.
 
 ## Exact Next Recommended Phase
 
-Phase 13 should add a bounded local operator runbook and optional non-autonomous scheduler for preparing daily research cycles, with queue/status visibility only. Do not add automatic activation, broker execution, WebSocket scope, options data, self-learning language, or profitability claims.
+Phase 15 should focus on artifact reuse and operator ergonomics around research cycles and scheduler outputs. Do not add automatic activation, broker execution, WebSocket scope, options data, self-learning language, autonomous scheduling, or profitability claims.
 
 ## Phase 8 Replay-Aware Model Selection Historical Notes
 
@@ -420,7 +432,7 @@ curl -s -X POST http://localhost:8000/exports/replay-aware-validation.xlsx \
   -d '{"kind":"replay-aware-validation","run_id":"{report_id}"}'
 ```
 
-Safe to trust: deterministic replay outcome dataset rules, persisted evidence cells, shrinkage/backoff hierarchy, score audits, replay-aware activation guard, and SQLite/Postgres persistence once migrations are applied through `0009_phase13_scheduler`.
+Safe to trust: deterministic replay outcome dataset rules, persisted evidence cells, shrinkage/backoff hierarchy, score audits, replay-aware activation guard, and SQLite/Postgres persistence once migrations are applied through `0010_phase14_scheduler_worker`.
 
 Not safe to trust: `signal_quality_score` as a calibrated probability, replay as live fill proof, portfolio-overlap skipped candidates as losses, or any output as a profitability claim.
 

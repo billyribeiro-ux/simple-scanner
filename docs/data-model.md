@@ -1,6 +1,6 @@
 # Data Model
 
-Core storage is designed around PostgreSQL with TimescaleDB when available. If the Timescale extension is not available, the same tables function as plain PostgreSQL tables. Phase 13 advances Alembic to revision `0009_phase13_scheduler`, adding bounded scheduler jobs and scheduler job events on top of Phase 11 research-governance persistence. The API repository runtime supports both SQLite local storage and PostgreSQL.
+Core storage is designed around PostgreSQL with TimescaleDB when available. If the Timescale extension is not available, the same tables function as plain PostgreSQL tables. Phase 14 advances Alembic to revision `0010_phase14_scheduler_worker`, adding bounded scheduler worker lease fields on top of Phase 13 scheduler persistence. The API repository runtime supports both SQLite local storage and PostgreSQL.
 
 ## Tables
 
@@ -33,7 +33,7 @@ Core storage is designed around PostgreSQL with TimescaleDB when available. If t
 - `champion_challenger_comparisons`: diagnostic champion-vs-challenger deltas, gates, readiness, recommendation, warnings, and context.
 - `model_proposals`: proposal lifecycle state, champion/challenger IDs and metrics, evidence summaries, pass/fail gates, approval metadata, and explicit activation metadata.
 - `model_decision_ledger`: append-only model-governance decisions for cycles, proposals, activation requests, blocked activations, and activations.
-- `scheduler_jobs`: bounded local research-preparation queue state, payloads, results, warnings, failure reasons, and optional research cycle links.
+- `scheduler_jobs`: bounded local research-preparation queue state, payloads, results, warnings, failure reasons, optional research cycle links, and bounded worker lease/heartbeat metadata.
 - `scheduler_job_events`: append-only scheduler job lifecycle events with redacted metadata.
 
 ## Signal Fields
@@ -76,8 +76,14 @@ The decision ledger is append-only for normal operation. It records evidence ref
 
 ## Phase 13 Update
 
-Alembic is now `0009_phase13_scheduler`. New persisted tables are `scheduler_jobs` and `scheduler_job_events`.
+Alembic `0009_phase13_scheduler` added `scheduler_jobs` and `scheduler_job_events`.
 
 Scheduler jobs can run data-quality reports, research-cycle dry-runs, controlled research-cycle runs, research-cycle exports, and operator-status exports. They are bounded, synchronous, and operator-triggered in V1. They never approve proposals, reject proposals, activate models, route orders, place trades, or change the active scanner model.
 
 Scheduler payloads, results, events, status responses, and exports are redacted before persistence. A job requesting `refresh_data=true` blocks without provider access when `FMP_API_KEY` is missing.
+
+## Phase 14 Update
+
+Alembic is now `0010_phase14_scheduler_worker`. `scheduler_jobs` adds `lease_owner`, `lease_expires_at`, `heartbeat_at`, `attempt_count`, `max_attempts`, `timeout_seconds`, and `last_error`.
+
+The local one-shot worker uses those fields to lease queued jobs, record heartbeat/release events, clear leases after terminal status, and recover expired leases once when requested. It does not add autonomous scheduling, broker execution, order routing, proposal approval, or model activation.

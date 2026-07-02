@@ -1,8 +1,8 @@
 # Docker And Postgres Troubleshooting
 
-Status date: 2026-07-01
+Status date: 2026-07-02
 
-Phase 13 verified that the compose file renders cleanly, but this shell still cannot reach Docker Desktop because `unix:///Users/billyribeiro/.docker/run/docker.sock` does not exist. Postgres on `localhost:15432` refuses connections while the daemon is unavailable.
+Phase 14 verified Docker Desktop, local Postgres/TimescaleDB, and Redis from this shell. These steps remain the recovery checklist if Docker Desktop or the local database becomes unavailable again.
 
 ## Diagnosis Commands
 
@@ -17,7 +17,7 @@ nc -zv localhost 15432
 make doctor
 ```
 
-Observed blocker in this run:
+Observed Phase 13 blocker that Phase 14 recovered:
 
 ```text
 failed to connect to the docker API at unix:///Users/billyribeiro/.docker/run/docker.sock
@@ -66,8 +66,21 @@ make db-query-diagnostics
 - `docker info` returns server information.
 - `docker compose ps` shows Postgres and Redis running or healthy.
 - `nc -zv localhost 15432` succeeds.
-- `make db-migrate` upgrades to `0009_phase13_scheduler`.
+- `make db-migrate` upgrades to `0010_phase14_scheduler_worker`.
 - `make db-inspect` reports no missing scheduler tables, indexes, constraints, JSON columns, or Timescale hypertable state.
+
+Verified Phase 14 result:
+
+```text
+alembic_version=0010_phase14_scheduler_worker
+missing_tables=none
+missing_indexes=none
+missing_constraints=none
+missing_columns=none
+missing_json_columns=none
+extensions=plpgsql,timescaledb
+timescale_hypertables=bars
+```
 
 ## If It Still Fails
 

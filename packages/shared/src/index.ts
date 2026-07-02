@@ -197,6 +197,13 @@ export const schedulerJobSchema = z.object({
   warnings: z.array(z.string()).optional(),
   research_cycle_id: z.string().nullable().optional(),
   created_by: z.string().nullable().optional(),
+  lease_owner: z.string().nullable().optional(),
+  lease_expires_at: z.string().nullable().optional(),
+  heartbeat_at: z.string().nullable().optional(),
+  attempt_count: z.number().nullable().optional(),
+  max_attempts: z.number().nullable().optional(),
+  timeout_seconds: z.number().nullable().optional(),
+  last_error: z.string().nullable().optional(),
   created_at: z.string().nullable().optional(),
   updated_at: z.string().nullable().optional()
 });

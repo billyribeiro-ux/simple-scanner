@@ -24,6 +24,8 @@ SCHEDULER_JOB_TYPES = {
 SCHEDULER_TERMINAL_STATUSES = {"COMPLETED", "FAILED", "CANCELLED", "BLOCKED"}
 DEFAULT_MAX_JOBS = 3
 MAX_JOBS_PER_RUN = 10
+DEFAULT_LEASE_SECONDS = 900
+MAX_LEASE_SECONDS = 86_400
 
 
 def _now() -> str:
@@ -158,11 +160,155 @@ class SchedulerService:
         if job.get("status") != "QUEUED":
             self._event(job_id, "JOB_RUN_BLOCKED", "Only queued scheduler jobs can be run.", {"status": job.get("status")})
             return job | {"status": "blocked", "reason": "only_queued_jobs_can_run"}
-        running = self.repos.scheduler_jobs.save(job | {"status": "RUNNING", "started_at": _now(), "updated_at": _now()})
+        running = self.repos.scheduler_jobs.save(
+            job
+            | {
+                "status": "RUNNING",
+                "started_at": _now(),
+                "updated_at": _now(),
+                "lease_owner": None,
+                "lease_expires_at": None,
+                "heartbeat_at": None,
+            }
+        )
         self._event(job_id, "JOB_STARTED", "Scheduler job started synchronously by operator.")
+        return self._finish_running_job(running)
+
+    def run_pending(self, *, max_jobs: int = DEFAULT_MAX_JOBS) -> dict[str, Any]:
+        bounded_max = max(1, min(int(max_jobs or DEFAULT_MAX_JOBS), MAX_JOBS_PER_RUN))
+        pending = self.repos.scheduler_jobs.list_pending(max_jobs=bounded_max)
+        results = [self.run_job(str(job["job_id"])) for job in pending]
+        return {
+            "status": "ok",
+            "max_jobs": bounded_max,
+            "jobs_run": len(results),
+            "results": results,
+            "scheduler_status": self.status(),
+        }
+
+    def run_worker_once(
+        self,
+        *,
+        max_jobs: int = DEFAULT_MAX_JOBS,
+        lease_owner: str | None = None,
+        lease_seconds: int = DEFAULT_LEASE_SECONDS,
+        recover_stale: bool = True,
+    ) -> dict[str, Any]:
+        bounded_max = max(1, min(int(max_jobs or DEFAULT_MAX_JOBS), MAX_JOBS_PER_RUN))
+        bounded_seconds = max(30, min(int(lease_seconds or DEFAULT_LEASE_SECONDS), MAX_LEASE_SECONDS))
+        owner = self._lease_owner(lease_owner)
+        recovered = self.recover_stale_leases(limit=bounded_max) if recover_stale else {"jobs_recovered": 0, "results": []}
+        leased_jobs = self.repos.scheduler_jobs.lease_next(
+            lease_owner=owner,
+            max_jobs=bounded_max,
+            lease_seconds=bounded_seconds,
+        )
+        results = []
+        for job in leased_jobs:
+            job_id = str(job["job_id"])
+            self._event(
+                job_id,
+                "JOB_LEASED",
+                "Scheduler job leased by bounded one-shot local worker.",
+                {"lease_owner": owner, "lease_seconds": bounded_seconds},
+            )
+            running = self.repos.scheduler_jobs.heartbeat(
+                job_id,
+                lease_owner=owner,
+                lease_seconds=bounded_seconds,
+            ) or job
+            self._event(job_id, "JOB_HEARTBEAT", "Scheduler worker heartbeat recorded.", {"lease_owner": owner})
+            self._event(job_id, "JOB_STARTED", "Scheduler job started by bounded one-shot local worker.", {"lease_owner": owner})
+            completed = self._finish_running_job(running)
+            self._event(
+                job_id,
+                "JOB_RELEASED",
+                "Scheduler worker lease released after terminal job status.",
+                {"lease_owner": owner, "final_status": completed.get("status")},
+            )
+            results.append(completed)
+        return {
+            "status": "ok",
+            "worker_mode": "bounded_one_shot",
+            "lease_owner": owner,
+            "lease_seconds": bounded_seconds,
+            "max_jobs": bounded_max,
+            "jobs_run": len(results),
+            "results": results,
+            "stale_recovery": recovered,
+            "scheduler_status": self.status(),
+        }
+
+    def recover_stale_leases(self, *, limit: int = 25) -> dict[str, Any]:
+        stale_jobs = self.repos.scheduler_jobs.list_stale_running(limit=max(1, min(int(limit or 25), 100)))
+        results = []
+        for job in stale_jobs:
+            attempts = int(job.get("attempt_count") or 0)
+            max_attempts = max(1, int(job.get("max_attempts") or 1))
+            warnings = sorted(
+                set(
+                    list(job.get("warnings") or [])
+                    + ["Scheduler worker lease expired before terminal completion."]
+                )
+            )
+            if attempts < max_attempts:
+                recovered = self.repos.scheduler_jobs.save(
+                    job
+                    | {
+                        "status": "QUEUED",
+                        "lease_owner": None,
+                        "lease_expires_at": None,
+                        "heartbeat_at": None,
+                        "failed_reason": None,
+                        "last_error": "scheduler_lease_expired_requeued",
+                        "warnings": warnings,
+                        "updated_at": _now(),
+                    }
+                )
+                self._event(
+                    str(job["job_id"]),
+                    "JOB_STALE_RECOVERED",
+                    "Expired scheduler worker lease recovered and returned to queued state.",
+                    {"attempt_count": attempts, "max_attempts": max_attempts},
+                )
+                results.append(recovered)
+            else:
+                failed = self.repos.scheduler_jobs.save(
+                    job
+                    | {
+                        "status": "FAILED",
+                        "completed_at": _now(),
+                        "failed_reason": "scheduler_lease_expired",
+                        "result": {"status": "error", "reason": "scheduler_lease_expired"},
+                        "lease_owner": None,
+                        "lease_expires_at": None,
+                        "heartbeat_at": None,
+                        "last_error": "scheduler_lease_expired",
+                        "warnings": warnings,
+                        "updated_at": _now(),
+                    }
+                )
+                self._event(
+                    str(job["job_id"]),
+                    "JOB_STALE_RECOVERED",
+                    "Expired scheduler worker lease exhausted attempts and was marked failed.",
+                    {"attempt_count": attempts, "max_attempts": max_attempts},
+                )
+                results.append(failed)
+        return {"status": "ok", "jobs_recovered": len(results), "results": results}
+
+    def status(self) -> dict[str, Any]:
+        summary = self.repos.scheduler_jobs.status_summary()
+        summary["latest_events"] = self.repos.scheduler_jobs.latest_events(limit=25)
+        summary["persistence_backend"] = self.repos.info().get("persistence_backend")
+        return summary
+
+    def _finish_running_job(self, running: dict[str, Any]) -> dict[str, Any]:
+        job_id = str(running["job_id"])
         try:
             result = _redact(self._execute(running))
             final_status = self._final_status(result)
+            failed_reason = self._failed_reason(result, final_status)
             warnings = sorted(
                 set(
                     list(running.get("warnings") or [])
@@ -176,10 +322,14 @@ class SchedulerService:
                     "status": final_status,
                     "completed_at": _now(),
                     "updated_at": _now(),
-                    "failed_reason": self._failed_reason(result, final_status),
+                    "failed_reason": failed_reason,
                     "result": result,
                     "warnings": warnings,
                     "research_cycle_id": result.get("research_cycle_id") or running.get("research_cycle_id"),
+                    "lease_owner": None,
+                    "lease_expires_at": None,
+                    "heartbeat_at": None,
+                    "last_error": failed_reason,
                 }
             )
             self._event(
@@ -199,28 +349,14 @@ class SchedulerService:
                     "failed_reason": str(exc),
                     "result": {"status": "error", "reason": str(exc)},
                     "warnings": list(running.get("warnings") or []),
+                    "lease_owner": None,
+                    "lease_expires_at": None,
+                    "heartbeat_at": None,
+                    "last_error": str(exc),
                 }
             )
             self._event(job_id, "JOB_FAILED", "Scheduler job failed and recorded a non-secret reason.", {"reason": str(exc)})
             return failed
-
-    def run_pending(self, *, max_jobs: int = DEFAULT_MAX_JOBS) -> dict[str, Any]:
-        bounded_max = max(1, min(int(max_jobs or DEFAULT_MAX_JOBS), MAX_JOBS_PER_RUN))
-        pending = self.repos.scheduler_jobs.list_pending(max_jobs=bounded_max)
-        results = [self.run_job(str(job["job_id"])) for job in pending]
-        return {
-            "status": "ok",
-            "max_jobs": bounded_max,
-            "jobs_run": len(results),
-            "results": results,
-            "scheduler_status": self.status(),
-        }
-
-    def status(self) -> dict[str, Any]:
-        summary = self.repos.scheduler_jobs.status_summary()
-        summary["latest_events"] = self.repos.scheduler_jobs.latest_events(limit=25)
-        summary["persistence_backend"] = self.repos.info().get("persistence_backend")
-        return summary
 
     def _execute(self, job: dict[str, Any]) -> dict[str, Any]:
         payload = dict(job.get("payload") or {})
@@ -344,6 +480,10 @@ class SchedulerService:
         if final_status not in {"FAILED", "BLOCKED"}:
             return None
         return str(result.get("reason") or result.get("failed_reason") or result.get("block_reason") or final_status.lower())
+
+    def _lease_owner(self, lease_owner: str | None) -> str:
+        owner = str(lease_owner or f"local-worker-{os.getpid()}").strip()
+        return owner[:128] or f"local-worker-{os.getpid()}"
 
     def _event(
         self,

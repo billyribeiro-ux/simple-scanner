@@ -1,6 +1,6 @@
 # API Smoke Testing
 
-Status date: 2026-07-01
+Status date: 2026-07-02
 
 ## Command
 
@@ -17,6 +17,8 @@ cd services/quant-engine && PYTHONPATH=. .venv/bin/python -m pytest tests/test_p
 ```
 
 The Postgres smoke uses the local compose database on host port `15432` unless `DATABASE_URL` is supplied.
+
+Phase 14 verification on 2026-07-02 ran `make api-smoke-postgres` successfully against Alembic head `0010_phase14_scheduler_worker`.
 
 ## Design
 

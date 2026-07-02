@@ -1,6 +1,6 @@
 # Operator Daily Procedure
 
-Status date: 2026-07-01
+Status date: 2026-07-02
 
 This procedure prepares and reviews research artifacts. It does not create trading authority, route orders, or automatically activate models.
 
@@ -12,6 +12,7 @@ nvm use 24.18.0
 COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack prepare pnpm@11.9.0 --activate
 make doctor
 make scheduler-status
+make scheduler-recover-stale
 ```
 
 If Docker is healthy:
@@ -38,7 +39,8 @@ Open `http://localhost:5173`.
 2. Check backend status, persistence backend, active model, data quality, stale windows, proposal queue, and scheduler queue.
 3. Open `/operations/scheduler`.
 4. Create a `data_quality_report` job for the active symbol universe.
-5. Run the queued job and inspect events.
+5. Run the queued job through the UI/API, or use `make scheduler-worker-once` when a bounded local worker path is preferred.
+6. Inspect job events and confirm leases are cleared after terminal status.
 
 ## Prepare A Research Cycle
 
@@ -86,4 +88,5 @@ The scheduler cannot perform this action.
 - Postgres unavailable: keep SQLite tests green and do not claim Postgres verification.
 - FMP key missing: live FMP smoke and refresh jobs remain gated.
 - Scheduler job failed: inspect `/operations/scheduler/{job_id}` events and `failed_reason`.
+- Scheduler job stuck in `RUNNING`: run `make scheduler-recover-stale`, then inspect events before retrying.
 - Proposal activation blocked: keep the backend response; do not bypass confirmation or validation gates.

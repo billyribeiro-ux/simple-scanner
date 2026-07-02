@@ -9,7 +9,7 @@ import sqlite3
 from collections import Counter
 from collections.abc import Iterable
 from dataclasses import asdict, is_dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from enum import Enum
 from functools import lru_cache
 from hashlib import sha256
@@ -74,7 +74,7 @@ EXPECTED_TABLES = {
     "validation_reports",
     "validation_windows",
 }
-EXPECTED_ALEMBIC_REVISION = "0009_phase13_scheduler"
+EXPECTED_ALEMBIC_REVISION = "0010_phase14_scheduler_worker"
 
 
 def _now_iso() -> str:
@@ -863,6 +863,13 @@ class SQLiteStore:
                         warnings_json TEXT DEFAULT '[]',
                         research_cycle_id TEXT,
                         created_by TEXT,
+                        lease_owner TEXT,
+                        lease_expires_at TEXT,
+                        heartbeat_at TEXT,
+                        attempt_count INTEGER NOT NULL DEFAULT 0,
+                        max_attempts INTEGER NOT NULL DEFAULT 1,
+                        timeout_seconds INTEGER NOT NULL DEFAULT 900,
+                        last_error TEXT,
                         created_at TEXT NOT NULL,
                         updated_at TEXT NOT NULL
                     );
@@ -1145,6 +1152,13 @@ class SQLiteStore:
                     "ALTER TABLE replay_runs ADD COLUMN candidate_config_version TEXT",
                     "ALTER TABLE replay_runs ADD COLUMN label_config_version TEXT",
                     "ALTER TABLE replay_runs ADD COLUMN stale_window_status_json TEXT DEFAULT '{}'",
+                    "ALTER TABLE scheduler_jobs ADD COLUMN lease_owner TEXT",
+                    "ALTER TABLE scheduler_jobs ADD COLUMN lease_expires_at TEXT",
+                    "ALTER TABLE scheduler_jobs ADD COLUMN heartbeat_at TEXT",
+                    "ALTER TABLE scheduler_jobs ADD COLUMN attempt_count INTEGER NOT NULL DEFAULT 0",
+                    "ALTER TABLE scheduler_jobs ADD COLUMN max_attempts INTEGER NOT NULL DEFAULT 1",
+                    "ALTER TABLE scheduler_jobs ADD COLUMN timeout_seconds INTEGER NOT NULL DEFAULT 900",
+                    "ALTER TABLE scheduler_jobs ADD COLUMN last_error TEXT",
                 ):
                     try:
                         connection.execute(statement)
@@ -1153,6 +1167,12 @@ class SQLiteStore:
                             raise
                 connection.execute(
                     "CREATE INDEX IF NOT EXISTS ix_replay_runs_config_hash ON replay_runs(config_hash)"
+                )
+                connection.execute(
+                    "CREATE INDEX IF NOT EXISTS ix_scheduler_jobs_lease_expires ON scheduler_jobs(status, lease_expires_at)"
+                )
+                connection.execute(
+                    "CREATE INDEX IF NOT EXISTS ix_scheduler_jobs_lease_owner ON scheduler_jobs(lease_owner)"
                 )
                 connection.commit()
             finally:
@@ -3363,9 +3383,11 @@ class SchedulerJobRepository:
                     INSERT INTO scheduler_jobs(
                         job_id, job_type, status, priority, scheduled_for, started_at,
                         completed_at, failed_reason, payload_json, result_json, warnings_json,
-                        research_cycle_id, created_by, created_at, updated_at
+                        research_cycle_id, created_by, lease_owner, lease_expires_at,
+                        heartbeat_at, attempt_count, max_attempts, timeout_seconds,
+                        last_error, created_at, updated_at
                     )
-                    VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(job_id) DO UPDATE SET
                         job_type=excluded.job_type,
                         status=excluded.status,
@@ -3379,6 +3401,13 @@ class SchedulerJobRepository:
                         warnings_json=excluded.warnings_json,
                         research_cycle_id=excluded.research_cycle_id,
                         created_by=excluded.created_by,
+                        lease_owner=excluded.lease_owner,
+                        lease_expires_at=excluded.lease_expires_at,
+                        heartbeat_at=excluded.heartbeat_at,
+                        attempt_count=excluded.attempt_count,
+                        max_attempts=excluded.max_attempts,
+                        timeout_seconds=excluded.timeout_seconds,
+                        last_error=excluded.last_error,
                         updated_at=excluded.updated_at
                     """,
                     (
@@ -3395,6 +3424,13 @@ class SchedulerJobRepository:
                         _json_dumps(row_payload.get("warnings") or []),
                         row_payload.get("research_cycle_id"),
                         row_payload.get("created_by"),
+                        row_payload.get("lease_owner"),
+                        row_payload.get("lease_expires_at"),
+                        row_payload.get("heartbeat_at"),
+                        int(row_payload.get("attempt_count") or 0),
+                        int(row_payload.get("max_attempts") or 1),
+                        int(row_payload.get("timeout_seconds") or 900),
+                        row_payload.get("last_error"),
                         created_at,
                         updated_at,
                     ),
@@ -3460,6 +3496,196 @@ class SchedulerJobRepository:
                 LIMIT ?
                 """,
                 (now_text, max_jobs),
+            ).fetchall()
+            return [self._job_from_row(row) for row in rows]
+        finally:
+            if str(self.store.path) != ":memory:":
+                connection.close()
+
+    def lease(
+        self,
+        job_id: str,
+        *,
+        lease_owner: str,
+        lease_seconds: int = 900,
+        now: datetime | None = None,
+    ) -> dict[str, Any] | None:
+        now_value = now or datetime.now(UTC)
+        now_text = now_value.isoformat()
+        lease_seconds = max(30, min(int(lease_seconds or 900), 86_400))
+        expires_text = (now_value + timedelta(seconds=lease_seconds)).isoformat()
+        with self.store._lock:
+            connection = self.store.connect()
+            try:
+                row = connection.execute("SELECT * FROM scheduler_jobs WHERE job_id = ?", (job_id,)).fetchone()
+                current = self._job_from_row(row) if row else None
+                if current is None or current.get("status") != "QUEUED":
+                    return None
+                scheduled_for = _maybe_datetime(current.get("scheduled_for"))
+                if scheduled_for is not None and scheduled_for > now_value:
+                    return None
+                attempt_count = int(current.get("attempt_count") or 0)
+                max_attempts = max(1, int(current.get("max_attempts") or 1))
+                if attempt_count >= max_attempts:
+                    return None
+                connection.execute(
+                    """
+                    UPDATE scheduler_jobs
+                    SET status = 'RUNNING',
+                        started_at = ?,
+                        completed_at = NULL,
+                        failed_reason = NULL,
+                        lease_owner = ?,
+                        lease_expires_at = ?,
+                        heartbeat_at = ?,
+                        attempt_count = ?,
+                        timeout_seconds = ?,
+                        last_error = NULL,
+                        updated_at = ?
+                    WHERE job_id = ?
+                    """,
+                    (
+                        now_text,
+                        lease_owner,
+                        expires_text,
+                        now_text,
+                        attempt_count + 1,
+                        lease_seconds,
+                        now_text,
+                        job_id,
+                    ),
+                )
+                row = connection.execute("SELECT * FROM scheduler_jobs WHERE job_id = ?", (job_id,)).fetchone()
+                connection.commit()
+                return self._job_from_row(row) if row else None
+            finally:
+                if str(self.store.path) != ":memory:":
+                    connection.close()
+
+    def lease_next(
+        self,
+        *,
+        lease_owner: str,
+        max_jobs: int = 3,
+        lease_seconds: int = 900,
+        now: datetime | None = None,
+    ) -> builtins.list[dict[str, Any]]:
+        bounded_max = max(1, min(int(max_jobs or 3), 10))
+        pending = self.list_pending(max_jobs=bounded_max, now=now)
+        leased: builtins.list[dict[str, Any]] = []
+        for job in pending:
+            leased_job = self.lease(
+                str(job["job_id"]),
+                lease_owner=lease_owner,
+                lease_seconds=lease_seconds,
+                now=now,
+            )
+            if leased_job is not None:
+                leased.append(leased_job)
+        return leased
+
+    def heartbeat(
+        self,
+        job_id: str,
+        *,
+        lease_owner: str,
+        lease_seconds: int | None = None,
+        now: datetime | None = None,
+    ) -> dict[str, Any] | None:
+        now_value = now or datetime.now(UTC)
+        now_text = now_value.isoformat()
+        with self.store._lock:
+            connection = self.store.connect()
+            try:
+                row = connection.execute("SELECT * FROM scheduler_jobs WHERE job_id = ?", (job_id,)).fetchone()
+                current = self._job_from_row(row) if row else None
+                if (
+                    current is None
+                    or current.get("status") != "RUNNING"
+                    or str(current.get("lease_owner") or "") != lease_owner
+                ):
+                    return None
+                expires_at = current.get("lease_expires_at")
+                if lease_seconds is not None:
+                    bounded_seconds = max(30, min(int(lease_seconds or 900), 86_400))
+                    expires_at = (now_value + timedelta(seconds=bounded_seconds)).isoformat()
+                connection.execute(
+                    """
+                    UPDATE scheduler_jobs
+                    SET heartbeat_at = ?,
+                        lease_expires_at = ?,
+                        updated_at = ?
+                    WHERE job_id = ?
+                    """,
+                    (now_text, expires_at, now_text, job_id),
+                )
+                row = connection.execute("SELECT * FROM scheduler_jobs WHERE job_id = ?", (job_id,)).fetchone()
+                connection.commit()
+                return self._job_from_row(row) if row else None
+            finally:
+                if str(self.store.path) != ":memory:":
+                    connection.close()
+
+    def release(
+        self,
+        job_id: str,
+        *,
+        lease_owner: str,
+        status: str = "QUEUED",
+        last_error: str | None = None,
+        now: datetime | None = None,
+    ) -> dict[str, Any] | None:
+        now_text = (now or datetime.now(UTC)).isoformat()
+        with self.store._lock:
+            connection = self.store.connect()
+            try:
+                row = connection.execute("SELECT * FROM scheduler_jobs WHERE job_id = ?", (job_id,)).fetchone()
+                current = self._job_from_row(row) if row else None
+                if (
+                    current is None
+                    or current.get("status") != "RUNNING"
+                    or str(current.get("lease_owner") or "") != lease_owner
+                ):
+                    return None
+                connection.execute(
+                    """
+                    UPDATE scheduler_jobs
+                    SET status = ?,
+                        lease_owner = NULL,
+                        lease_expires_at = NULL,
+                        heartbeat_at = NULL,
+                        last_error = ?,
+                        updated_at = ?
+                    WHERE job_id = ?
+                    """,
+                    (status, last_error or current.get("last_error"), now_text, job_id),
+                )
+                row = connection.execute("SELECT * FROM scheduler_jobs WHERE job_id = ?", (job_id,)).fetchone()
+                connection.commit()
+                return self._job_from_row(row) if row else None
+            finally:
+                if str(self.store.path) != ":memory:":
+                    connection.close()
+
+    def list_stale_running(
+        self,
+        *,
+        now: datetime | None = None,
+        limit: int = 25,
+    ) -> builtins.list[dict[str, Any]]:
+        now_text = (now or datetime.now(UTC)).isoformat()
+        connection = self.store.connect()
+        try:
+            rows = connection.execute(
+                """
+                SELECT * FROM scheduler_jobs
+                WHERE status = 'RUNNING'
+                  AND lease_expires_at IS NOT NULL
+                  AND lease_expires_at <= ?
+                ORDER BY lease_expires_at ASC, priority ASC, created_at ASC
+                LIMIT ?
+                """,
+                (now_text, limit),
             ).fetchall()
             return [self._job_from_row(row) for row in rows]
         finally:
