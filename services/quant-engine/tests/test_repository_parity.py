@@ -330,6 +330,41 @@ def test_repository_core_contract_parity(tmp_path, monkeypatch, backend: str) ->
         row_count=2,
         metadata={"symbols": ["AAPL", "SPY"]},
     )
+    capability = repo.provider_capabilities.save(
+        {
+            "provider": "fmp",
+            "endpoint_key": "batch_quote",
+            "endpoint_category": "quote",
+            "symbol_scope": ["AAPL", "SPY"],
+            "request_type": "REST",
+            "status": "ACCESSIBLE",
+            "http_status": 200,
+            "response_shape": {"type": "list", "count": 2},
+            "sample_symbol": "AAPL",
+            "sample_count": 2,
+            "latency_ms": 12,
+            "entitlement_notes": {"auth": "header"},
+            "checked_at": datetime.now(UTC).isoformat(),
+        }
+    )
+    ingestion_run = repo.ingestion_runs.save(
+        {
+            "provider": "fmp",
+            "ingestion_type": "intraday_bars",
+            "symbols": ["AAPL", "SPY"],
+            "intervals": ["1min"],
+            "start": bars[0].timestamp_utc,
+            "end": bars[-1].timestamp_utc,
+            "status": "COMPLETED",
+            "records_fetched": 2,
+            "records_inserted": 2,
+            "provider_request_ids": ["provider-request-parity"],
+            "dirty_windows": [{"artifact_type": "features", "symbol": "AAPL"}],
+            "warnings": [],
+            "errors": [],
+            "completed_at": datetime.now(UTC).isoformat(),
+        }
+    )
     export = repo.exports.record("live_signals", "csv", tmp_path / "signals.csv", row_count=1)
     review = repo.daily_reviews.save(date(2026, 6, 1), {"date": "2026-06-01", "signals_reviewed": 1})
     replay_run = {
@@ -706,6 +741,8 @@ def test_repository_core_contract_parity(tmp_path, monkeypatch, backend: str) ->
     assert scheduler_job["job_id"] == "parity-scheduler-job"
     assert worker_job["job_id"] == "parity-scheduler-worker-job"
     assert scheduler_event["event_id"]
+    assert capability["endpoint_key"] == "batch_quote"
+    assert ingestion_run["ingestion_type"] == "intraday_bars"
 
     reopened = RepositoryRegistry(settings=get_settings())
     assert len(reopened.bars.list_all()) == 96
@@ -734,6 +771,8 @@ def test_repository_core_contract_parity(tmp_path, monkeypatch, backend: str) ->
     assert reopened_worker_job["attempt_count"] == 1
     assert reopened_worker_job["lease_owner"] is None
     assert reopened.scheduler_jobs.list_events("parity-scheduler-job")[0]["event_type"] == "JOB_CREATED"
+    assert reopened.provider_capabilities.latest_matrix()[0]["endpoint_key"] == "batch_quote"
+    assert reopened.ingestion_runs.latest()["status"] == "COMPLETED"
     assert reopened.validation_reports.latest(model_version="parity-model-accepted")["activation_decision"] == "accepted"
     assert reopened.active_models.get_active()["model_version"] == "parity-model-accepted"
     assert reopened.scanner_runs.latest()["scanner_run_id"] == scanner_run_id

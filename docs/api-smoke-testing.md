@@ -229,3 +229,9 @@ COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm --filter @amd/web test:e2e
 ## Phase 13 Scheduler Coverage
 
 Phase 13 adds `make scheduler-test`, which covers scheduler persistence, service transitions, API routes, FMP gating, runbook docs, and the no-activation guard. The persisted API smoke also reopens scheduler jobs/events from the repository and includes scheduler status in the operations status path. Postgres coverage remains conditional on a reachable Docker/Postgres runtime.
+
+## Phase 15 FMP API Coverage
+
+Additional FMP surfaces include `POST /provider/fmp/smoke`, `POST /provider/capabilities/check`, `POST /data/ingest/fmp/quotes`, `POST /data/ingest/fmp/eod`, `POST /data/ingest/fmp/intraday`, `POST /data/ingest/fmp/incremental-intraday`, `GET /data/ingestion-runs`, and `GET /operations/provider-status`.
+
+Missing-key routes return safe skipped or blocked statuses and never expose the key.

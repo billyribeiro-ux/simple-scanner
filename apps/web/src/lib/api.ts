@@ -91,11 +91,25 @@ export type SchedulerJobCreatePayload = {
     | 'research_cycle_run'
     | 'data_quality_report'
     | 'export_research_cycle'
-    | 'export_operations_status';
+    | 'export_operations_status'
+    | 'fmp_capability_check'
+    | 'fmp_quote_snapshot'
+    | 'fmp_eod_refresh'
+    | 'fmp_intraday_refresh'
+    | 'fmp_incremental_intraday_refresh';
   payload?: Record<string, unknown>;
   priority?: number;
   scheduled_for?: string;
   created_by?: string;
+};
+
+export type FmpActionPayload = {
+  symbols?: string[];
+  intervals?: string[];
+  endpoint_keys?: string[];
+  include_websocket?: boolean;
+  start?: string;
+  end?: string;
 };
 
 async function getJson<T>(path: string, fallback: T, parser?: Parser<T>): Promise<T> {
@@ -190,6 +204,59 @@ export const getConfig = fetchConfig;
 
 export async function fetchProviderHealth(): Promise<ProviderHealth> {
   return getJson('/provider/health', { status: 'offline' });
+}
+
+export async function getProviderStatus(): Promise<Record<string, unknown>> {
+  return getJson('/operations/provider-status', { status: 'offline' });
+}
+
+export async function getProviderCapabilities(): Promise<Record<string, unknown>> {
+  return getJson('/provider/capabilities', { provider: 'fmp', latest_capabilities: [] });
+}
+
+export async function checkProviderCapabilities(
+  payload: FmpActionPayload,
+): Promise<Record<string, unknown>> {
+  return postJson('/provider/capabilities/check', payload, { status: 'error' });
+}
+
+export async function runFmpSmoke(): Promise<Record<string, unknown>> {
+  return postJson('/provider/fmp/smoke', undefined, { status: 'error' });
+}
+
+export async function ingestFmpQuotes(payload: FmpActionPayload): Promise<Record<string, unknown>> {
+  return postJson('/data/ingest/fmp/quotes', payload, { status: 'error' });
+}
+
+export async function ingestFmpEod(payload: FmpActionPayload): Promise<Record<string, unknown>> {
+  return postJson('/data/ingest/fmp/eod', payload, { status: 'error' });
+}
+
+export async function ingestFmpIntraday(
+  payload: FmpActionPayload,
+): Promise<Record<string, unknown>> {
+  return postJson('/data/ingest/fmp/intraday', payload, { status: 'error' });
+}
+
+export async function ingestFmpIncrementalIntraday(
+  payload: FmpActionPayload,
+): Promise<Record<string, unknown>> {
+  return postJson('/data/ingest/fmp/incremental-intraday', payload, { status: 'error' });
+}
+
+export async function listFmpIngestionRuns(): Promise<Record<string, unknown>> {
+  return getJson('/data/ingestion-runs', { ingestion_runs: [] });
+}
+
+export async function getDataQualityReport(
+  params: {
+    symbols?: string;
+    intervals?: string;
+    start?: string;
+    end?: string;
+  } = {},
+): Promise<Record<string, unknown>> {
+  return getJson(`/data/quality-report${queryString(params)}`, { status: 'offline' });
 }
 
 export async function fetchScannerStatus(): Promise<ScannerStatus> {

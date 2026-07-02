@@ -12,3 +12,18 @@ Provider health is available at:
 - `GET /provider/capabilities`
 
 WebSocket support is optional and depends on FMP entitlement. REST polling remains the V1 default.
+
+## Phase 15 Live Verification
+
+FMP REST auth uses the `apikey` request header only. The key must not appear in URLs or query strings.
+
+Run:
+
+```bash
+make fmp-smoke
+make fmp-live-smoke
+make fmp-entitlement-test
+make fmp-ingestion-test
+```
+
+If `FMP_API_KEY` is missing, live smoke skips cleanly. Use `/operations/provider` for capability checks and `/operations/data` for coverage.

@@ -6,13 +6,14 @@
   import ShieldCheckIcon from 'phosphor-svelte/lib/ShieldCheckIcon';
   import JsonPanel from '$lib/components/JsonPanel.svelte';
   import StatusBadge from '$lib/components/StatusBadge.svelte';
-  import { fetchConfig, getHealth, getResearchStatus } from '$lib/api';
+  import { fetchConfig, getHealth, getProviderStatus, getResearchStatus } from '$lib/api';
   import { compactId, formatDateTime } from '$lib/governance';
   import type { AppConfig, HealthStatus, ResearchStatus } from '$lib/types';
 
   let health = $state<HealthStatus>({ status: 'loading' });
   let config = $state<AppConfig | null>(null);
   let research = $state<ResearchStatus>({ status: 'loading' });
+  let provider = $state<Record<string, unknown>>({ status: 'loading' });
   let loading = $state(false);
 
   function record(value: unknown): Record<string, unknown> {
@@ -24,16 +25,22 @@
     return item === null || item === undefined || item === '' ? fallback : String(item);
   }
 
+  function count(value: unknown): number {
+    return Array.isArray(value) ? value.length : 0;
+  }
+
   async function refresh() {
     loading = true;
-    const [nextHealth, nextConfig, nextResearch] = await Promise.all([
+    const [nextHealth, nextConfig, nextResearch, nextProvider] = await Promise.all([
       getHealth(),
       fetchConfig(),
       getResearchStatus(),
+      getProviderStatus(),
     ]);
     health = nextHealth;
     config = nextConfig;
     research = nextResearch;
+    provider = nextProvider;
     loading = false;
   }
 
@@ -141,6 +148,12 @@
         <StatusBadge value={research.latest_scheduler_job.status} />
       {/if}
     </div>
+    <div class="panel metric">
+      <span>FMP provider</span>
+      <a class="link" href="/operations/provider">{field(provider, 'key_status', 'unknown')}</a>
+      <small>{count(record(provider).latest_capabilities)} endpoint checks</small>
+      <a class="link" href="/operations/data">Data coverage</a>
+    </div>
   </section>
 
   <section class="panel status-grid">
@@ -181,6 +194,7 @@
       <h2>Backend payloads</h2>
     </div>
     <JsonPanel title="Research status payload" value={research} />
+    <JsonPanel title="Provider status payload" value={provider} />
     <JsonPanel title="Health payload" value={health} />
   </section>
 </div>

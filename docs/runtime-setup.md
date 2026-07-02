@@ -217,3 +217,7 @@ make fmp-smoke
 ```
 
 Set `FMP_API_KEY` only in the shell or ignored local env files such as `.env.local`. Never commit, log, print, export, or expose the key in frontend bundles.
+
+## Phase 15 FMP Runtime
+
+Run `make fmp-smoke` or `make fmp-live-smoke` after setting `FMP_API_KEY` in the shell or ignored local env files. If the key is absent, smoke skips successfully. WebSocket probes remain disabled unless `AMD_ENABLE_FMP_WS_PROBE=true`.

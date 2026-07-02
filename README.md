@@ -284,3 +284,27 @@ Approval and activation remain separate. The proposal detail page requires an ap
 `AMZN, AAPL, TSLA, SPY, QQQ, IWM, NVDA, GOOGL, BABA, SHOP`
 
 `APPL` is normalized to `AAPL`.
+
+## Phase 15 FMP Provider Pipeline
+
+Phase 15 adds safe live FMP REST entitlement checks and bounded production data ingestion:
+
+- `POST /provider/capabilities/check`
+- `GET /provider/capabilities`
+- `GET /provider/capabilities/history`
+- `POST /provider/fmp/smoke`
+- `POST /data/ingest/fmp/quotes`
+- `POST /data/ingest/fmp/eod`
+- `POST /data/ingest/fmp/intraday`
+- `POST /data/ingest/fmp/incremental-intraday`
+- `GET /data/ingestion-runs`
+- `GET /operations/provider-status`
+
+Use `make fmp-smoke` or `make fmp-live-smoke` for the live smoke path. If `FMP_API_KEY` is missing, live smoke skips safely. The REST client uses header auth only and never appends `apikey` to URLs.
+
+Operator pages:
+
+- `/operations/provider`
+- `/operations/data`
+
+These pages are data and status surfaces only. They do not add broker execution, order routing, automatic model activation, or profitability claims.

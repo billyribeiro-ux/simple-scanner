@@ -2045,6 +2045,15 @@ class DataQualityService:
             for row in provider_requests
             if str(row.get("status") or "").lower() not in {"ok", "success", "cached"}
         ]
+        source_breakdown = dict(Counter(bar.source for bar in bars))
+        latest_bars = self._latest_bars(bars)
+        ingestion_runs = self.repos.ingestion_runs.list(provider="fmp", limit=25)
+        capability_matrix = builtins.list(self.repos.provider_capabilities.latest_matrix(provider="fmp") or [])
+        capability_warnings = [
+            f"{row.get('endpoint_key')}_{str(row.get('status')).lower()}"
+            for row in capability_matrix
+            if str(row.get("status") or "") in {"DENIED", "RATE_LIMITED", "ERROR", "UNKNOWN"}
+        ]
         return {
             "status": "ok",
             "generated_at": datetime.now(UTC).isoformat(),
@@ -2060,13 +2069,25 @@ class DataQualityService:
                 "missing_bar_window_count": len(missing_windows),
                 "dirty_pipeline_window_count": len(dirty_windows),
                 "provider_error_count": len(provider_errors),
+                "source_breakdown": source_breakdown,
+                "latest_bar_group_count": len(latest_bars),
+                "ingestion_run_count": len(ingestion_runs),
+                "provider_capability_warning_count": len(capability_warnings),
             },
+            "source_breakdown": source_breakdown,
+            "latest_bars": latest_bars,
             "duplicates": duplicates,
             "invalid_rows": invalid_rows,
             "missing_bar_windows": missing_windows,
             "dirty_pipeline_windows": dirty_windows,
             "provider_errors": provider_errors[:100],
-            "warnings": self._quality_warnings(duplicates, invalid_rows, missing_windows, dirty_windows, provider_errors),
+            "provider_request_summary": provider_requests[:100],
+            "ingestion_run_summary": ingestion_runs,
+            "provider_capabilities": capability_matrix,
+            "capability_warnings": capability_warnings,
+            "recommended_refresh_steps": self._recommended_refresh_steps(latest_bars, capability_warnings),
+            "warnings": self._quality_warnings(duplicates, invalid_rows, missing_windows, dirty_windows, provider_errors)
+            + capability_warnings,
         }
 
     def _duplicates(self, bars: list[Bar]) -> list[dict[str, Any]]:
@@ -2125,6 +2146,21 @@ class DataQualityService:
                     )
         return output
 
+    def _latest_bars(self, bars: list[Bar]) -> list[dict[str, Any]]:
+        by_key: dict[tuple[str, str], list[Bar]] = defaultdict(list)
+        for bar in bars:
+            by_key[(bar.symbol, bar.interval)].append(bar)
+        return [
+            {
+                "symbol": symbol,
+                "interval": interval,
+                "latest_bar_timestamp_utc": max(row.timestamp_utc for row in rows).isoformat(),
+                "bar_count": len(rows),
+                "source_breakdown": dict(Counter(row.source for row in rows)),
+            }
+            for (symbol, interval), rows in sorted(by_key.items())
+        ]
+
     def _interval_minutes(self, interval: str) -> int:
         if interval.endswith("min"):
             return int(interval.removesuffix("min"))
@@ -2150,6 +2186,15 @@ class DataQualityService:
         if provider_errors:
             warnings.append("provider_request_errors_detected")
         return warnings
+
+    def _recommended_refresh_steps(self, latest_bars: list[dict[str, Any]], capability_warnings: list[str]) -> list[str]:
+        steps = []
+        if capability_warnings:
+            steps.append("Run /provider/capabilities/check before ingesting more FMP data.")
+        if not latest_bars:
+            steps.append("Run a bounded FMP EOD or intraday ingestion job.")
+        steps.append("Rebuild features after fresh bars are ingested.")
+        return steps
 
 
 class ReplayWindowOrchestrationService:

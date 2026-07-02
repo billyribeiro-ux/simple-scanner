@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
-from datetime import datetime
+import threading
+from datetime import datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
 from typing import Any
@@ -10,6 +12,7 @@ from typing import Any
 from app.config import get_settings
 from app.data.symbols import normalize_symbols
 from app.db.repositories import RepositoryRegistry
+from app.services.fmp_pipeline import FMPLiveDataService
 from app.services.research import ResearchCycleService, ResearchStatusService
 from app.services.workflows import DataQualityService, ExportWorkflowService
 from app.utils.time import UTC
@@ -20,6 +23,11 @@ SCHEDULER_JOB_TYPES = {
     "data_quality_report",
     "export_research_cycle",
     "export_operations_status",
+    "fmp_capability_check",
+    "fmp_quote_snapshot",
+    "fmp_eod_refresh",
+    "fmp_intraday_refresh",
+    "fmp_incremental_intraday_refresh",
 }
 SCHEDULER_TERMINAL_STATUSES = {"COMPLETED", "FAILED", "CANCELLED", "BLOCKED"}
 DEFAULT_MAX_JOBS = 3
@@ -69,6 +77,24 @@ def _refresh_data_requested(payload: Any) -> bool:
     if isinstance(payload, list):
         return any(_refresh_data_requested(item) for item in payload)
     return False
+
+
+def _run_coro(coro):
+    result: dict[str, Any] = {}
+    error: list[BaseException] = []
+
+    def runner() -> None:
+        try:
+            result["value"] = asyncio.run(coro)
+        except BaseException as exc:  # pragma: no cover - defensive bridge
+            error.append(exc)
+
+    thread = threading.Thread(target=runner, daemon=True)
+    thread.start()
+    thread.join()
+    if error:
+        raise error[0]
+    return result.get("value")
 
 
 class SchedulerService:
@@ -377,6 +403,14 @@ class SchedulerService:
             return self._export_research_cycle(payload)
         if job_type == "export_operations_status":
             return self._export_operations_status()
+        if job_type in {
+            "fmp_capability_check",
+            "fmp_quote_snapshot",
+            "fmp_eod_refresh",
+            "fmp_intraday_refresh",
+            "fmp_incremental_intraday_refresh",
+        }:
+            return self._fmp_job(job_type, payload)
         return {"status": "error", "reason": "unsupported_scheduler_job_type", "job_type": job_type}
 
     def _research_cycle_dry_run(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -453,6 +487,47 @@ class SchedulerService:
             {"diagnostic_only": True, "model_activation_unchanged": True},
         )
         return {"status": "ok", "path": str(path), "rows": 1, "export": record}
+
+    def _fmp_job(self, job_type: str, payload: dict[str, Any]) -> dict[str, Any]:
+        if not os.environ.get("FMP_API_KEY"):
+            return {
+                "status": "blocked",
+                "reason": "fmp_api_key_required",
+                "warnings": ["FMP scheduler jobs require FMP_API_KEY in the runtime environment."],
+                "model_activation_unchanged": True,
+                "no_broker_execution": True,
+            }
+        service = FMPLiveDataService(self.repos)
+        symbols = normalize_symbols(payload.get("symbols") or get_settings().symbol_list)[:10]
+        intervals = [str(item) for item in payload.get("intervals") or ["1min", "5min", "15min"]]
+        if job_type == "fmp_capability_check":
+            return _run_coro(
+                service.capability_check(
+                    endpoint_keys=[str(item) for item in payload.get("endpoint_keys") or []] or None,
+                    symbols=symbols,
+                    include_websocket=bool(payload.get("include_websocket")),
+                )
+            ) | {"model_activation_unchanged": True, "no_broker_execution": True}
+        if job_type == "fmp_quote_snapshot":
+            return _run_coro(service.ingest_quotes(symbols)) | {"model_activation_unchanged": True, "no_broker_execution": True}
+        if job_type == "fmp_eod_refresh":
+            start = _parse_datetime(payload.get("start")) or datetime.now(UTC) - timedelta(days=10)
+            end = _parse_datetime(payload.get("end")) or datetime.now(UTC)
+            return _run_coro(service.ingest_eod(symbols, start, end)) | {"model_activation_unchanged": True, "no_broker_execution": True}
+        if job_type == "fmp_intraday_refresh":
+            end = _parse_datetime(payload.get("end")) or datetime.now(UTC)
+            start = _parse_datetime(payload.get("start")) or end - timedelta(days=5)
+            return _run_coro(service.ingest_intraday(symbols, intervals, start, end)) | {
+                "model_activation_unchanged": True,
+                "no_broker_execution": True,
+            }
+        if job_type == "fmp_incremental_intraday_refresh":
+            end = _parse_datetime(payload.get("end"))
+            return _run_coro(service.incremental_intraday(symbols, intervals, end)) | {
+                "model_activation_unchanged": True,
+                "no_broker_execution": True,
+            }
+        return {"status": "error", "reason": "unsupported_scheduler_job_type", "job_type": job_type}
 
     def _cycle_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
         cycle = dict(payload.get("research_cycle") or payload.get("cycle") or payload)

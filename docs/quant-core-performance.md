@@ -83,3 +83,7 @@ The Phase 2 quant core favors deterministic, testable Python loops over prematur
 - Heartbeat and release events add small constant-size writes per job.
 - Stale recovery scans only expired `RUNNING` jobs with a bounded limit.
 - The worker remains an operator command, not a hot-path scanner or autonomous loop.
+
+## Phase 15 FMP Data Performance Notes
+
+FMP ingestion is deliberately bounded: 10 symbols per job, `1min/5min/15min` intervals, and a conservative five-day intraday default. Bar writes use the existing idempotent upsert key and mark downstream feature/label/replay windows dirty. REST polling remains the default live-data path.

@@ -90,3 +90,13 @@ The scheduler cannot perform this action.
 - Scheduler job failed: inspect `/operations/scheduler/{job_id}` events and `failed_reason`.
 - Scheduler job stuck in `RUNNING`: run `make scheduler-recover-stale`, then inspect events before retrying.
 - Proposal activation blocked: keep the backend response; do not bypass confirmation or validation gates.
+
+## Phase 15 FMP Data Check
+
+1. Open `/operations/provider`.
+2. Confirm key status is present or accept the missing-key skip state.
+3. Run a capability check before live ingestion.
+4. Run EOD or intraday refresh with bounded symbols/date ranges.
+5. Open `/operations/data`.
+6. Confirm latest bars, provider request summary, dirty windows, and warnings.
+7. Rebuild features only after data-quality warnings are understood.

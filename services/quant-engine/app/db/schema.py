@@ -620,6 +620,53 @@ provider_requests = sa.Table(
     sa.Column("metadata_json", sa.JSON, nullable=False, server_default=sa.text("'{}'::jsonb")),
 )
 
+provider_capability_checks = sa.Table(
+    "provider_capability_checks",
+    metadata,
+    sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
+    sa.Column("check_id", sa.String(96), nullable=False, unique=True, index=True),
+    sa.Column("provider", sa.String(32), nullable=False, index=True),
+    sa.Column("endpoint_key", sa.String(64), nullable=False, index=True),
+    sa.Column("endpoint_category", sa.String(64), nullable=False),
+    sa.Column("symbol_scope_json", sa.JSON, nullable=False, server_default=sa.text("'[]'::jsonb")),
+    sa.Column("request_type", sa.String(32), nullable=False, server_default="REST"),
+    sa.Column("status", sa.String(32), nullable=False, index=True),
+    sa.Column("http_status", sa.Integer),
+    sa.Column("error_code", sa.String(128)),
+    sa.Column("error_class", sa.String(128)),
+    sa.Column("response_shape_json", sa.JSON, nullable=False, server_default=sa.text("'{}'::jsonb")),
+    sa.Column("sample_symbol", sa.String(16)),
+    sa.Column("sample_count", sa.Integer, nullable=False, server_default="0"),
+    sa.Column("latency_ms", sa.Integer),
+    sa.Column("entitlement_notes_json", sa.JSON, nullable=False, server_default=sa.text("'{}'::jsonb")),
+    sa.Column("checked_at", sa.DateTime(timezone=True), nullable=False, index=True),
+    sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+)
+
+ingestion_runs = sa.Table(
+    "ingestion_runs",
+    metadata,
+    sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
+    sa.Column("ingestion_run_id", sa.String(96), nullable=False, unique=True, index=True),
+    sa.Column("provider", sa.String(32), nullable=False, index=True),
+    sa.Column("ingestion_type", sa.String(64), nullable=False, index=True),
+    sa.Column("symbols_json", sa.JSON, nullable=False, server_default=sa.text("'[]'::jsonb")),
+    sa.Column("intervals_json", sa.JSON, nullable=False, server_default=sa.text("'[]'::jsonb")),
+    sa.Column("start", sa.DateTime(timezone=True)),
+    sa.Column("end", sa.DateTime(timezone=True)),
+    sa.Column("status", sa.String(32), nullable=False, index=True),
+    sa.Column("records_fetched", sa.Integer, nullable=False, server_default="0"),
+    sa.Column("records_inserted", sa.Integer, nullable=False, server_default="0"),
+    sa.Column("records_updated", sa.Integer, nullable=False, server_default="0"),
+    sa.Column("records_skipped", sa.Integer, nullable=False, server_default="0"),
+    sa.Column("provider_request_ids_json", sa.JSON, nullable=False, server_default=sa.text("'[]'::jsonb")),
+    sa.Column("dirty_windows_json", sa.JSON, nullable=False, server_default=sa.text("'[]'::jsonb")),
+    sa.Column("errors_json", sa.JSON, nullable=False, server_default=sa.text("'[]'::jsonb")),
+    sa.Column("warnings_json", sa.JSON, nullable=False, server_default=sa.text("'[]'::jsonb")),
+    sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+    sa.Column("completed_at", sa.DateTime(timezone=True)),
+)
+
 exports = sa.Table(
     "exports",
     metadata,

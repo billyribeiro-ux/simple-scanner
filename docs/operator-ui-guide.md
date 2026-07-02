@@ -79,3 +79,11 @@ Jobs requesting `refresh_data=true` block when `FMP_API_KEY` is missing. The UI 
 ## Ledger
 
 Use `/research/decision-ledger` to filter by model version, proposal ID, research cycle ID, decision type, and time range. Rows link back to cycle and proposal detail pages when IDs are present.
+
+## Phase 15 Provider/Data UI
+
+- `/operations/provider`: key status, capability matrix, smoke, bounded quote/EOD/intraday/incremental actions, latest ingestion runs, and redacted action results.
+- `/operations/data`: data coverage, latest bars, dirty/missing windows, ingestion history, provider request summary, and data-quality payload.
+- `/operations`: FMP provider status card linking to provider and data pages.
+
+These pages are data operations only. They do not contain broker execution, order routing, or automatic activation controls.

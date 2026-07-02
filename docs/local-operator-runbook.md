@@ -151,3 +151,19 @@ This leases a bounded number of queued jobs, runs them, releases leases, and exi
 - No proposal approval bypass.
 - No `confirm_manual_activation=true` bypass.
 - No secrets in scheduler payloads, events, status, exports, logs, or frontend bundles.
+
+## Phase 15 FMP Operations
+
+Use `/operations/provider` for live FMP key status, capability checks, smoke, quote snapshots, EOD refresh, intraday refresh, and incremental intraday refresh. Use `/operations/data` for source coverage, latest bars, dirty windows, and data-quality warnings.
+
+FMP scheduler job types:
+
+- `fmp_capability_check`
+- `fmp_quote_snapshot`
+- `fmp_eod_refresh`
+- `fmp_intraday_refresh`
+- `fmp_incremental_intraday_refresh`
+
+All FMP scheduler jobs require `FMP_API_KEY`. If missing, the job becomes `BLOCKED` with `fmp_api_key_required`.
+
+Phase 15 safety boundaries remain: REST polling default, WebSocket probe disabled by default, no broker execution, no order routing, and no automatic model activation.

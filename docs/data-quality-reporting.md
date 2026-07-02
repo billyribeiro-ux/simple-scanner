@@ -31,3 +31,16 @@ Research cycles call the data-quality report before comparison. Invalid price/vo
 ## Phase 13 Scheduler Use
 
 The `data_quality_report` scheduler job calls the same persisted report path without requiring FMP. Job payloads can include symbols, intervals, start/end, and session. Results and job events are redacted before persistence, and a nested `refresh_data=true` request blocks before any provider request when `FMP_API_KEY` is missing.
+
+## Phase 15 Provider Coverage
+
+The report now includes:
+
+- source breakdown by `Bar.source`
+- latest bar timestamp per symbol/interval
+- provider request summary
+- ingestion run summary
+- provider capability warnings
+- recommended refresh steps
+
+It still reads persisted local data only. It does not query FMP directly and does not claim exchange-calendar-perfect missing-window detection.

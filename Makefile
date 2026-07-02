@@ -7,7 +7,7 @@ LOCAL_POSTGRES_HOST ?= localhost
 LOCAL_POSTGRES_PORT ?= 15432
 LOCAL_POSTGRES_DB ?= adaptive_market_decoder
 
-.PHONY: help doctor frontend-doctor setup setup-backend require-backend-venv quant-test backend-test backend-lint backend-typecheck api-smoke api-smoke-sqlite api-smoke-postgres repository-parity-test replay-test replay-sensitivity-test replay-window-test model-review-test research-cycle-test research-status-test scheduler-test scheduler-status scheduler-worker-once scheduler-recover-stale export-test fmp-smoke dev api-dev web-dev db-up db-down db-migrate db-inspect db-diagnostics db-query-diagnostics db-reset-dev ingest features labels train validate backtest scanner export test lint typecheck
+.PHONY: help doctor frontend-doctor setup setup-backend require-backend-venv quant-test backend-test backend-lint backend-typecheck api-smoke api-smoke-sqlite api-smoke-postgres repository-parity-test replay-test replay-sensitivity-test replay-window-test model-review-test research-cycle-test research-status-test scheduler-test scheduler-status scheduler-worker-once scheduler-recover-stale export-test fmp-entitlement-test fmp-ingestion-test data-quality-test fmp-smoke fmp-live-smoke dev api-dev web-dev db-up db-down db-migrate db-inspect db-diagnostics db-query-diagnostics db-reset-dev ingest features labels train validate backtest scanner export test lint typecheck
 
 help:
 	@printf "Adaptive Market Decoder commands\n\n"
@@ -47,7 +47,11 @@ help:
 	@printf "  make scheduler-worker-once Run bounded local scheduler worker exactly once\n"
 	@printf "  make scheduler-recover-stale Recover stale scheduler leases once without leasing new jobs\n"
 	@printf "  make export-test        Run export workbook/CSV tests\n"
+	@printf "  make fmp-entitlement-test Run mocked FMP entitlement/client tests\n"
+	@printf "  make fmp-ingestion-test Run mocked FMP ingestion/API tests\n"
+	@printf "  make data-quality-test  Run data quality provider/source coverage tests\n"
 	@printf "  make fmp-smoke           Run optional live FMP REST smoke if FMP_API_KEY is configured\n"
+	@printf "  make fmp-live-smoke      Alias for make fmp-smoke\n"
 	@printf "  make test lint typecheck Run backend and frontend quality gates\n"
 
 setup:
@@ -105,8 +109,8 @@ api-smoke-postgres: require-backend-venv
 	@DEFAULT_DATABASE_SCHEME="postgresql+psycopg"; \
 		DEFAULT_DATABASE_AUTH="$(LOCAL_POSTGRES_USER):$(LOCAL_POSTGRES_PASSWORD)"; \
 		DEFAULT_DATABASE_HOST="$(LOCAL_POSTGRES_HOST):$(LOCAL_POSTGRES_PORT)"; \
-		DEFAULT_DATABASE_URL="$${DEFAULT_DATABASE_SCHEME}://$${DEFAULT_DATABASE_AUTH}@$${DEFAULT_DATABASE_HOST}/$(LOCAL_POSTGRES_DB)"; \
-		DATABASE_URL="$${DATABASE_URL:-$${DEFAULT_DATABASE_URL}}" \
+		LOCAL_POSTGRES_DSN="$${DEFAULT_DATABASE_SCHEME}://$${DEFAULT_DATABASE_AUTH}@$${DEFAULT_DATABASE_HOST}/$(LOCAL_POSTGRES_DB)"; \
+		DATABASE_URL="$${DATABASE_URL:-$${LOCAL_POSTGRES_DSN}}" \
 		PYTHONPATH=$(SERVICE_DIR) \
 		$(SERVICE_DIR)/.venv/bin/python -m pytest $(SERVICE_DIR)/tests/test_persisted_api_smoke.py::test_persisted_api_vertical_slice_postgres
 
@@ -114,8 +118,8 @@ repository-parity-test: require-backend-venv
 	@DEFAULT_DATABASE_SCHEME="postgresql+psycopg"; \
 		DEFAULT_DATABASE_AUTH="$(LOCAL_POSTGRES_USER):$(LOCAL_POSTGRES_PASSWORD)"; \
 		DEFAULT_DATABASE_HOST="$(LOCAL_POSTGRES_HOST):$(LOCAL_POSTGRES_PORT)"; \
-		DEFAULT_DATABASE_URL="$${DEFAULT_DATABASE_SCHEME}://$${DEFAULT_DATABASE_AUTH}@$${DEFAULT_DATABASE_HOST}/$(LOCAL_POSTGRES_DB)"; \
-		DATABASE_URL="$${DATABASE_URL:-$${DEFAULT_DATABASE_URL}}" \
+		LOCAL_POSTGRES_DSN="$${DEFAULT_DATABASE_SCHEME}://$${DEFAULT_DATABASE_AUTH}@$${DEFAULT_DATABASE_HOST}/$(LOCAL_POSTGRES_DB)"; \
+		DATABASE_URL="$${DATABASE_URL:-$${LOCAL_POSTGRES_DSN}}" \
 		PYTHONPATH=$(SERVICE_DIR) \
 		$(SERVICE_DIR)/.venv/bin/python -m pytest $(SERVICE_DIR)/tests/test_repository_parity.py
 
@@ -152,8 +156,19 @@ scheduler-recover-stale: require-backend-venv
 export-test: require-backend-venv
 	cd $(SERVICE_DIR) && PYTHONPATH=. .venv/bin/python -m pytest tests/test_exports.py
 
+fmp-entitlement-test: require-backend-venv
+	cd $(SERVICE_DIR) && PYTHONPATH=. .venv/bin/python -m pytest tests/quant/test_phase15_fmp_provider.py -k "client or capability or smoke"
+
+fmp-ingestion-test: require-backend-venv
+	cd $(SERVICE_DIR) && PYTHONPATH=. .venv/bin/python -m pytest tests/quant/test_phase15_fmp_provider.py -k "ingest or api or scheduler or export"
+
+data-quality-test: require-backend-venv
+	cd $(SERVICE_DIR) && PYTHONPATH=. .venv/bin/python -m pytest tests/quant/test_phase15_fmp_provider.py -k "quality"
+
 fmp-smoke: require-backend-venv
 	PYTHONPATH=$(SERVICE_DIR) $(SERVICE_DIR)/.venv/bin/python scripts/fmp_smoke.py
+
+fmp-live-smoke: fmp-smoke
 
 dev:
 	$(MAKE) db-up

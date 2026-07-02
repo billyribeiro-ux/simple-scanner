@@ -165,6 +165,33 @@ class IngestRequest(BaseModel):
     end: datetime
 
 
+class ProviderCapabilityCheckRequest(BaseModel):
+    endpoint_keys: list[str] | None = None
+    symbols: list[str] | None = None
+    include_websocket: bool = False
+
+
+class FMPQuoteIngestRequest(BaseModel):
+    symbols: list[str] | None = None
+
+
+class FMPBarsIngestRequest(BaseModel):
+    symbols: list[str] | None = None
+    intervals: list[Literal["1min", "5min", "15min"]] | None = None
+    start: datetime
+    end: datetime
+
+
+class FMPIncrementalIntradayRequest(BaseModel):
+    symbols: list[str] | None = None
+    intervals: list[Literal["1min", "5min", "15min"]] | None = None
+    end: datetime | None = None
+
+
+class ProviderExportRequest(BaseModel):
+    kind: Literal["json", "csv", "xlsx"] = "json"
+
+
 class TrainRequest(BaseModel):
     model_type: str = "statistical_evidence_baseline"
     symbols: list[str] | None = None
@@ -405,6 +432,11 @@ class SchedulerJobRequest(BaseModel):
         "data_quality_report",
         "export_research_cycle",
         "export_operations_status",
+        "fmp_capability_check",
+        "fmp_quote_snapshot",
+        "fmp_eod_refresh",
+        "fmp_intraday_refresh",
+        "fmp_incremental_intraday_refresh",
     ]
     payload: dict[str, Any] = Field(default_factory=dict)
     priority: int = 100

@@ -28,7 +28,7 @@ except ModuleNotFoundError:  # pragma: no cover - no-venv pure quant compatibili
     make_url = None
 
 from app.config import Settings, get_settings
-from app.data.symbols import normalize_symbol
+from app.data.symbols import normalize_symbol, normalize_symbols
 from app.schemas.market import Bar, Label, Outcome, Side, Signal, SignalStatus
 from app.utils.time import UTC
 
@@ -56,6 +56,8 @@ EXPECTED_TABLES = {
     "model_review_reports",
     "model_runs",
     "pipeline_build_windows",
+    "ingestion_runs",
+    "provider_capability_checks",
     "provider_requests",
     "model_decision_ledger",
     "model_proposals",
@@ -74,7 +76,7 @@ EXPECTED_TABLES = {
     "validation_reports",
     "validation_windows",
 }
-EXPECTED_ALEMBIC_REVISION = "0010_phase14_scheduler_worker"
+EXPECTED_ALEMBIC_REVISION = "0011_phase15_fmp_provider"
 
 
 def _now_iso() -> str:
@@ -103,6 +105,31 @@ def _to_jsonable(value: Any) -> Any:
 
 def _json_dumps(payload: Any) -> str:
     return json.dumps(_to_jsonable(payload), sort_keys=True, separators=(",", ":"), allow_nan=False)
+
+
+def _redact_secret_payload(payload: Any) -> Any:
+    secret_values = {
+        value
+        for value in (os.environ.get("FMP_API_KEY"), os.environ.get("DATABASE_URL"))
+        if value
+    }
+    if isinstance(payload, dict):
+        output: dict[str, Any] = {}
+        for key, value in payload.items():
+            lowered = str(key).lower()
+            if any(part in lowered for part in ("apikey", "api_key", "secret", "password", "token", "database_url", "credential")):
+                output[str(key)] = "[REDACTED]"
+            else:
+                output[str(key)] = _redact_secret_payload(value)
+        return output
+    if isinstance(payload, list):
+        return [_redact_secret_payload(item) for item in payload]
+    if isinstance(payload, str):
+        value = payload
+        for secret in secret_values:
+            value = value.replace(secret, "[REDACTED]")
+        return re.sub(r"([?&]apikey=)[^&]+", r"\1[REDACTED]", value, flags=re.IGNORECASE)
+    return payload
 
 
 def _json_loads(payload: str | None) -> Any:
@@ -970,6 +997,61 @@ class SQLiteStore:
                         metadata_json TEXT DEFAULT '{}'
                     );
 
+                    CREATE TABLE IF NOT EXISTS provider_capability_checks (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        check_id TEXT NOT NULL UNIQUE,
+                        provider TEXT NOT NULL,
+                        endpoint_key TEXT NOT NULL,
+                        endpoint_category TEXT NOT NULL,
+                        symbol_scope_json TEXT DEFAULT '[]',
+                        request_type TEXT NOT NULL DEFAULT 'REST',
+                        status TEXT NOT NULL,
+                        http_status INTEGER,
+                        error_code TEXT,
+                        error_class TEXT,
+                        response_shape_json TEXT DEFAULT '{}',
+                        sample_symbol TEXT,
+                        sample_count INTEGER NOT NULL DEFAULT 0,
+                        latency_ms INTEGER,
+                        entitlement_notes_json TEXT DEFAULT '{}',
+                        checked_at TEXT NOT NULL,
+                        created_at TEXT NOT NULL
+                    );
+
+                    CREATE INDEX IF NOT EXISTS ix_provider_capability_checks_endpoint_checked
+                        ON provider_capability_checks(provider, endpoint_key, checked_at);
+
+                    CREATE INDEX IF NOT EXISTS ix_provider_capability_checks_status
+                        ON provider_capability_checks(status, checked_at);
+
+                    CREATE TABLE IF NOT EXISTS ingestion_runs (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        ingestion_run_id TEXT NOT NULL UNIQUE,
+                        provider TEXT NOT NULL,
+                        ingestion_type TEXT NOT NULL,
+                        symbols_json TEXT DEFAULT '[]',
+                        intervals_json TEXT DEFAULT '[]',
+                        start TEXT,
+                        "end" TEXT,
+                        status TEXT NOT NULL,
+                        records_fetched INTEGER NOT NULL DEFAULT 0,
+                        records_inserted INTEGER NOT NULL DEFAULT 0,
+                        records_updated INTEGER NOT NULL DEFAULT 0,
+                        records_skipped INTEGER NOT NULL DEFAULT 0,
+                        provider_request_ids_json TEXT DEFAULT '[]',
+                        dirty_windows_json TEXT DEFAULT '[]',
+                        errors_json TEXT DEFAULT '[]',
+                        warnings_json TEXT DEFAULT '[]',
+                        created_at TEXT NOT NULL,
+                        completed_at TEXT
+                    );
+
+                    CREATE INDEX IF NOT EXISTS ix_ingestion_runs_provider_type_created
+                        ON ingestion_runs(provider, ingestion_type, created_at);
+
+                    CREATE INDEX IF NOT EXISTS ix_ingestion_runs_status_created
+                        ON ingestion_runs(status, created_at);
+
                     CREATE TABLE IF NOT EXISTS exports (
                         export_id TEXT PRIMARY KEY,
                         export_type TEXT NOT NULL,
@@ -1173,6 +1255,18 @@ class SQLiteStore:
                 )
                 connection.execute(
                     "CREATE INDEX IF NOT EXISTS ix_scheduler_jobs_lease_owner ON scheduler_jobs(lease_owner)"
+                )
+                connection.execute(
+                    "CREATE INDEX IF NOT EXISTS ix_provider_capability_checks_endpoint_checked ON provider_capability_checks(provider, endpoint_key, checked_at)"
+                )
+                connection.execute(
+                    "CREATE INDEX IF NOT EXISTS ix_provider_capability_checks_status ON provider_capability_checks(status, checked_at)"
+                )
+                connection.execute(
+                    "CREATE INDEX IF NOT EXISTS ix_ingestion_runs_provider_type_created ON ingestion_runs(provider, ingestion_type, created_at)"
+                )
+                connection.execute(
+                    "CREATE INDEX IF NOT EXISTS ix_ingestion_runs_status_created ON ingestion_runs(status, created_at)"
                 )
                 connection.commit()
             finally:
@@ -4023,32 +4117,51 @@ class ProviderRequestRepository:
         row_count: int | None = None,
         error_message: str | None = None,
         metadata: dict[str, Any] | None = None,
+        request_id: str | None = None,
+        response_status: int | None = None,
+        started_at: datetime | str | None = None,
+        finished_at: datetime | str | None = None,
+        method: str = "GET",
+        cache_hit: bool = False,
     ) -> str:
         now = _now_iso()
-        request_id = _stable_id("provider_request", provider, endpoint, symbol or "", interval or "", now)
+        started_text = _parse_datetime(started_at).isoformat() if started_at is not None else now
+        finished_text = _parse_datetime(finished_at).isoformat() if finished_at is not None else now
+        request_id = request_id or _stable_id("provider_request", provider, endpoint, symbol or "", interval or "", started_text)
         with self.store._lock:
             connection = self.store.connect()
             try:
                 connection.execute(
                     """
                     INSERT INTO provider_requests(
-                        request_id, provider, endpoint, symbol, interval, started_at, finished_at, status,
-                        row_count, error_message, metadata_json
+                        request_id, provider, endpoint, method, symbol, interval, started_at, finished_at, status,
+                        response_status, row_count, cache_hit, error_message, metadata_json
                     )
-                    VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(request_id) DO UPDATE SET
+                        finished_at=excluded.finished_at,
+                        status=excluded.status,
+                        response_status=excluded.response_status,
+                        row_count=excluded.row_count,
+                        cache_hit=excluded.cache_hit,
+                        error_message=excluded.error_message,
+                        metadata_json=excluded.metadata_json
                     """,
                     (
                         request_id,
                         provider,
                         endpoint,
+                        method,
                         normalize_symbol(symbol) if symbol else None,
                         interval,
-                        now,
-                        now,
+                        started_text,
+                        finished_text,
                         status,
+                        response_status,
                         row_count,
-                        error_message,
-                        _json_dumps(metadata or {}),
+                        bool(cache_hit),
+                        _safe_text(error_message),
+                        _json_dumps(_redact_secret_payload(metadata or {})),
                     ),
                 )
                 connection.commit()
@@ -4070,6 +4183,265 @@ class ProviderRequestRepository:
         finally:
             if str(self.store.path) != ":memory:":
                 connection.close()
+
+
+def _safe_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    return str(_redact_secret_payload(str(value)))
+
+
+class ProviderCapabilityRepository:
+    def __init__(self, store: SQLiteStore) -> None:
+        self.store = store
+
+    def save(self, payload: dict[str, Any]) -> dict[str, Any]:
+        now = _now_iso()
+        checked_at = _parse_datetime(payload.get("checked_at") or now).isoformat()
+        endpoint_key = str(payload.get("endpoint_key") or "unknown")
+        check_id = str(
+            payload.get("check_id")
+            or _stable_id("capability", payload.get("provider") or "fmp", endpoint_key, checked_at)
+        )
+        row = {
+            "check_id": check_id,
+            "provider": str(payload.get("provider") or "fmp"),
+            "endpoint_key": endpoint_key,
+            "endpoint_category": str(payload.get("endpoint_category") or "unknown"),
+            "symbol_scope": normalize_symbols(payload.get("symbol_scope") or []),
+            "request_type": str(payload.get("request_type") or "REST"),
+            "status": str(payload.get("status") or "UNKNOWN"),
+            "http_status": payload.get("http_status"),
+            "error_code": payload.get("error_code"),
+            "error_class": payload.get("error_class"),
+            "response_shape": _redact_secret_payload(payload.get("response_shape") or {}),
+            "sample_symbol": normalize_symbol(str(payload["sample_symbol"])) if payload.get("sample_symbol") else None,
+            "sample_count": int(payload.get("sample_count") or 0),
+            "latency_ms": payload.get("latency_ms"),
+            "entitlement_notes": _redact_secret_payload(payload.get("entitlement_notes") or {}),
+            "checked_at": checked_at,
+            "created_at": str(payload.get("created_at") or now),
+        }
+        with self.store._lock:
+            connection = self.store.connect()
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO provider_capability_checks(
+                        check_id, provider, endpoint_key, endpoint_category, symbol_scope_json, request_type,
+                        status, http_status, error_code, error_class, response_shape_json, sample_symbol,
+                        sample_count, latency_ms, entitlement_notes_json, checked_at, created_at
+                    )
+                    VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(check_id) DO UPDATE SET
+                        status=excluded.status,
+                        http_status=excluded.http_status,
+                        error_code=excluded.error_code,
+                        error_class=excluded.error_class,
+                        response_shape_json=excluded.response_shape_json,
+                        sample_count=excluded.sample_count,
+                        latency_ms=excluded.latency_ms,
+                        entitlement_notes_json=excluded.entitlement_notes_json,
+                        checked_at=excluded.checked_at
+                    """,
+                    (
+                        row["check_id"],
+                        row["provider"],
+                        row["endpoint_key"],
+                        row["endpoint_category"],
+                        _json_dumps(row["symbol_scope"]),
+                        row["request_type"],
+                        row["status"],
+                        row["http_status"],
+                        row["error_code"],
+                        row["error_class"],
+                        _json_dumps(row["response_shape"]),
+                        row["sample_symbol"],
+                        row["sample_count"],
+                        row["latency_ms"],
+                        _json_dumps(row["entitlement_notes"]),
+                        row["checked_at"],
+                        row["created_at"],
+                    ),
+                )
+                connection.commit()
+            finally:
+                if str(self.store.path) != ":memory:":
+                    connection.close()
+        return row
+
+    def list(
+        self,
+        *,
+        provider: str | None = None,
+        endpoint_key: str | None = None,
+        limit: int = 200,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if provider:
+            clauses.append("provider = ?")
+            params.append(provider)
+        if endpoint_key:
+            clauses.append("endpoint_key = ?")
+            params.append(endpoint_key)
+        sql = "SELECT * FROM provider_capability_checks"
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
+        sql += " ORDER BY checked_at DESC LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
+        connection = self.store.connect()
+        try:
+            return [self._row(row) for row in connection.execute(sql, params).fetchall()]
+        finally:
+            if str(self.store.path) != ":memory:":
+                connection.close()
+
+    def latest_matrix(self, *, provider: str = "fmp") -> builtins.list[dict[str, Any]]:
+        latest: dict[str, dict[str, Any]] = {}
+        for row in self.list(provider=provider, limit=1000):
+            latest.setdefault(str(row["endpoint_key"]), row)
+        return list(latest.values())
+
+    def _row(self, row: Any) -> dict[str, Any]:
+        data = dict(row)
+        data["symbol_scope"] = _json_loads(data.pop("symbol_scope_json", "[]"))
+        data["response_shape"] = _json_loads(data.pop("response_shape_json", "{}"))
+        data["entitlement_notes"] = _json_loads(data.pop("entitlement_notes_json", "{}"))
+        return data
+
+
+class IngestionRunRepository:
+    def __init__(self, store: SQLiteStore) -> None:
+        self.store = store
+
+    def save(self, payload: dict[str, Any]) -> dict[str, Any]:
+        now = _now_iso()
+        run_id = str(payload.get("ingestion_run_id") or _stable_id("ingestion", payload.get("provider") or "fmp", payload.get("ingestion_type") or "unknown", now))
+        row = {
+            "ingestion_run_id": run_id,
+            "provider": str(payload.get("provider") or "fmp"),
+            "ingestion_type": str(payload.get("ingestion_type") or "unknown"),
+            "symbols": normalize_symbols(payload.get("symbols") or []),
+            "intervals": [str(item) for item in payload.get("intervals") or []],
+            "start": _maybe_datetime(payload.get("start")),
+            "end": _maybe_datetime(payload.get("end")),
+            "status": str(payload.get("status") or "UNKNOWN"),
+            "records_fetched": int(payload.get("records_fetched") or 0),
+            "records_inserted": int(payload.get("records_inserted") or 0),
+            "records_updated": int(payload.get("records_updated") or 0),
+            "records_skipped": int(payload.get("records_skipped") or 0),
+            "provider_request_ids": [str(item) for item in payload.get("provider_request_ids") or []],
+            "dirty_windows": _redact_secret_payload(payload.get("dirty_windows") or []),
+            "errors": _redact_secret_payload(payload.get("errors") or []),
+            "warnings": _redact_secret_payload(payload.get("warnings") or []),
+            "created_at": str(payload.get("created_at") or now),
+            "completed_at": (_parse_datetime(payload["completed_at"]).isoformat() if payload.get("completed_at") else None),
+        }
+        with self.store._lock:
+            connection = self.store.connect()
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO ingestion_runs(
+                        ingestion_run_id, provider, ingestion_type, symbols_json, intervals_json, start, "end",
+                        status, records_fetched, records_inserted, records_updated, records_skipped,
+                        provider_request_ids_json, dirty_windows_json, errors_json, warnings_json, created_at, completed_at
+                    )
+                    VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(ingestion_run_id) DO UPDATE SET
+                        status=excluded.status,
+                        records_fetched=excluded.records_fetched,
+                        records_inserted=excluded.records_inserted,
+                        records_updated=excluded.records_updated,
+                        records_skipped=excluded.records_skipped,
+                        provider_request_ids_json=excluded.provider_request_ids_json,
+                        dirty_windows_json=excluded.dirty_windows_json,
+                        errors_json=excluded.errors_json,
+                        warnings_json=excluded.warnings_json,
+                        completed_at=excluded.completed_at
+                    """,
+                    (
+                        row["ingestion_run_id"],
+                        row["provider"],
+                        row["ingestion_type"],
+                        _json_dumps(row["symbols"]),
+                        _json_dumps(row["intervals"]),
+                        row["start"].isoformat() if row["start"] else None,
+                        row["end"].isoformat() if row["end"] else None,
+                        row["status"],
+                        row["records_fetched"],
+                        row["records_inserted"],
+                        row["records_updated"],
+                        row["records_skipped"],
+                        _json_dumps(row["provider_request_ids"]),
+                        _json_dumps(row["dirty_windows"]),
+                        _json_dumps(row["errors"]),
+                        _json_dumps(row["warnings"]),
+                        row["created_at"],
+                        row["completed_at"],
+                    ),
+                )
+                connection.commit()
+            finally:
+                if str(self.store.path) != ":memory:":
+                    connection.close()
+        return self.get(run_id) or row
+
+    def get(self, ingestion_run_id: str) -> dict[str, Any] | None:
+        connection = self.store.connect()
+        try:
+            row = connection.execute(
+                "SELECT * FROM ingestion_runs WHERE ingestion_run_id = ?",
+                (ingestion_run_id,),
+            ).fetchone()
+            return self._row(row) if row is not None else None
+        finally:
+            if str(self.store.path) != ":memory:":
+                connection.close()
+
+    def list(
+        self,
+        *,
+        provider: str | None = None,
+        ingestion_type: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if provider:
+            clauses.append("provider = ?")
+            params.append(provider)
+        if ingestion_type:
+            clauses.append("ingestion_type = ?")
+            params.append(ingestion_type)
+        sql = "SELECT * FROM ingestion_runs"
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
+        sql += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
+        connection = self.store.connect()
+        try:
+            return [self._row(row) for row in connection.execute(sql, params).fetchall()]
+        finally:
+            if str(self.store.path) != ":memory:":
+                connection.close()
+
+    def latest(self, *, provider: str = "fmp") -> dict[str, Any] | None:
+        rows = self.list(provider=provider, limit=1)
+        return rows[0] if rows else None
+
+    def _row(self, row: Any) -> dict[str, Any]:
+        data = dict(row)
+        data["symbols"] = _json_loads(data.pop("symbols_json", "[]"))
+        data["intervals"] = _json_loads(data.pop("intervals_json", "[]"))
+        data["provider_request_ids"] = _json_loads(data.pop("provider_request_ids_json", "[]"))
+        data["dirty_windows"] = _json_loads(data.pop("dirty_windows_json", "[]"))
+        data["errors"] = _json_loads(data.pop("errors_json", "[]"))
+        data["warnings"] = _json_loads(data.pop("warnings_json", "[]"))
+        return data
 
 
 class ReplayRepository:
@@ -4861,6 +5233,8 @@ class RepositoryRegistry:
         self.live_signals = LiveSignalRepository(self.store)
         self.scanner_runs = ScannerRunRepository(self.store)
         self.provider_requests = ProviderRequestRepository(self.store)
+        self.provider_capabilities = ProviderCapabilityRepository(self.store)
+        self.ingestion_runs = IngestionRunRepository(self.store)
         self.replays = ReplayRepository(self.store)
         self.replay_sensitivity = ReplaySensitivityRepository(self.store)
         self.backtest_comparisons = BacktestComparisonRepository(self.store)

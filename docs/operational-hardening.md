@@ -175,3 +175,12 @@ Model evidence cells, score audits, and exports must contain no FMP keys, databa
 - Timescale compression and retention policies are not enabled yet.
 - FMP live entitlement remains unverified unless `FMP_API_KEY` is configured outside the repo and `make fmp-smoke` is run.
 - Replay still uses OHLCV assumptions, not order book or queue simulation.
+
+## Phase 15 Provider Hardening
+
+- FMP REST auth uses the `apikey` header only.
+- Query-string API keys are stripped before requests.
+- Provider metadata is redacted before persistence/export.
+- Scheduler FMP jobs block when `FMP_API_KEY` is absent.
+- WebSocket remains an optional entitlement probe, disabled by default.
+- Provider/data UI contains no broker or order controls.

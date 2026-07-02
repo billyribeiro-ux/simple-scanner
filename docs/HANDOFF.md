@@ -4,7 +4,7 @@ Report status date: 2026-07-02
 
 ## Executive State
 
-Phase 14 restores Docker/Postgres verification and adds bounded scheduler worker leases for request-bound job hardening. Node `24.18.0` remains the target runtime and frontend target-runtime gates use pnpm `11.9.0` through Corepack. Python `3.14.6` is installed, `services/quant-engine/.venv` exists on Python `3.14.6`, Postgres/TimescaleDB and Redis are healthy through Docker Compose, and Alembic now verifies at `0010_phase14_scheduler_worker`.
+Phase 15 adds safe FMP REST entitlement verification, header-only provider access, persisted capability checks, persisted ingestion runs, bounded FMP REST ingestion, provider/source data-quality coverage, FMP scheduler jobs, and provider/data operator UI. Node `24.18.0` remains the target runtime and frontend target-runtime gates use pnpm `11.9.0` through Corepack. Python `3.14.6` is installed, `services/quant-engine/.venv` exists on Python `3.14.6`, Postgres/TimescaleDB and Redis are healthy through Docker Compose, and Alembic now verifies at `0011_phase15_fmp_provider`.
 
 This remains a local-first scanner, research, validation, backtest, signal, and export platform only. It is not a broker, auto-trader, order router, self-learning system, or profitability system.
 
@@ -59,8 +59,12 @@ make scheduler-status
 make scheduler-worker-once
 make scheduler-recover-stale
 make export-test
-make db-query-diagnostics
+make fmp-entitlement-test
+make fmp-ingestion-test
+make data-quality-test
 make fmp-smoke
+make fmp-live-smoke
+make db-query-diagnostics
 COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm check
 COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm build
 COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm test
@@ -105,6 +109,8 @@ The persisted contract now includes replay audit, sensitivity, replay-aware mode
 - `scheduler_jobs`: bounded operator-queued research preparation jobs with status, priority, schedule time, payload, result, warnings, failure reason, and optional research cycle ID.
 - `scheduler_job_events`: append-only scheduler job events with event type, message, non-secret metadata, and timestamp.
 - `scheduler_jobs` Phase 14 worker fields: `lease_owner`, `lease_expires_at`, `heartbeat_at`, `attempt_count`, `max_attempts`, `timeout_seconds`, and `last_error`.
+- `provider_capability_checks`: one row per FMP endpoint entitlement probe with status, HTTP status, response shape, latency, sample count, and non-secret entitlement notes.
+- `ingestion_runs`: one row per bounded FMP ingestion request with endpoint keys, symbols, intervals, counts, dirty windows, provider request IDs, warnings, and errors.
 
 Safe status fields are exposed through `GET /health`, `GET /config`, and `make doctor`: `persistence_backend`, `runtime_mode`, `database_configured`, `database_reachable`, `fallback_enabled`, and `fallback_reason`. Full database URLs, passwords, and API keys are never returned.
 
@@ -114,10 +120,13 @@ Safe status fields are exposed through `GET /health`, `GET /config`, and `make d
 - Repository-backed API route state instead of route-level `_MEMORY`.
 - SQLite local API persistence and reinitialization survival for bars, features, labels, replay runs/trades, model runs, active model, scanner runs/signals, exports, and daily reviews.
 - Postgres API persistence and reinitialization survival for the same vertical slice after `make db-migrate`.
-- Alembic migration and schema inspection expectations now target revision `0010_phase14_scheduler_worker`; local Postgres execution is verified in this shell.
+- Alembic migration and schema inspection expectations now target revision `0011_phase15_fmp_provider`; local Postgres execution is verified in this shell when `make db-migrate` and `make db-inspect` are run.
 - SQLite/Postgres repository parity for symbols, bars, features, labels, replay runs/trades, sensitivity runs/scenarios, comparisons, pipeline build windows, replay-aware evidence cells, candidate score audits, calibration audits, replay window sets/results, drift reports, model review reports, models, scanner runs, signals, provider requests, exports, and daily reviews.
 - CSV/XLSX/JSON export generation from persisted signals, replay runs/trades, replay sensitivity runs, replay-aware model summaries, evidence cells, score audits, replay-aware validation reports, calibration reports, replay window sets, calibration drift reports, model review reports, and daily reviews, with file hashes and workbook sheets recorded.
 - CSV/XLSX/JSON export generation for research cycles, model proposals, and champion/challenger comparisons from persisted source IDs, with file hashes and workbook sheet names recorded.
+- FMP REST client security behavior: header-only auth, no query-string key generation, redacted exceptions/metadata, request IDs, latency capture, endpoint classification, and mocked entitlement/ingestion regression tests.
+- Persisted FMP capability checks, ingestion runs, provider request accounting, and source-aware data-quality reporting in SQLite and Postgres schema paths.
+- Provider/data operator UI route wiring for `/operations/provider` and `/operations/data`, with no broker execution controls and no frontend secret exposure.
 - Approval of a model proposal is separate from activation. Explicit proposal activation requires `confirm_manual_activation=true`, accepted validation, non-blocking readiness, and a proposal recommendation that is eligible for activation.
 - The Phase 12 operator UI enforces approval/activation separation with a disabled activation panel until the proposal is approved, the confirmation checkbox is checked, and `ACTIVATE SCANNER MODEL` is typed.
 - The scheduler can queue and run data-quality reports, research-cycle dry-runs/runs, research-cycle exports, and operator-status exports; it cannot approve, reject, activate, deploy, route orders, or place trades.
@@ -127,16 +136,24 @@ Safe status fields are exposed through `GET /health`, `GET /config`, and `make d
 
 ## What Is Not Safe To Trust Yet
 
-- Live FMP entitlement coverage. The live smoke was not run because `FMP_API_KEY` is not loaded into the process environment or ignored env files.
+- Live FMP endpoint entitlement under this machine's key unless `FMP_API_KEY` is loaded at runtime and `make fmp-smoke` or `POST /provider/capabilities/check` is run. Missing-key behavior is safe and persisted as skipped/blocked, but endpoint availability remains unknown without the runtime key.
 - Market replay as execution-grade reality. Replay is now auditable and sensitivity-tested, but fills are still simulated from OHLCV with conservative same-bar rules, configurable slippage/spread, and no true market depth.
 - Model calibration as a live probability. Calibration/drift reports are operational diagnostics, not calibrated probability estimates.
 - Live trading readiness. No broker execution or order routing exists.
 - Fully automated adaptation. Research cycles can compare and propose, but they do not silently activate models or mutate scanner behavior.
 
-## Phase 14 Operator Runbook, Postgres, And Scheduler
+## Phase 15 FMP Data And Phase 14 Infrastructure
 
 Primary docs:
 
+- `docs/fmp-production-data-pipeline.md`
+- `docs/fmp-provider-security.md`
+- `docs/fmp-operator-guide.md`
+- `docs/research/fmp-live-entitlement-matrix.md`
+- `docs/status/PHASE_15_PLAN_2026-07-01.md`
+- `docs/status/PHASE_15_COMPLETION_2026-07-01.md`
+- `docs/status/PHASE_15_FMP_ENTITLEMENT_2026-07-01.md`
+- `docs/status/PHASE_15_DATA_PIPELINE_2026-07-01.md`
 - `docs/local-operator-runbook.md`
 - `docs/operator-daily-procedure.md`
 - `docs/non-autonomous-scheduler.md`
@@ -160,7 +177,7 @@ make db-inspect
 make db-query-diagnostics
 ```
 
-In this Phase 14 run, `docker info`, `docker compose ps`, `make db-up`, `make db-migrate`, `make db-inspect`, `make db-query-diagnostics`, `make api-smoke-postgres`, and `make repository-parity-test` passed.
+Phase 15 keeps the recovered Phase 14 Docker/Postgres/Redis path and adds migration `0011_phase15_fmp_provider` for FMP capability checks and ingestion runs.
 
 Daily operator setup:
 
@@ -379,12 +396,12 @@ curl -s -X POST http://localhost:8000/exports/sensitivity-summary.xlsx \
 
 ## Current Blockers
 
-- Optional live FMP smoke requires `FMP_API_KEY` to be configured outside the committed repo.
+- Optional live FMP smoke and live endpoint entitlement classification require `FMP_API_KEY` to be configured outside the committed repo.
 - Frontend acceptance still requires using Node `24.18.0` through NVM because the Homebrew Node `25.3.0` binary on this machine fails before Corepack.
 
 ## Exact Next Recommended Phase
 
-Phase 15 should focus on artifact reuse and operator ergonomics around research cycles and scheduler outputs. Do not add automatic activation, broker execution, WebSocket scope, options data, self-learning language, autonomous scheduling, or profitability claims.
+Phase 16 should verify live FMP entitlement with a runtime-only key, run a bounded real-data ingestion cycle, compare real FMP coverage against scanner feature/replay readiness, and improve operator diagnostics for incomplete data windows. Do not add broker execution, order routing, automatic activation, production WebSocket ingestion, options data, self-learning language, autonomous scheduling, or profitability claims.
 
 ## Phase 8 Replay-Aware Model Selection Historical Notes
 
@@ -432,7 +449,7 @@ curl -s -X POST http://localhost:8000/exports/replay-aware-validation.xlsx \
   -d '{"kind":"replay-aware-validation","run_id":"{report_id}"}'
 ```
 
-Safe to trust: deterministic replay outcome dataset rules, persisted evidence cells, shrinkage/backoff hierarchy, score audits, replay-aware activation guard, and SQLite/Postgres persistence once migrations are applied through `0010_phase14_scheduler_worker`.
+Safe to trust: deterministic replay outcome dataset rules, persisted evidence cells, shrinkage/backoff hierarchy, score audits, replay-aware activation guard, and SQLite/Postgres persistence once migrations are applied through `0011_phase15_fmp_provider`.
 
 Not safe to trust: `signal_quality_score` as a calibrated probability, replay as live fill proof, portfolio-overlap skipped candidates as losses, or any output as a profitability claim.
 
@@ -481,3 +498,53 @@ Scanner behavior: if the active replay-aware model requires calibration and the 
 Safe to trust: persisted replay/config provenance, counterfactual candidate-quality evidence, calibration warnings/rejection reasons, and activation/scanner calibration gates.
 
 Not safe to trust: counterfactual replay as executable portfolio P/L, `signal_quality_score` as calibrated probability, or any replay/calibration metric as a profitability claim.
+
+## Phase 15 FMP Live Data Handoff
+
+Set `FMP_API_KEY` only in the runtime environment or ignored local env files. Do not paste it into commands, docs, committed files, exports, logs, scheduler payloads, or frontend variables.
+
+Run smoke and entitlement checks:
+
+```bash
+make fmp-smoke
+make fmp-live-smoke
+curl -s -X POST http://localhost:8000/provider/capabilities/check \
+  -H 'content-type: application/json' \
+  -d '{"symbols":["SPY","QQQ","AAPL","NVDA"]}'
+```
+
+If the key is missing, smoke and live ingestion skip or block safely with non-secret status. Capability rows persist in `provider_capability_checks`.
+
+Run bounded ingestion:
+
+```bash
+curl -s -X POST http://localhost:8000/data/ingest/fmp/eod \
+  -H 'content-type: application/json' \
+  -d '{"symbols":["SPY"],"start":"2026-06-01T00:00:00Z","end":"2026-06-05T00:00:00Z"}'
+
+curl -s -X POST http://localhost:8000/data/ingest/fmp/intraday \
+  -H 'content-type: application/json' \
+  -d '{"symbols":["SPY"],"intervals":["1min"],"start":"2026-06-01T13:30:00Z","end":"2026-06-01T20:00:00Z"}'
+
+curl -s -X POST http://localhost:8000/data/ingest/fmp/incremental-intraday \
+  -H 'content-type: application/json' \
+  -d '{"symbols":["SPY"],"intervals":["1min","5min","15min"]}'
+```
+
+View provider/data status:
+
+- `/operations/provider`
+- `/operations/data`
+- `GET /operations/provider-status`
+- `GET /data/quality-report`
+
+Verify no secrets leaked:
+
+```bash
+git grep -n "<known-secret-value>" -- .
+git grep -n "apikey=" -- .
+```
+
+Safe to trust: header-only client behavior, persisted endpoint status, ingestion run counts, idempotent bar upserts, provider/source coverage, and missing-key skip/block behavior.
+
+Not safe to trust: entitlement without a live check, WebSocket production readiness, quote durability beyond provider request metadata, exchange-calendar-perfect coverage, or any output as a profitability claim.

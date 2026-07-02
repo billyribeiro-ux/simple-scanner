@@ -226,3 +226,9 @@ The scheduler never approves proposals, rejects proposals, activates proposals, 
 PostgreSQL now verifies Alembic revision `0010_phase14_scheduler_worker`. SQLite bootstrap and Postgres migrations add nullable scheduler worker lease fields to `scheduler_jobs`: `lease_owner`, `lease_expires_at`, `heartbeat_at`, `attempt_count`, `max_attempts`, `timeout_seconds`, and `last_error`.
 
 The bounded worker path is terminal-only through `make scheduler-worker-once` and `make scheduler-recover-stale`. It leases queued jobs, records heartbeat/release events, recovers stale leases once when requested, and exits. It does not add a daemon, cron, infinite loop, automatic proposal approval, automatic model activation, broker execution, or order routing.
+
+## Phase 15 Persistence Update
+
+PostgreSQL now verifies Alembic revision `0011_phase15_fmp_provider`. SQLite bootstrap and Postgres migrations add `provider_capability_checks` and `ingestion_runs`.
+
+`provider_capability_checks` records endpoint entitlement status, response shape summaries, sample counts, latency, and redacted notes. `ingestion_runs` records bounded FMP quote/EOD/intraday/incremental refresh summaries, provider request IDs, dirty windows, errors, and warnings.
