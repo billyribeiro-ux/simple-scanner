@@ -577,7 +577,7 @@ def test_repository_core_contract_parity(tmp_path, monkeypatch, backend: str) ->
             "warnings": [],
             "config_hash": "config-hash",
             "input_fingerprint": "input-fingerprint",
-            "database_revision": "0008_phase11_research",
+            "database_revision": "0009_phase13_scheduler",
             "persistence_backend": backend,
             "created_at": datetime.now(UTC).isoformat(),
         }
@@ -641,11 +641,31 @@ def test_repository_core_contract_parity(tmp_path, monkeypatch, backend: str) ->
             "metadata": {"secret_free": True},
         }
     )
+    scheduler_job = repo.scheduler_jobs.save(
+        {
+            "job_id": "parity-scheduler-job",
+            "job_type": "data_quality_report",
+            "status": "QUEUED",
+            "priority": 100,
+            "payload": {"symbols": ["AAPL"]},
+            "result": {},
+            "warnings": [],
+            "created_by": "test",
+        }
+    )
+    scheduler_event = repo.scheduler_jobs.append_event(
+        "parity-scheduler-job",
+        "JOB_CREATED",
+        "Parity scheduler event.",
+        {"secret_free": True},
+    )
     assert research_cycle["research_cycle_id"] == "parity-research-cycle"
     assert cycle_artifact["cycle_artifact_id"]
     assert champion_comparison["comparison_id"] == "parity-champion-comparison"
     assert proposal["proposal_id"] == "parity-proposal"
     assert decision["decision_id"] == "parity-decision"
+    assert scheduler_job["job_id"] == "parity-scheduler-job"
+    assert scheduler_event["event_id"]
 
     reopened = RepositoryRegistry(settings=get_settings())
     assert len(reopened.bars.list_all()) == 96
@@ -668,6 +688,8 @@ def test_repository_core_contract_parity(tmp_path, monkeypatch, backend: str) ->
     assert reopened.champion_challenger_comparisons.get("parity-champion-comparison")["readiness_status"] == "PASS"
     assert reopened.model_proposals.get("parity-proposal")["status"] == "PROPOSED"
     assert reopened.model_decision_ledger.list(proposal_id="parity-proposal")[0]["decision_id"] == "parity-decision"
+    assert reopened.scheduler_jobs.get("parity-scheduler-job")["status"] == "QUEUED"
+    assert reopened.scheduler_jobs.list_events("parity-scheduler-job")[0]["event_type"] == "JOB_CREATED"
     assert reopened.validation_reports.latest(model_version="parity-model-accepted")["activation_decision"] == "accepted"
     assert reopened.active_models.get_active()["model_version"] == "parity-model-accepted"
     assert reopened.scanner_runs.latest()["scanner_run_id"] == scanner_run_id

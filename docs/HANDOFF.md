@@ -4,7 +4,7 @@ Report status date: 2026-07-01
 
 ## Executive State
 
-Phase 12 target frontend runtime and thin operator governance UI are complete in source. Node `24.18.0` is available through NVM and all frontend target-runtime gates pass with pnpm `11.9.0` through Corepack. Python `3.14.6` is installed, `services/quant-engine/.venv` exists on Python `3.14.6`, and the backend SQLite/mocked-provider test gates pass. Docker/Postgres verification is blocked in this run because the local Docker socket is unavailable and Postgres on `localhost:15432` refuses connections.
+Phase 13 adds a local operator runbook, Docker/Postgres recovery documentation, and a bounded non-autonomous scheduler for research-cycle preparation. Node `24.18.0` is available through NVM and frontend target-runtime gates use pnpm `11.9.0` through Corepack. Python `3.14.6` is installed, `services/quant-engine/.venv` exists on Python `3.14.6`, and the SQLite/mocked-provider scheduler gates pass. Docker/Postgres verification remains blocked in this run because the local Docker socket is unavailable and Postgres on `localhost:15432` refuses connections.
 
 This remains a local-first scanner, research, validation, backtest, signal, and export platform only. It is not a broker, auto-trader, order router, self-learning system, or profitability system.
 
@@ -53,6 +53,8 @@ make replay-window-test
 make model-review-test
 make research-cycle-test
 make research-status-test
+make scheduler-test
+make scheduler-status
 make export-test
 make db-query-diagnostics
 make fmp-smoke
@@ -97,6 +99,8 @@ The persisted contract now includes replay audit, sensitivity, replay-aware mode
 - `champion_challenger_comparisons`: diagnostic comparison records with gate results, delta metrics, recommended action, readiness, and warnings.
 - `model_proposals`: human-review proposal records with approval status, champion/challenger metrics, gates, rejection reasons, approval actor/time, and activation metadata when explicitly activated.
 - `model_decision_ledger`: append-only governance events for cycle creation/completion, proposal transitions, activation requests, blocked activations, and explicit activations.
+- `scheduler_jobs`: bounded operator-queued research preparation jobs with status, priority, schedule time, payload, result, warnings, failure reason, and optional research cycle ID.
+- `scheduler_job_events`: append-only scheduler job events with event type, message, non-secret metadata, and timestamp.
 
 Safe status fields are exposed through `GET /health`, `GET /config`, and `make doctor`: `persistence_backend`, `runtime_mode`, `database_configured`, `database_reachable`, `fallback_enabled`, and `fallback_reason`. Full database URLs, passwords, and API keys are never returned.
 
@@ -106,12 +110,13 @@ Safe status fields are exposed through `GET /health`, `GET /config`, and `make d
 - Repository-backed API route state instead of route-level `_MEMORY`.
 - SQLite local API persistence and reinitialization survival for bars, features, labels, replay runs/trades, model runs, active model, scanner runs/signals, exports, and daily reviews.
 - Postgres API persistence and reinitialization survival for the same vertical slice after `make db-migrate`.
-- Alembic migration and schema inspection success against local Postgres/TimescaleDB on host port `15432` when the database is at revision `0008_phase11_research`; `bars` is verified as a Timescale hypertable when the extension is available.
+- Alembic migration and schema inspection expectations now target revision `0009_phase13_scheduler`; local Postgres execution is not verified in this shell because Docker is unavailable.
 - SQLite/Postgres repository parity for symbols, bars, features, labels, replay runs/trades, sensitivity runs/scenarios, comparisons, pipeline build windows, replay-aware evidence cells, candidate score audits, calibration audits, replay window sets/results, drift reports, model review reports, models, scanner runs, signals, provider requests, exports, and daily reviews.
 - CSV/XLSX/JSON export generation from persisted signals, replay runs/trades, replay sensitivity runs, replay-aware model summaries, evidence cells, score audits, replay-aware validation reports, calibration reports, replay window sets, calibration drift reports, model review reports, and daily reviews, with file hashes and workbook sheets recorded.
 - CSV/XLSX/JSON export generation for research cycles, model proposals, and champion/challenger comparisons from persisted source IDs, with file hashes and workbook sheet names recorded.
 - Approval of a model proposal is separate from activation. Explicit proposal activation requires `confirm_manual_activation=true`, accepted validation, non-blocking readiness, and a proposal recommendation that is eligible for activation.
 - The Phase 12 operator UI enforces approval/activation separation with a disabled activation panel until the proposal is approved, the confirmation checkbox is checked, and `ACTIVATE SCANNER MODEL` is typed.
+- The Phase 13 scheduler can queue and run data-quality reports, research-cycle dry-runs/runs, research-cycle exports, and operator-status exports; it cannot approve, reject, activate, deploy, route orders, or place trades.
 - Activation guard requiring a persisted accepted validation report; replay-aware models specifically require accepted `replay_aware_walk_forward` validation.
 - Secret redaction behavior and absence of the supplied FMP key from repo files.
 
@@ -123,6 +128,71 @@ Safe status fields are exposed through `GET /health`, `GET /config`, and `make d
 - Model calibration as a live probability. Calibration/drift reports are operational diagnostics, not calibrated probability estimates.
 - Live trading readiness. No broker execution or order routing exists.
 - Fully automated adaptation. Research cycles can compare and propose, but they do not silently activate models or mutate scanner behavior.
+
+## Phase 13 Operator Runbook And Scheduler
+
+Primary docs:
+
+- `docs/local-operator-runbook.md`
+- `docs/operator-daily-procedure.md`
+- `docs/non-autonomous-scheduler.md`
+- `docs/docker-postgres-troubleshooting.md`
+
+Recover Docker/Postgres:
+
+```bash
+docker context ls
+docker info
+docker compose config
+make db-up
+docker compose ps
+nc -zv localhost 15432
+make db-migrate
+make db-inspect
+make db-query-diagnostics
+```
+
+In this Phase 13 run, `docker info`, `docker compose ps`, `make db-up`, `make db-migrate`, `make db-inspect`, and `make db-query-diagnostics` remain blocked because the active Docker socket is missing. Do not claim Postgres recovery until these commands pass.
+
+Daily operator setup:
+
+```bash
+source "$HOME/.nvm/nvm.sh"
+nvm use 24.18.0
+COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack prepare pnpm@11.9.0 --activate
+make doctor
+make scheduler-status
+make api-dev
+make web-dev
+```
+
+Create and run a bounded scheduler job:
+
+```bash
+curl -s -X POST http://localhost:8000/scheduler/jobs \
+  -H 'content-type: application/json' \
+  -d '{"job_type":"data_quality_report","payload":{"symbols":["AAPL","SPY"],"intervals":["1min"]},"created_by":"operator"}'
+
+curl -s -X POST http://localhost:8000/scheduler/jobs/run-pending \
+  -H 'content-type: application/json' \
+  -d '{"max_jobs":3}'
+```
+
+Inspect scheduler status:
+
+```bash
+curl -s http://localhost:8000/operations/scheduler-status
+curl -s http://localhost:8000/scheduler/jobs
+curl -s http://localhost:8000/scheduler/jobs/{job_id}
+curl -s http://localhost:8000/scheduler/jobs/{job_id}/events
+make scheduler-status
+```
+
+Confirm the scheduler does not activate models:
+
+- Review `services/quant-engine/app/services/scheduler.py`; supported jobs never call proposal approve/reject/activate or model activation services.
+- Run `make scheduler-test`; tests assert research-cycle jobs leave the active champion unchanged.
+- In the UI, `/operations/scheduler` and `/operations/scheduler/{job_id}` expose create/run/cancel queue controls only, with no activation controls.
 
 ## Phase 12 Operator UI
 
@@ -350,7 +420,7 @@ curl -s -X POST http://localhost:8000/exports/replay-aware-validation.xlsx \
   -d '{"kind":"replay-aware-validation","run_id":"{report_id}"}'
 ```
 
-Safe to trust: deterministic replay outcome dataset rules, persisted evidence cells, shrinkage/backoff hierarchy, score audits, replay-aware activation guard, and SQLite/Postgres persistence once migrations are applied through `0008_phase11_research`.
+Safe to trust: deterministic replay outcome dataset rules, persisted evidence cells, shrinkage/backoff hierarchy, score audits, replay-aware activation guard, and SQLite/Postgres persistence once migrations are applied through `0009_phase13_scheduler`.
 
 Not safe to trust: `signal_quality_score` as a calibrated probability, replay as live fill proof, portfolio-overlap skipped candidates as losses, or any output as a profitability claim.
 

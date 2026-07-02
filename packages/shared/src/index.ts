@@ -183,10 +183,60 @@ export const decisionLedgerEventSchema = z.object({
 
 export type DecisionLedgerEvent = z.infer<typeof decisionLedgerEventSchema>;
 
+export const schedulerJobSchema = z.object({
+  job_id: z.string(),
+  job_type: z.string(),
+  status: z.string(),
+  priority: z.number().optional(),
+  scheduled_for: z.string().nullable().optional(),
+  started_at: z.string().nullable().optional(),
+  completed_at: z.string().nullable().optional(),
+  failed_reason: z.string().nullable().optional(),
+  payload: jsonRecordSchema.optional(),
+  result: jsonRecordSchema.optional(),
+  warnings: z.array(z.string()).optional(),
+  research_cycle_id: z.string().nullable().optional(),
+  created_by: z.string().nullable().optional(),
+  created_at: z.string().nullable().optional(),
+  updated_at: z.string().nullable().optional()
+});
+
+export type SchedulerJob = z.infer<typeof schedulerJobSchema>;
+
+export const schedulerJobEventSchema = z.object({
+  event_id: z.string(),
+  job_id: z.string(),
+  event_type: z.string(),
+  message: z.string(),
+  metadata: jsonRecordSchema.optional(),
+  created_at: z.string().nullable().optional()
+});
+
+export type SchedulerJobEvent = z.infer<typeof schedulerJobEventSchema>;
+
+export const schedulerStatusSchema = z.object({
+  status: z.string(),
+  queued_jobs: z.number().optional(),
+  running_jobs: z.number().optional(),
+  failed_jobs: z.number().optional(),
+  completed_jobs: z.number().optional(),
+  cancelled_jobs: z.number().optional(),
+  latest_job: schedulerJobSchema.nullable().optional(),
+  latest_failed_job: schedulerJobSchema.nullable().optional(),
+  latest_events: z.array(schedulerJobEventSchema).optional(),
+  persistence_backend: z.string().nullable().optional(),
+  warnings: z.array(z.string()).optional()
+});
+
+export type SchedulerStatus = z.infer<typeof schedulerStatusSchema>;
+
 export const researchStatusSchema = z.object({
   status: z.string(),
   latest_research_cycle: researchCycleSchema.nullable().optional(),
   latest_model_proposal: modelProposalSchema.nullable().optional(),
+  latest_scheduler_job: schedulerJobSchema.nullable().optional(),
+  queued_scheduler_jobs: z.number().optional(),
+  failed_scheduler_jobs: z.number().optional(),
   active_model_version: z.string().nullable().optional(),
   active_model_review_status: z.string().nullable().optional(),
   latest_calibration_drift_severity: z.string().nullable().optional(),

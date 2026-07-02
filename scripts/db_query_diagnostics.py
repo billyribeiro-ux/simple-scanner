@@ -56,6 +56,8 @@ def main() -> int:
             "champion_challenger_comparisons",
             "model_proposals",
             "model_decision_ledger",
+            "scheduler_jobs",
+            "scheduler_job_events",
             "backtest_comparisons",
             "validation_reports",
             "exports",
@@ -176,6 +178,20 @@ def main() -> int:
             print(
                 f"decision={row['decision_id']} decision_type={row['decision_type']} "
                 + f"decision_status={row['decision_status']} created_at={row['created_at']}"
+            )
+        scheduler_jobs = _rows(
+            connection,
+            """
+            select job_id, job_type, status, created_at
+            from scheduler_jobs
+            order by created_at desc
+            limit 5
+            """,
+        )
+        for row in scheduler_jobs:
+            print(
+                f"scheduler_job={row['job_id']} job_type={row['job_type']} "
+                + f"status={row['status']} created_at={row['created_at']}"
             )
         try:
             hypertables = _rows(

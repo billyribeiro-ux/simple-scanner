@@ -4,7 +4,7 @@ Status date: 2026-07-01
 
 ## Scope
 
-Phase 12 hardens replay-aware model selection operations with a target frontend runtime check and a thin operator UI for the Phase 11 controlled research cycle, champion/challenger comparison, model proposal lifecycle, decision ledger, operations research status, and export provenance. It does not add broker execution, order routing, options data, market internals, WebSockets, calibrated ML, self-learning behavior, or profitability claims.
+Phase 13 hardens replay-aware model selection operations with a target frontend runtime check, a thin operator UI, a complete local runbook, Docker/Postgres recovery documentation, and a bounded non-autonomous scheduler for research preparation. It does not add broker execution, order routing, options data, market internals, WebSockets, calibrated ML, self-learning behavior, automatic model deployment, or profitability claims.
 
 ## Frontend Runtime
 
@@ -27,6 +27,7 @@ Root package scripts and Playwright web-server startup call `corepack pnpm` inte
 ## Operator UI Guardrails
 
 - `/operations` and `/research/status` are read-only status surfaces.
+- `/operations/scheduler` and `/operations/scheduler/{job_id}` expose bounded queue controls only.
 - `/research/cycles` creates/dry-runs/runs governance cycles but does not activate models.
 - `/research/proposals/{proposal_id}` keeps approval and activation separate.
 - The activation button is disabled until proposal status is `APPROVED_FOR_ACTIVATION`, the operator checks an explicit confirmation box, and the phrase `ACTIVATE SCANNER MODEL` is typed.
@@ -37,15 +38,15 @@ Root package scripts and Playwright web-server startup call `corepack pnpm` inte
 Postgres/Timescale targets Alembic revision:
 
 ```text
-0008_phase11_research
+0009_phase13_scheduler
 ```
 
-`make db-inspect` expects the Phase 11 table set, replay sensitivity/comparison indexes, replay-aware evidence/score-audit indexes, calibration/drift/window/review/research-governance indexes, JSON columns, and `bars` as a Timescale hypertable when the extension is available.
+`make db-inspect` expects the Phase 13 table set, replay sensitivity/comparison indexes, replay-aware evidence/score-audit indexes, calibration/drift/window/review/research-governance indexes, scheduler indexes, JSON columns, and `bars` as a Timescale hypertable when the extension is available.
 
 Expected verified result after migration:
 
 ```text
-alembic_version=0008_phase11_research
+alembic_version=0009_phase13_scheduler
 missing_tables=none
 missing_indexes=none
 missing_constraints=none
@@ -85,6 +86,15 @@ Research cycles are diagnostic governance records. They persist status transitio
 
 Model proposals separate approval from activation. Approval writes proposal and ledger state only. Activation requires a separate explicit request with `confirm_manual_activation=true` and the existing validation guard. Rejected, blocking, keep-champion, reject-challenger, and block-all-changes proposals cannot activate.
 
+## Phase 13 Tables
+
+- `scheduler_jobs`
+- `scheduler_job_events`
+
+Scheduler jobs persist queue status, payloads, results, warnings, optional research cycle IDs, failed reasons, and timestamps. Scheduler events persist job lifecycle audit records. Both stores redact secret-like fields and never hold FMP keys or database credentials.
+
+The scheduler default pending-run bound is `3` jobs and the hard cap is `10` jobs per request. There is no uncontrolled background daemon, no infinite loop, and no auto-run toggle.
+
 ## Diagnostics
 
 Use:
@@ -94,7 +104,7 @@ make db-diagnostics
 make db-query-diagnostics
 ```
 
-These run `scripts/db_query_diagnostics.py` and print non-secret row counts, dirty-window counts, recent replay hashes, replay window sets, calibration drift reports, model review reports, research cycles, model proposals, decision-ledger rows, and Timescale hypertable status. The script assembles the local development database URL from component environment values instead of storing a literal password-shaped URL.
+These run `scripts/db_query_diagnostics.py` and print non-secret row counts, dirty-window counts, recent replay hashes, replay window sets, calibration drift reports, model review reports, research cycles, model proposals, decision-ledger rows, scheduler jobs, and Timescale hypertable status. The script assembles the local development database URL from component environment values instead of storing a literal password-shaped URL.
 
 ## Exports
 
@@ -126,6 +136,12 @@ Phase 11 exports:
 - `POST /exports/champion-challenger-comparison.xlsx`
 
 All Phase 11 exports read persisted source IDs, write to ignored export paths, persist export metadata with `file_sha256`, and must contain no secrets.
+
+Phase 13 operator export:
+
+- `export_operations_status` scheduler job writes operator status JSON and records export metadata with `file_sha256`.
+
+Scheduler jobs CSV/XLSX and operator status XLSX are deferred until the queue shape stabilizes.
 
 Replay-aware exports:
 

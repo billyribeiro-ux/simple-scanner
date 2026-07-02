@@ -2,7 +2,7 @@
 
 Status date: 2026-07-01
 
-The Phase 12 UI is a thin governance surface. It does not connect to brokers, route orders, or provide execution controls.
+The Phase 13 UI is a thin governance and operator surface. It does not connect to brokers, route orders, provide execution controls, or automatically activate scanner models.
 
 ## Start
 
@@ -25,7 +25,9 @@ Open `http://localhost:5173`.
 
 ## Routes
 
-- `/operations`: backend health, persistence status, active model, latest cycle/proposal, stale windows, data quality, and warnings.
+- `/operations`: backend health, persistence status, active model, latest cycle/proposal, stale windows, data quality, scheduler queue summary, and warnings.
+- `/operations/scheduler`: bounded queue for data-quality, research-cycle dry-run/run, research-cycle export, and operator-status export jobs.
+- `/operations/scheduler/{job_id}`: scheduler job payload, result, warnings, and persisted events.
 - `/research`: safe governance hub.
 - `/research/cycles`: list and create research cycles, then dry-run, run, or export.
 - `/research/cycles/{research_cycle_id}`: inspect one cycle, artifacts, warnings, stale-window state, data quality, and export metadata.
@@ -59,6 +61,20 @@ Activation lives in a separate confirmation panel and requires:
 - backend guard success after sending `confirm_manual_activation=true`.
 
 The page displays blocked backend responses instead of hiding them.
+
+## Scheduler
+
+Use `/operations/scheduler` for bounded local preparation jobs. The page has no automatic loop, no activation controls, no broker controls, and no trading execution language.
+
+Safe actions:
+
+- create a queued job;
+- run one queued job;
+- run a bounded pending batch;
+- cancel a queued job;
+- inspect events and warnings.
+
+Jobs requesting `refresh_data=true` block when `FMP_API_KEY` is missing. The UI only shows non-secret status and backend block reasons.
 
 ## Ledger
 

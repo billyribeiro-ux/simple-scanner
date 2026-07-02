@@ -814,10 +814,14 @@ class ResearchStatusService:
         proposals = self.repos.model_proposals.list(limit=100)
         pending = [proposal for proposal in proposals if proposal.get("status") in {"PROPOSED", "REVIEW_REQUIRED", "APPROVED_FOR_ACTIVATION"}]
         blocked = [proposal for proposal in proposals if proposal.get("status") in {"REJECTED"} or proposal.get("readiness_status") in BLOCKING_READINESS]
+        scheduler = self.repos.scheduler_jobs.status_summary()
         return {
             "status": "ok",
             "latest_research_cycle": latest_cycle,
             "latest_model_proposal": latest_proposal,
+            "latest_scheduler_job": scheduler.get("latest_job"),
+            "queued_scheduler_jobs": scheduler.get("queued_jobs", 0),
+            "failed_scheduler_jobs": scheduler.get("failed_jobs", 0),
             "active_model_version": active_version,
             "active_model_review_status": review.get("readiness_status") if review else None,
             "latest_calibration_drift_severity": drift.get("severity") if drift else None,

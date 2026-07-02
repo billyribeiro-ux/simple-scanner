@@ -504,6 +504,39 @@ model_decision_ledger = sa.Table(
     sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
 )
 
+scheduler_jobs = sa.Table(
+    "scheduler_jobs",
+    metadata,
+    sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
+    sa.Column("job_id", sa.String(96), nullable=False, unique=True, index=True),
+    sa.Column("job_type", sa.String(64), nullable=False, index=True),
+    sa.Column("status", sa.String(32), nullable=False, index=True),
+    sa.Column("priority", sa.Integer, nullable=False, server_default="100"),
+    sa.Column("scheduled_for", sa.DateTime(timezone=True), index=True),
+    sa.Column("started_at", sa.DateTime(timezone=True)),
+    sa.Column("completed_at", sa.DateTime(timezone=True)),
+    sa.Column("failed_reason", sa.Text),
+    sa.Column("payload_json", sa.JSON, nullable=False, server_default=sa.text("'{}'::jsonb")),
+    sa.Column("result_json", sa.JSON, nullable=False, server_default=sa.text("'{}'::jsonb")),
+    sa.Column("warnings_json", sa.JSON, nullable=False, server_default=sa.text("'[]'::jsonb")),
+    sa.Column("research_cycle_id", sa.String(96), index=True),
+    sa.Column("created_by", sa.String(128)),
+    sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+    sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+)
+
+scheduler_job_events = sa.Table(
+    "scheduler_job_events",
+    metadata,
+    sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
+    sa.Column("event_id", sa.String(96), nullable=False, unique=True, index=True),
+    sa.Column("job_id", sa.String(96), nullable=False, index=True),
+    sa.Column("event_type", sa.String(64), nullable=False, index=True),
+    sa.Column("message", sa.Text, nullable=False),
+    sa.Column("metadata_json", sa.JSON, nullable=False, server_default=sa.text("'{}'::jsonb")),
+    sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+)
+
 active_models = sa.Table(
     "active_models",
     metadata,

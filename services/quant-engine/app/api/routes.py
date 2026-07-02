@@ -34,11 +34,14 @@ from app.schemas.market import (
     ResearchCycleRequest,
     ResearchCycleRunRequest,
     ScannerStartRequest,
+    SchedulerJobRequest,
+    SchedulerRunPendingRequest,
     ScoreCandidatesRequest,
     SensitivityRequest,
     TrainRequest,
 )
 from app.services.research import ModelProposalService, ResearchCycleService, ResearchStatusService
+from app.services.scheduler import SchedulerService
 from app.services.workflows import (
     BacktestService,
     CalibrationAuditService,
@@ -622,6 +625,52 @@ async def decision_ledger(
 @router.get("/operations/research-status")
 async def operations_research_status() -> dict[str, object]:
     return ResearchStatusService(repos()).status()
+
+
+@router.post("/scheduler/jobs")
+async def create_scheduler_job(request: SchedulerJobRequest) -> dict[str, object]:
+    return SchedulerService(repos()).create_job(request.model_dump(mode="json"))
+
+
+@router.get("/scheduler/jobs")
+async def list_scheduler_jobs(
+    limit: int = 100,
+    offset: int = 0,
+    status: str | None = None,
+    job_type: str | None = None,
+) -> dict[str, object]:
+    return SchedulerService(repos()).list_jobs(status=status, job_type=job_type, limit=limit, offset=offset)
+
+
+@router.post("/scheduler/jobs/run-pending")
+async def run_pending_scheduler_jobs(request: SchedulerRunPendingRequest | None = None) -> dict[str, object]:
+    max_jobs = request.max_jobs if request else 3
+    return SchedulerService(repos()).run_pending(max_jobs=max_jobs)
+
+
+@router.get("/scheduler/jobs/{job_id}")
+async def get_scheduler_job(job_id: str) -> dict[str, object]:
+    return SchedulerService(repos()).get_job(job_id)
+
+
+@router.post("/scheduler/jobs/{job_id}/run")
+async def run_scheduler_job(job_id: str) -> dict[str, object]:
+    return SchedulerService(repos()).run_job(job_id)
+
+
+@router.post("/scheduler/jobs/{job_id}/cancel")
+async def cancel_scheduler_job(job_id: str) -> dict[str, object]:
+    return SchedulerService(repos()).cancel(job_id)
+
+
+@router.get("/scheduler/jobs/{job_id}/events")
+async def scheduler_job_events(job_id: str, limit: int = 500, offset: int = 0) -> dict[str, object]:
+    return SchedulerService(repos()).events(job_id, limit=limit, offset=offset)
+
+
+@router.get("/operations/scheduler-status")
+async def operations_scheduler_status() -> dict[str, object]:
+    return SchedulerService(repos()).status()
 
 
 @router.post("/backtest/replay/{replay_run_id}/sensitivity")

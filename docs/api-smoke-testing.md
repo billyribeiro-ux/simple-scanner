@@ -108,6 +108,14 @@ The test sets a non-secret sentinel `FMP_API_KEY` only to exercise scanner gatin
 - `POST /research/model-proposals/{proposal_id}/activate`
 - `GET /research/decision-ledger`
 - `GET /operations/research-status`
+- `POST /scheduler/jobs`
+- `GET /scheduler/jobs`
+- `GET /scheduler/jobs/{job_id}`
+- `POST /scheduler/jobs/{job_id}/run`
+- `POST /scheduler/jobs/run-pending`
+- `POST /scheduler/jobs/{job_id}/cancel`
+- `GET /scheduler/jobs/{job_id}/events`
+- `GET /operations/scheduler-status`
 - `POST /exports/research-cycle.xlsx`
 - `POST /exports/research-cycle.json`
 - `POST /exports/model-proposal.xlsx`
@@ -152,6 +160,9 @@ The smoke test:
 - verifies proposal activation is blocked without `confirm_manual_activation=true`;
 - verifies explicit confirmed proposal activation uses the existing replay-aware activation guard;
 - verifies decision-ledger and operations research-status routes;
+- creates, runs, cancels, lists, and reopens bounded scheduler jobs/events;
+- verifies scheduler refresh-data requests block without `FMP_API_KEY`;
+- verifies scheduler-run research-cycle jobs do not activate a model;
 - starts the scanner with mocked quotes/context;
 - persists a scanner run and live signals;
 - exports live signals CSV and XLSX from persisted signals;
@@ -201,6 +212,8 @@ Phase 12 adds Playwright coverage in `apps/web/tests/governance.spec.ts`. These 
 - `/research/proposals/{proposal_id}` loads, approval does not activate, and activation requires explicit phrase plus checkbox;
 - `/research/decision-ledger` loads and applies filters;
 - governance pages do not expose `FMP_API_KEY`, `DATABASE_URL`, or execution-control button/link labels.
+- `/operations/scheduler` creates safe queued jobs and runs bounded pending batches;
+- `/operations/scheduler/{job_id}` displays payload, result, warnings, and events without activation controls.
 
 Run with:
 
@@ -210,3 +223,7 @@ nvm use 24.18.0
 COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack prepare pnpm@11.9.0 --activate
 COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm --filter @amd/web test:e2e
 ```
+
+## Phase 13 Scheduler Coverage
+
+Phase 13 adds `make scheduler-test`, which covers scheduler persistence, service transitions, API routes, FMP gating, runbook docs, and the no-activation guard. The persisted API smoke also reopens scheduler jobs/events from the repository and includes scheduler status in the operations status path. Postgres coverage remains conditional on a reachable Docker/Postgres runtime.

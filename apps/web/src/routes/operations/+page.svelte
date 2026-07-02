@@ -131,6 +131,16 @@
       <strong>{research.pending_proposals?.length ?? 0} pending</strong>
       <small>{research.blocked_proposals?.length ?? 0} blocked</small>
     </div>
+    <div class="panel metric">
+      <span>Scheduler queue</span>
+      <a class="link" href="/operations/scheduler">
+        {(research.queued_scheduler_jobs ?? 0).toString()} queued
+      </a>
+      <small>{research.failed_scheduler_jobs ?? 0} failed or blocked</small>
+      {#if research.latest_scheduler_job}
+        <StatusBadge value={research.latest_scheduler_job.status} />
+      {/if}
+    </div>
   </section>
 
   <section class="panel status-grid">

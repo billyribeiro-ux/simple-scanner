@@ -8,6 +8,9 @@ import {
   researchCycleArtifactSchema,
   researchCycleSchema,
   researchStatusSchema,
+  schedulerJobEventSchema,
+  schedulerJobSchema,
+  schedulerStatusSchema,
   signalSchema,
   type ActivationResponse,
   type AppConfig,
@@ -18,6 +21,9 @@ import {
   type ResearchCycle,
   type ResearchCycleArtifact,
   type ResearchStatus,
+  type SchedulerJob,
+  type SchedulerJobEvent,
+  type SchedulerStatus,
   type Signal,
 } from '@amd/shared';
 import type { ProviderHealth, ScannerStatus } from '$lib/types';
@@ -77,6 +83,19 @@ export type DecisionLedgerFilters = {
 export type ExportResponse = {
   status: string;
   export?: ExportMetadata;
+};
+
+export type SchedulerJobCreatePayload = {
+  job_type:
+    | 'research_cycle_dry_run'
+    | 'research_cycle_run'
+    | 'data_quality_report'
+    | 'export_research_cycle'
+    | 'export_operations_status';
+  payload?: Record<string, unknown>;
+  priority?: number;
+  scheduled_for?: string;
+  created_by?: string;
 };
 
 async function getJson<T>(path: string, fallback: T, parser?: Parser<T>): Promise<T> {
@@ -220,6 +239,87 @@ export function exportSignalsXlsx(): Promise<{ status: string; path: string }> {
 
 export async function getResearchStatus(): Promise<ResearchStatus> {
   return getJson('/operations/research-status', { status: 'offline' }, researchStatusSchema);
+}
+
+export async function getSchedulerStatus(): Promise<SchedulerStatus> {
+  return getJson('/operations/scheduler-status', { status: 'offline' }, schedulerStatusSchema);
+}
+
+export async function listSchedulerJobs(
+  params: {
+    limit?: number;
+    offset?: number;
+    status?: string;
+    job_type?: string;
+  } = {},
+): Promise<{ jobs: SchedulerJob[]; limit: number; offset: number }> {
+  return getJson(
+    `/scheduler/jobs${queryString(params)}`,
+    { jobs: [], limit: params.limit ?? 100, offset: params.offset ?? 0 },
+    {
+      parse: (value) => {
+        const payload = value as { jobs?: unknown; limit?: number; offset?: number };
+        return {
+          jobs: schedulerJobSchema.array().parse(payload.jobs ?? []),
+          limit: payload.limit ?? params.limit ?? 100,
+          offset: payload.offset ?? params.offset ?? 0,
+        };
+      },
+    },
+  );
+}
+
+export function createSchedulerJob(
+  payload: SchedulerJobCreatePayload,
+): Promise<SchedulerJob | ApiFailure> {
+  return postJson('/scheduler/jobs', payload, {
+    status: 'error',
+    reason: 'scheduler job create failed',
+  });
+}
+
+export function getSchedulerJob(job_id: string): Promise<SchedulerJob | ApiFailure> {
+  return getJson(`/scheduler/jobs/${encodeURIComponent(job_id)}`, {
+    status: 'error',
+    reason: 'scheduler job not found',
+  });
+}
+
+export function runSchedulerJob(job_id: string): Promise<SchedulerJob | ApiFailure> {
+  return postJson(`/scheduler/jobs/${encodeURIComponent(job_id)}/run`, undefined, {
+    status: 'error',
+    reason: 'scheduler job run failed',
+  });
+}
+
+export function cancelSchedulerJob(job_id: string): Promise<SchedulerJob | ApiFailure> {
+  return postJson(`/scheduler/jobs/${encodeURIComponent(job_id)}/cancel`, undefined, {
+    status: 'error',
+    reason: 'scheduler job cancel failed',
+  });
+}
+
+export function runPendingSchedulerJobs(max_jobs: number): Promise<Record<string, unknown>> {
+  return postJson('/scheduler/jobs/run-pending', { max_jobs }, { status: 'error' });
+}
+
+export async function getSchedulerJobEvents(
+  job_id: string,
+): Promise<{ events: SchedulerJobEvent[]; limit: number; offset: number }> {
+  return getJson(
+    `/scheduler/jobs/${encodeURIComponent(job_id)}/events`,
+    { events: [], limit: 500, offset: 0 },
+    {
+      parse: (value) => {
+        const payload = value as { events?: unknown; limit?: number; offset?: number };
+        return {
+          events: schedulerJobEventSchema.array().parse(payload.events ?? []),
+          limit: payload.limit ?? 500,
+          offset: payload.offset ?? 0,
+        };
+      },
+    },
+  );
 }
 
 export async function listResearchCycles(

@@ -8,6 +8,9 @@ export type {
   ResearchCycle,
   ResearchCycleArtifact,
   ResearchStatus,
+  SchedulerJob,
+  SchedulerJobEvent,
+  SchedulerStatus,
   Signal,
 } from '@amd/shared';
 

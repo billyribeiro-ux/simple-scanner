@@ -1,6 +1,6 @@
 # Data Model
 
-Core storage is designed around PostgreSQL with TimescaleDB when available. If the Timescale extension is not available, the same tables function as plain PostgreSQL tables. Phase 11 advances Alembic to revision `0008_phase11_research`, adding controlled research cycles, champion/challenger comparisons, model proposals, decision-ledger records, and cycle artifacts on top of Phase 10 review persistence. The API repository runtime supports both SQLite local storage and PostgreSQL.
+Core storage is designed around PostgreSQL with TimescaleDB when available. If the Timescale extension is not available, the same tables function as plain PostgreSQL tables. Phase 13 advances Alembic to revision `0009_phase13_scheduler`, adding bounded scheduler jobs and scheduler job events on top of Phase 11 research-governance persistence. The API repository runtime supports both SQLite local storage and PostgreSQL.
 
 ## Tables
 
@@ -33,6 +33,8 @@ Core storage is designed around PostgreSQL with TimescaleDB when available. If t
 - `champion_challenger_comparisons`: diagnostic champion-vs-challenger deltas, gates, readiness, recommendation, warnings, and context.
 - `model_proposals`: proposal lifecycle state, champion/challenger IDs and metrics, evidence summaries, pass/fail gates, approval metadata, and explicit activation metadata.
 - `model_decision_ledger`: append-only model-governance decisions for cycles, proposals, activation requests, blocked activations, and activations.
+- `scheduler_jobs`: bounded local research-preparation queue state, payloads, results, warnings, failure reasons, and optional research cycle links.
+- `scheduler_job_events`: append-only scheduler job lifecycle events with redacted metadata.
 
 ## Signal Fields
 
@@ -71,3 +73,11 @@ Research cycles store controlled adaptation evidence, not autonomous learning st
 Model proposals separate review from activation. `APPROVED_FOR_ACTIVATION` is not active deployment; activation requires a separate explicit call with manual confirmation and the existing validation guard. Proposals with `KEEP_CHAMPION`, `REJECT_CHALLENGER`, or `BLOCK_ALL_CHANGES` recommendations cannot be approved for activation.
 
 The decision ledger is append-only for normal operation. It records evidence references and actor strings, but never API keys, database passwords, or provider secrets.
+
+## Phase 13 Update
+
+Alembic is now `0009_phase13_scheduler`. New persisted tables are `scheduler_jobs` and `scheduler_job_events`.
+
+Scheduler jobs can run data-quality reports, research-cycle dry-runs, controlled research-cycle runs, research-cycle exports, and operator-status exports. They are bounded, synchronous, and operator-triggered in V1. They never approve proposals, reject proposals, activate models, route orders, place trades, or change the active scanner model.
+
+Scheduler payloads, results, events, status responses, and exports are redacted before persistence. A job requesting `refresh_data=true` blocks without provider access when `FMP_API_KEY` is missing.

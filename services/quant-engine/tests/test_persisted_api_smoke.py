@@ -685,6 +685,41 @@ def _run_persisted_api_vertical_slice(
         research_status = client.get("/operations/research-status").json()
         assert research_status["status"] == "ok"
         assert research_status["latest_research_cycle"]["research_cycle_id"] == research_cycle_id
+        scheduler_job = client.post(
+            "/scheduler/jobs",
+            json={
+                "job_type": "data_quality_report",
+                "payload": {"symbols": ["AAPL", "SPY"], "intervals": ["1min"]},
+                "created_by": "api-smoke",
+            },
+        ).json()
+        scheduler_export_job = client.post(
+            "/scheduler/jobs",
+            json={"job_type": "export_operations_status", "payload": {}, "created_by": "api-smoke"},
+        ).json()
+        scheduler_cancel_job = client.post(
+            "/scheduler/jobs",
+            json={"job_type": "data_quality_report", "payload": {"symbols": ["QQQ"]}},
+        ).json()
+        assert scheduler_job["status"] == "QUEUED"
+        assert scheduler_export_job["status"] == "QUEUED"
+        assert client.post(f"/scheduler/jobs/{scheduler_cancel_job['job_id']}/cancel").json()["status"] == "CANCELLED"
+        scheduler_list = client.get("/scheduler/jobs").json()
+        assert scheduler_job["job_id"] in {job["job_id"] for job in scheduler_list["jobs"]}
+        scheduler_pending = client.post("/scheduler/jobs/run-pending", json={"max_jobs": 2}).json()
+        assert scheduler_pending["jobs_run"] == 2
+        assert {result["status"] for result in scheduler_pending["results"]} == {"COMPLETED"}
+        scheduler_export_result = next(
+            result for result in scheduler_pending["results"] if result["job_id"] == scheduler_export_job["job_id"]
+        )
+        scheduler_export_path = scheduler_export_result["result"]["path"]
+        scheduler_events = client.get(f"/scheduler/jobs/{scheduler_job['job_id']}/events").json()
+        assert scheduler_events["events"]
+        scheduler_status = client.get("/operations/scheduler-status").json()
+        assert scheduler_status["completed_jobs"] >= 2
+        assert scheduler_status["cancelled_jobs"] >= 1
+        research_status_with_scheduler = client.get("/operations/research-status").json()
+        assert research_status_with_scheduler["queued_scheduler_jobs"] == 0
         repo.validation_reports.save(
             {
                 "model_version": replay_aware_model_version,
@@ -974,6 +1009,8 @@ def _run_persisted_api_vertical_slice(
     assert reopened.model_proposals.get(proposal_id)["proposal_id"] == proposal_id
     assert reopened.champion_challenger_comparisons.get(cycle_run["comparison"]["comparison_id"])["comparison_id"] == cycle_run["comparison"]["comparison_id"]
     assert reopened.model_decision_ledger.list(proposal_id=proposal_id)
+    assert reopened.scheduler_jobs.get(scheduler_job["job_id"])["status"] == "COMPLETED"
+    assert reopened.scheduler_jobs.list_events(scheduler_job["job_id"])
     assert reopened.active_models.get_active()["model_version"] == replacement_version
     assert reopened.scanner_runs.latest()["scanner_run_id"] == scanner_start["scanner_run_id"]
     assert len(reopened.live_signals.list_latest()) == len(live_signals)
@@ -1015,6 +1052,7 @@ def _run_persisted_api_vertical_slice(
         model_proposal_xlsx["path"],
         model_proposal_json["path"],
         champion_challenger_xlsx["path"],
+        scheduler_export_path,
         *replay_summary_export["paths"],
         *daily_export["paths"],
         model_dir / "active_model.json",

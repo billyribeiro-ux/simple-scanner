@@ -398,6 +398,24 @@ class ProposalActivationRequest(BaseModel):
     calibration_audit_required: bool = False
 
 
+class SchedulerJobRequest(BaseModel):
+    job_type: Literal[
+        "research_cycle_dry_run",
+        "research_cycle_run",
+        "data_quality_report",
+        "export_research_cycle",
+        "export_operations_status",
+    ]
+    payload: dict[str, Any] = Field(default_factory=dict)
+    priority: int = 100
+    scheduled_for: datetime | None = None
+    created_by: str | None = None
+
+
+class SchedulerRunPendingRequest(BaseModel):
+    max_jobs: int = 3
+
+
 class ScoreCandidatesRequest(BaseModel):
     candidate_ids: list[str] | None = None
     candidates: list[dict[str, Any]] | None = None

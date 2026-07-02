@@ -39,6 +39,8 @@ EXPECTED_TABLES = {
     "replay_sensitivity_scenarios",
     "replay_window_results",
     "replay_window_sets",
+    "scheduler_job_events",
+    "scheduler_jobs",
     "scanner_runs",
     "simulated_trades",
     "symbols",
@@ -51,7 +53,7 @@ DEFAULT_POSTGRES_PASSWORD = os.environ.get("LOCAL_POSTGRES_PASSWORD", "amd")
 DEFAULT_POSTGRES_HOST = os.environ.get("LOCAL_POSTGRES_HOST", "localhost")
 DEFAULT_POSTGRES_PORT = os.environ.get("LOCAL_POSTGRES_PORT", "15432")
 DEFAULT_POSTGRES_DB = os.environ.get("LOCAL_POSTGRES_DB", "adaptive_market_decoder")
-EXPECTED_REVISION = "0008_phase11_research"
+EXPECTED_REVISION = "0009_phase13_scheduler"
 EXPECTED_INDEXES = {
     "ix_backtest_comparisons_replay_created",
     "ix_candidate_signals_replay_lookup",
@@ -87,6 +89,11 @@ EXPECTED_INDEXES = {
     "ix_replay_runs_simulation_type",
     "ix_replay_window_results_set_index",
     "ix_replay_window_sets_status_created",
+    "ix_scheduler_job_events_job_created",
+    "ix_scheduler_job_events_type_created",
+    "ix_scheduler_jobs_research_cycle",
+    "ix_scheduler_jobs_status_scheduled",
+    "ix_scheduler_jobs_type_status",
     "ix_sensitivity_runs_replay_created",
     "ix_sensitivity_scenarios_run_cost",
     "ix_validation_reports_model_purpose_created",
@@ -109,6 +116,8 @@ EXPECTED_UNIQUE_CONSTRAINTS = {
     "uq_model_decision_ledger_decision_id",
     "uq_pipeline_window",
     "uq_research_cycles_cycle_id",
+    "uq_scheduler_job_events_event_id",
+    "uq_scheduler_jobs_job_id",
 }
 EXPECTED_COLUMNS = {
     "bars": {"symbol", "interval", "timestamp_utc", "source", "payload_json"},
@@ -186,6 +195,15 @@ EXPECTED_COLUMNS = {
         "decision_status",
         "payload_json",
     },
+    "scheduler_jobs": {
+        "job_id",
+        "job_type",
+        "status",
+        "payload_json",
+        "result_json",
+        "warnings_json",
+    },
+    "scheduler_job_events": {"event_id", "job_id", "event_type", "metadata_json"},
     "replay_window_sets": {"window_set_id", "window_mode", "summary_json", "payload_json"},
     "replay_window_results": {"window_result_id", "window_set_id", "metrics_json", "payload_json"},
     "model_calibration_drift_reports": {
@@ -327,6 +345,10 @@ EXPECTED_JSON_COLUMNS = {
     ("model_decision_ledger", "evidence_refs_json"),
     ("model_decision_ledger", "metadata_json"),
     ("model_decision_ledger", "payload_json"),
+    ("scheduler_jobs", "payload_json"),
+    ("scheduler_jobs", "result_json"),
+    ("scheduler_jobs", "warnings_json"),
+    ("scheduler_job_events", "metadata_json"),
     ("replay_window_sets", "symbols_json"),
     ("replay_window_sets", "intervals_json"),
     ("replay_window_sets", "setup_types_json"),

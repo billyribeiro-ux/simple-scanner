@@ -35,6 +35,10 @@ The backend can still block the request for validation, calibration, readiness, 
 
 Activation remains governed by the existing model activation service. Replay-aware scanner models require accepted `replay_aware_walk_forward` validation when that validation mode is requested. Rejected proposals, blocking readiness, keep-champion recommendations, reject-challenger recommendations, and block-all-changes recommendations cannot activate.
 
+## Scheduler Boundary
+
+The Phase 13 scheduler is intentionally outside the activation path. Scheduler jobs can create or run research-cycle preparation work, but they never call proposal approval, proposal rejection, proposal activation, or model activation. The scheduler UI exposes queue run/cancel controls only.
+
 ## Non-Goals
 
-No automatic activation, scheduled activation, broker execution, order routing, WebSocket trading feed, options data, self-learning claim, or profitability claim is introduced in Phase 12.
+No automatic activation, scheduled activation, broker execution, order routing, WebSocket trading feed, options data, self-learning claim, or profitability claim is introduced in Phase 13.

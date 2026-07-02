@@ -4,7 +4,7 @@ Status date: 2026-07-01
 
 ## Summary
 
-The API route `_MEMORY` workflow state has been replaced with repository-backed persistence. The local-first API runtime uses SQLite at `data/local_repo.sqlite3` when no database URL is configured, and it uses PostgreSQL/TimescaleDB when `DATABASE_URL` points at a migrated Postgres database. Phase 11 verifies the same persisted API vertical slice against both backends, including candidate market replay, counterfactual replay, sensitivity, calibration audits, replay window sets/results, calibration drift reports, model review reports, research cycles, champion/challenger comparisons, model proposals, decision-ledger events, operations research status, and exports.
+The API route `_MEMORY` workflow state has been replaced with repository-backed persistence. The local-first API runtime uses SQLite at `data/local_repo.sqlite3` when no database URL is configured, and it uses PostgreSQL/TimescaleDB when `DATABASE_URL` points at a migrated Postgres database. Phase 13 verifies the same persisted API vertical slice against SQLite and keeps Postgres parity expectations in schema/migration tests, including candidate market replay, counterfactual replay, sensitivity, calibration audits, replay window sets/results, calibration drift reports, model review reports, research cycles, champion/challenger comparisons, model proposals, decision-ledger events, scheduler jobs/events, operations status, and exports. Postgres runtime execution is blocked in the current shell until Docker is reachable.
 
 This is still a scanner, research, validation, backtest, model metadata, signal, and export platform. It is not a broker, not an order router, and not a profitability engine.
 
@@ -12,7 +12,7 @@ This is still a scanner, research, validation, backtest, model metadata, signal,
 
 - Local default: `data/local_repo.sqlite3`, ignored by git along with SQLite WAL sidecars.
 - Configured SQLite: `sqlite:///...` paths, including `AMD_SQLITE_PATH` for local test/runtime overrides.
-- PostgreSQL runtime: sync SQLAlchemy/psycopg repository store against Alembic revision `0008_phase11_research` on local host port `15432`.
+- PostgreSQL runtime: sync SQLAlchemy/psycopg repository store against Alembic revision `0009_phase13_scheduler` on local host port `15432`.
 - Export artifacts: `exports/`, ignored except `.gitkeep`.
 - Model artifacts: `model_artifacts/`, ignored except `.gitkeep`.
 - FMP secrets: `FMP_API_KEY` from environment or ignored env files only.
@@ -41,6 +41,8 @@ It exposes concrete repositories for:
 - `champion_challenger_comparisons`
 - `model_proposals`
 - `model_decision_ledger`
+- `scheduler_jobs`
+- `scheduler_job_events` through the scheduler job repository
 - `active_models`
 - `live_signals`
 - `scanner_runs`
@@ -86,6 +88,10 @@ Backend selection is explicit:
 - `/research/model-proposals/{proposal_id}/activate` is the explicit manual proposal activation path; it still calls the existing activation guard.
 - `/research/decision-ledger` reads append-only governance decisions.
 - `/operations/research-status` reads latest cycle/proposal/model-review/drift/stale/data-quality state without mutation.
+- `/scheduler/jobs` writes persisted non-autonomous scheduler jobs.
+- `/scheduler/jobs/{job_id}/run` executes one queued job synchronously and writes job status/events.
+- `/scheduler/jobs/run-pending` runs a bounded pending batch.
+- `/operations/scheduler-status` reads scheduler queue status, latest job, latest failed job, and latest events without secrets.
 - `/data/quality-report` reads persisted bars, pipeline windows, and provider requests to report data quality.
 - `/models/validate` writes validation reports.
 - `/models/validate?validation_mode=replay_aware_walk_forward` writes replay-aware validation reports with purpose `replay_aware_validation`.
@@ -168,6 +174,8 @@ The aligned table set is:
 - `champion_challenger_comparisons`
 - `model_proposals`
 - `model_decision_ledger`
+- `scheduler_jobs`
+- `scheduler_job_events`
 
 ## Incremental Build Windows
 
@@ -203,3 +211,11 @@ PostgreSQL now verifies Alembic revision `0008_phase11_research`. SQLite bootstr
 New persisted API/export surfaces include research cycle create/list/get/run/dry-run/artifacts/export, model proposal list/get/approve/reject/activate, decision ledger filters, operations research status, research cycle XLSX/JSON, model proposal XLSX/JSON, and champion/challenger comparison XLSX.
 
 Phase 11 adds explicit governance guardrails: a research cycle never silently activates; approval is persisted but not activation; proposal activation requires a separate confirmation flag; rejected, blocking, keep-champion, reject-challenger, and block-all-changes proposals cannot activate.
+
+## Phase 13 Persistence Update
+
+PostgreSQL now verifies Alembic revision `0009_phase13_scheduler`. SQLite bootstrap and Postgres migrations include `scheduler_jobs` and `scheduler_job_events`.
+
+New persisted API surfaces include scheduler job create/list/get/run/cancel/events, bounded run-pending, and operations scheduler status. Scheduler jobs persist across repository reinitialization, record events for every transition, redact secret-like payload/result/event fields, and block `refresh_data=true` jobs before provider access when `FMP_API_KEY` is missing.
+
+The scheduler never approves proposals, rejects proposals, activates proposals, changes the active scanner model, connects to brokers, routes orders, or places trades.

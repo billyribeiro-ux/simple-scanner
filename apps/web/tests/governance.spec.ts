@@ -47,6 +47,51 @@ const baseProposal = {
   updated_at: '2026-07-01T12:10:00Z',
 };
 
+const baseSchedulerJob = {
+  job_id: 'scheduler-001',
+  job_type: 'data_quality_report',
+  status: 'QUEUED',
+  priority: 100,
+  scheduled_for: null,
+  started_at: null,
+  completed_at: null,
+  failed_reason: null,
+  payload: { symbols: ['AAPL', 'SPY'], intervals: ['1min'] },
+  result: {},
+  warnings: [],
+  research_cycle_id: null,
+  created_by: 'operator-ui',
+  created_at: '2026-07-01T12:40:00Z',
+  updated_at: '2026-07-01T12:40:00Z',
+};
+
+function schedulerSummary(jobs: Array<Record<string, unknown>>) {
+  const latestJob = jobs[0] ?? null;
+  const failed = jobs.find((job) => ['FAILED', 'BLOCKED'].includes(String(job.status))) ?? null;
+  return {
+    status: 'ok',
+    queued_jobs: jobs.filter((job) => job.status === 'QUEUED').length,
+    running_jobs: jobs.filter((job) => job.status === 'RUNNING').length,
+    failed_jobs: jobs.filter((job) => ['FAILED', 'BLOCKED'].includes(String(job.status))).length,
+    completed_jobs: jobs.filter((job) => job.status === 'COMPLETED').length,
+    cancelled_jobs: jobs.filter((job) => job.status === 'CANCELLED').length,
+    latest_job: latestJob,
+    latest_failed_job: failed,
+    latest_events: [
+      {
+        event_id: 'scheduler-event-001',
+        job_id: 'scheduler-001',
+        event_type: 'JOB_CREATED',
+        message: 'Scheduler job queued.',
+        metadata: {},
+        created_at: '2026-07-01T12:40:00Z',
+      },
+    ],
+    persistence_backend: 'sqlite',
+    warnings: ['Scheduler is bounded and does not activate models.'],
+  };
+}
+
 function json(body: unknown) {
   return {
     status: 200,
@@ -73,18 +118,35 @@ function corsPreflight() {
 
 async function installGovernanceMocks(page: Page) {
   let proposal: Record<string, unknown> = { ...baseProposal };
+  let schedulerJobs: Array<Record<string, unknown>> = [{ ...baseSchedulerJob }];
+  const schedulerEvents: Array<Record<string, unknown>> = [
+    {
+      event_id: 'scheduler-event-001',
+      job_id: 'scheduler-001',
+      event_type: 'JOB_CREATED',
+      message: 'Scheduler job queued.',
+      metadata: {},
+      created_at: '2026-07-01T12:40:00Z',
+    },
+  ];
   const calls: {
     activate: number;
     approve: number;
     dryRun: number;
+    schedulerCreate: number;
+    runPending: number;
     cycleCreateBody: unknown;
+    schedulerCreateBody: unknown;
     activateBody: unknown;
     requests: string[];
   } = {
     activate: 0,
     approve: 0,
     dryRun: 0,
+    schedulerCreate: 0,
+    runPending: 0,
     cycleCreateBody: null,
+    schedulerCreateBody: null,
     activateBody: null,
     requests: [],
   };
@@ -141,6 +203,11 @@ async function installGovernanceMocks(page: Page) {
           status: 'ok',
           latest_research_cycle: cycle,
           latest_model_proposal: proposal,
+          latest_scheduler_job: schedulerJobs[0],
+          queued_scheduler_jobs: schedulerJobs.filter((job) => job.status === 'QUEUED').length,
+          failed_scheduler_jobs: schedulerJobs.filter((job) =>
+            ['FAILED', 'BLOCKED'].includes(String(job.status)),
+          ).length,
           active_model_version: 'champion-v1',
           active_model_review_status: 'PASS',
           latest_calibration_drift_severity: 'INFO',
@@ -154,6 +221,113 @@ async function installGovernanceMocks(page: Page) {
           ],
         }),
       );
+      return;
+    }
+    if (url.pathname === '/operations/scheduler-status') {
+      await route.fulfill(json(schedulerSummary(schedulerJobs)));
+      return;
+    }
+    if (url.pathname === '/scheduler/jobs/run-pending' && request.method() === 'POST') {
+      calls.runPending += 1;
+      const body = request.postDataJSON() as { max_jobs?: number };
+      const maxJobs = Math.max(1, Math.min(body.max_jobs ?? 3, 10));
+      const queued = schedulerJobs.filter((job) => job.status === 'QUEUED').slice(0, maxJobs);
+      const results = queued.map((job) => {
+        const completed = {
+          ...job,
+          status: 'COMPLETED',
+          result: { status: 'ok', report: { summary: { status: 'ok' } } },
+          completed_at: '2026-07-01T12:45:00Z',
+          updated_at: '2026-07-01T12:45:00Z',
+        };
+        schedulerJobs = schedulerJobs.map((item) =>
+          item.job_id === job.job_id ? completed : item,
+        );
+        schedulerEvents.push({
+          event_id: `scheduler-event-${schedulerEvents.length + 1}`,
+          job_id: String(job.job_id),
+          event_type: 'JOB_COMPLETED',
+          message: 'Scheduler job finished with status COMPLETED.',
+          metadata: {},
+          created_at: '2026-07-01T12:45:00Z',
+        });
+        return completed;
+      });
+      await route.fulfill(
+        json({ status: 'ok', max_jobs: maxJobs, jobs_run: results.length, results }),
+      );
+      return;
+    }
+    if (url.pathname === '/scheduler/jobs' && request.method() === 'GET') {
+      await route.fulfill(json({ jobs: schedulerJobs, limit: 100, offset: 0 }));
+      return;
+    }
+    if (url.pathname === '/scheduler/jobs' && request.method() === 'POST') {
+      calls.schedulerCreate += 1;
+      calls.schedulerCreateBody = request.postDataJSON();
+      const body = calls.schedulerCreateBody as {
+        job_type?: string;
+        payload?: Record<string, unknown>;
+      };
+      const job = {
+        ...baseSchedulerJob,
+        job_id: `scheduler-${String(schedulerJobs.length + 1).padStart(3, '0')}`,
+        job_type: body.job_type ?? 'data_quality_report',
+        status: 'QUEUED',
+        payload: body.payload ?? {},
+        created_at: '2026-07-01T12:42:00Z',
+        updated_at: '2026-07-01T12:42:00Z',
+      };
+      schedulerJobs = [job, ...schedulerJobs];
+      schedulerEvents.push({
+        event_id: `scheduler-event-${schedulerEvents.length + 1}`,
+        job_id: String(job.job_id),
+        event_type: 'JOB_CREATED',
+        message: 'Scheduler job queued.',
+        metadata: {},
+        created_at: '2026-07-01T12:42:00Z',
+      });
+      await route.fulfill(json(job));
+      return;
+    }
+    if (url.pathname.startsWith('/scheduler/jobs/')) {
+      const [, , , jobId, action] = url.pathname.split('/');
+      const job = schedulerJobs.find((item) => item.job_id === jobId);
+      if (action === 'events') {
+        await route.fulfill(
+          json({
+            job_id: jobId,
+            events: schedulerEvents.filter((event) => event.job_id === jobId),
+            limit: 500,
+            offset: 0,
+          }),
+        );
+        return;
+      }
+      if (action === 'run') {
+        const completed = {
+          ...job,
+          status: 'COMPLETED',
+          result: { status: 'ok', report: { summary: { status: 'ok' } } },
+          completed_at: '2026-07-01T12:46:00Z',
+          updated_at: '2026-07-01T12:46:00Z',
+        };
+        schedulerJobs = schedulerJobs.map((item) => (item.job_id === jobId ? completed : item));
+        await route.fulfill(json(completed));
+        return;
+      }
+      if (action === 'cancel') {
+        const cancelled = {
+          ...job,
+          status: 'CANCELLED',
+          completed_at: '2026-07-01T12:46:00Z',
+          updated_at: '2026-07-01T12:46:00Z',
+        };
+        schedulerJobs = schedulerJobs.map((item) => (item.job_id === jobId ? cancelled : item));
+        await route.fulfill(json(cancelled));
+        return;
+      }
+      await route.fulfill(json(job ?? { status: 'not_found', job_id: jobId }));
       return;
     }
     if (url.pathname === '/research/cycles' && request.method() === 'GET') {
@@ -294,6 +468,7 @@ test('operations page loads research status', async ({ page }) => {
   await expect(page.getByRole('heading', { name: 'Operations' })).toBeVisible();
   await expect(page.getByText('champion-v1').first()).toBeVisible();
   await expect(page.getByRole('link', { name: /cycle-001/ })).toBeVisible();
+  await expect(page.getByRole('link', { name: /queued/ })).toBeVisible();
 });
 
 test('research cycles create form normalizes APPL and dry-run calls backend', async ({ page }) => {
@@ -347,10 +522,39 @@ test('decision ledger loads and filters', async ({ page }) => {
   await expect(page.getByText('PROPOSAL_APPROVED')).toBeVisible();
 });
 
+test('scheduler page creates and runs bounded jobs safely', async ({ page }) => {
+  const calls = await installGovernanceMocks(page);
+  await page.goto('/operations/scheduler');
+  await expect(page.getByRole('heading', { name: 'Scheduler' })).toBeVisible();
+  await expect(page.getByLabel('Job Type')).toHaveValue('data_quality_report');
+
+  await page.locator('label').filter({ hasText: 'Symbols' }).locator('input').fill('APPL,SPY');
+  await page.getByRole('button', { name: 'Create job' }).click();
+  await expect.poll(() => calls.schedulerCreate).toBe(1);
+  expect(
+    ((calls.schedulerCreateBody as { payload?: { symbols?: string[] } }).payload ?? {}).symbols,
+  ).toEqual(['AAPL', 'SPY']);
+
+  await page.getByRole('button', { name: 'Run pending' }).click();
+  await expect.poll(() => calls.runPending).toBe(1);
+  await expect(page.getByText(/Run pending completed/)).toBeVisible();
+});
+
+test('scheduler detail shows events and safe queued controls', async ({ page }) => {
+  await installGovernanceMocks(page);
+  await page.goto('/operations/scheduler/scheduler-001');
+  await expect(page.getByRole('heading', { name: 'Scheduler job' })).toBeVisible();
+  await expect(page.getByText('JOB_CREATED')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Run job' })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Cancel job' })).toBeEnabled();
+});
+
 test('governance pages do not expose secrets or execution controls', async ({ page }) => {
   await installGovernanceMocks(page);
   for (const path of [
     '/operations',
+    '/operations/scheduler',
+    '/operations/scheduler/scheduler-001',
     '/research/cycles',
     '/research/proposals',
     '/research/decision-ledger',

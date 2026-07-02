@@ -66,13 +66,15 @@ EXPECTED_TABLES = {
     "replay_sensitivity_scenarios",
     "replay_window_results",
     "replay_window_sets",
+    "scheduler_job_events",
+    "scheduler_jobs",
     "scanner_runs",
     "simulated_trades",
     "symbols",
     "validation_reports",
     "validation_windows",
 }
-EXPECTED_ALEMBIC_REVISION = "0008_phase11_research"
+EXPECTED_ALEMBIC_REVISION = "0009_phase13_scheduler"
 
 
 def _now_iso() -> str:
@@ -846,6 +848,50 @@ class SQLiteStore:
                     CREATE INDEX IF NOT EXISTS ix_model_decision_ledger_model
                         ON model_decision_ledger(model_version);
 
+                    CREATE TABLE IF NOT EXISTS scheduler_jobs (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        job_id TEXT NOT NULL UNIQUE,
+                        job_type TEXT NOT NULL,
+                        status TEXT NOT NULL,
+                        priority INTEGER NOT NULL DEFAULT 100,
+                        scheduled_for TEXT,
+                        started_at TEXT,
+                        completed_at TEXT,
+                        failed_reason TEXT,
+                        payload_json TEXT DEFAULT '{}',
+                        result_json TEXT DEFAULT '{}',
+                        warnings_json TEXT DEFAULT '[]',
+                        research_cycle_id TEXT,
+                        created_by TEXT,
+                        created_at TEXT NOT NULL,
+                        updated_at TEXT NOT NULL
+                    );
+
+                    CREATE INDEX IF NOT EXISTS ix_scheduler_jobs_status_scheduled
+                        ON scheduler_jobs(status, scheduled_for, priority);
+
+                    CREATE INDEX IF NOT EXISTS ix_scheduler_jobs_type_status
+                        ON scheduler_jobs(job_type, status);
+
+                    CREATE INDEX IF NOT EXISTS ix_scheduler_jobs_research_cycle
+                        ON scheduler_jobs(research_cycle_id);
+
+                    CREATE TABLE IF NOT EXISTS scheduler_job_events (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        event_id TEXT NOT NULL UNIQUE,
+                        job_id TEXT NOT NULL,
+                        event_type TEXT NOT NULL,
+                        message TEXT NOT NULL,
+                        metadata_json TEXT DEFAULT '{}',
+                        created_at TEXT NOT NULL
+                    );
+
+                    CREATE INDEX IF NOT EXISTS ix_scheduler_job_events_job_created
+                        ON scheduler_job_events(job_id, created_at);
+
+                    CREATE INDEX IF NOT EXISTS ix_scheduler_job_events_type_created
+                        ON scheduler_job_events(event_type, created_at);
+
                     CREATE TABLE IF NOT EXISTS active_models (
                         active_model_id TEXT PRIMARY KEY,
                         model_version TEXT NOT NULL,
@@ -961,9 +1007,6 @@ class SQLiteStore:
 
                     CREATE INDEX IF NOT EXISTS ix_replay_runs_simulation_type
                         ON replay_runs(simulation_type);
-
-                    CREATE INDEX IF NOT EXISTS ix_replay_runs_config_hash
-                        ON replay_runs(config_hash);
 
                     CREATE TABLE IF NOT EXISTS replay_sensitivity_runs (
                         sensitivity_run_id TEXT PRIMARY KEY,
@@ -1108,6 +1151,9 @@ class SQLiteStore:
                     except sqlite3.OperationalError as exc:
                         if "duplicate column name" not in str(exc).lower():
                             raise
+                connection.execute(
+                    "CREATE INDEX IF NOT EXISTS ix_replay_runs_config_hash ON replay_runs(config_hash)"
+                )
                 connection.commit()
             finally:
                 if str(self.path) != ":memory:":
@@ -3298,6 +3344,248 @@ class ModelDecisionLedgerRepository:
                 connection.close()
 
 
+class SchedulerJobRepository:
+    def __init__(self, store: SQLiteStore) -> None:
+        self.store = store
+
+    def save(self, job: dict[str, Any]) -> dict[str, Any]:
+        payload = _payload(job)
+        now = _now_iso()
+        created_at = str(payload.get("created_at") or now)
+        updated_at = str(payload.get("updated_at") or now)
+        job_id = str(payload.get("job_id") or _stable_id("scheduler_job", payload.get("job_type"), created_at))
+        row_payload = payload | {"job_id": job_id, "created_at": created_at, "updated_at": updated_at}
+        with self.store._lock:
+            connection = self.store.connect()
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO scheduler_jobs(
+                        job_id, job_type, status, priority, scheduled_for, started_at,
+                        completed_at, failed_reason, payload_json, result_json, warnings_json,
+                        research_cycle_id, created_by, created_at, updated_at
+                    )
+                    VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(job_id) DO UPDATE SET
+                        job_type=excluded.job_type,
+                        status=excluded.status,
+                        priority=excluded.priority,
+                        scheduled_for=excluded.scheduled_for,
+                        started_at=excluded.started_at,
+                        completed_at=excluded.completed_at,
+                        failed_reason=excluded.failed_reason,
+                        payload_json=excluded.payload_json,
+                        result_json=excluded.result_json,
+                        warnings_json=excluded.warnings_json,
+                        research_cycle_id=excluded.research_cycle_id,
+                        created_by=excluded.created_by,
+                        updated_at=excluded.updated_at
+                    """,
+                    (
+                        job_id,
+                        str(row_payload.get("job_type")),
+                        str(row_payload.get("status") or "QUEUED"),
+                        int(row_payload.get("priority") or 100),
+                        row_payload.get("scheduled_for"),
+                        row_payload.get("started_at"),
+                        row_payload.get("completed_at"),
+                        row_payload.get("failed_reason"),
+                        _json_dumps(row_payload.get("payload") or {}),
+                        _json_dumps(row_payload.get("result") or {}),
+                        _json_dumps(row_payload.get("warnings") or []),
+                        row_payload.get("research_cycle_id"),
+                        row_payload.get("created_by"),
+                        created_at,
+                        updated_at,
+                    ),
+                )
+                connection.commit()
+            finally:
+                if str(self.store.path) != ":memory:":
+                    connection.close()
+        return row_payload
+
+    def get(self, job_id: str) -> dict[str, Any] | None:
+        connection = self.store.connect()
+        try:
+            row = connection.execute("SELECT * FROM scheduler_jobs WHERE job_id = ?", (job_id,)).fetchone()
+            return self._job_from_row(row) if row else None
+        finally:
+            if str(self.store.path) != ":memory:":
+                connection.close()
+
+    def list(
+        self,
+        *,
+        status: str | None = None,
+        job_type: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> builtins.list[dict[str, Any]]:
+        clauses: builtins.list[str] = []
+        params: builtins.list[Any] = []
+        if status:
+            clauses.append("status = ?")
+            params.append(status)
+        if job_type:
+            clauses.append("job_type = ?")
+            params.append(job_type)
+        sql = "SELECT * FROM scheduler_jobs"
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
+        sql += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
+        connection = self.store.connect()
+        try:
+            rows = connection.execute(sql, params).fetchall()
+            return [self._job_from_row(row) for row in rows]
+        finally:
+            if str(self.store.path) != ":memory:":
+                connection.close()
+
+    def list_pending(self, *, max_jobs: int = 5, now: datetime | None = None) -> builtins.list[dict[str, Any]]:
+        now_text = (now or datetime.now(UTC)).isoformat()
+        connection = self.store.connect()
+        try:
+            rows = connection.execute(
+                """
+                SELECT * FROM scheduler_jobs
+                WHERE status = 'QUEUED'
+                  AND (scheduled_for IS NULL OR scheduled_for <= ?)
+                ORDER BY
+                  CASE WHEN scheduled_for IS NULL THEN 0 ELSE 1 END,
+                  scheduled_for,
+                  priority ASC,
+                  created_at ASC
+                LIMIT ?
+                """,
+                (now_text, max_jobs),
+            ).fetchall()
+            return [self._job_from_row(row) for row in rows]
+        finally:
+            if str(self.store.path) != ":memory:":
+                connection.close()
+
+    def append_event(
+        self,
+        job_id: str,
+        event_type: str,
+        message: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        created_at = _now_iso()
+        event_id = _stable_id("scheduler_event", job_id, event_type, created_at, message)
+        event = {
+            "event_id": event_id,
+            "job_id": job_id,
+            "event_type": event_type,
+            "message": message,
+            "metadata": metadata or {},
+            "created_at": created_at,
+        }
+        with self.store._lock:
+            connection = self.store.connect()
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO scheduler_job_events(event_id, job_id, event_type, message, metadata_json, created_at)
+                    VALUES(?, ?, ?, ?, ?, ?)
+                    """,
+                    (event_id, job_id, event_type, message, _json_dumps(event["metadata"]), created_at),
+                )
+                connection.commit()
+            finally:
+                if str(self.store.path) != ":memory:":
+                    connection.close()
+        return event
+
+    def list_events(
+        self,
+        job_id: str,
+        *,
+        limit: int = 500,
+        offset: int = 0,
+    ) -> builtins.list[dict[str, Any]]:
+        connection = self.store.connect()
+        try:
+            rows = connection.execute(
+                """
+                SELECT * FROM scheduler_job_events
+                WHERE job_id = ?
+                ORDER BY created_at ASC
+                LIMIT ? OFFSET ?
+                """,
+                (job_id, limit, offset),
+            ).fetchall()
+            return [self._event_from_row(row) for row in rows]
+        finally:
+            if str(self.store.path) != ":memory:":
+                connection.close()
+
+    def latest_events(self, *, limit: int = 25) -> builtins.list[dict[str, Any]]:
+        connection = self.store.connect()
+        try:
+            rows = connection.execute(
+                "SELECT * FROM scheduler_job_events ORDER BY created_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+            return [self._event_from_row(row) for row in rows]
+        finally:
+            if str(self.store.path) != ":memory:":
+                connection.close()
+
+    def status_summary(self) -> dict[str, Any]:
+        connection = self.store.connect()
+        try:
+            counts = {
+                str(row["status"]): int(row["count"])
+                for row in connection.execute(
+                    "SELECT status, count(*) as count FROM scheduler_jobs GROUP BY status"
+                ).fetchall()
+            }
+            latest_row = connection.execute(
+                "SELECT * FROM scheduler_jobs ORDER BY created_at DESC LIMIT 1"
+            ).fetchone()
+            failed_row = connection.execute(
+                """
+                SELECT * FROM scheduler_jobs
+                WHERE status IN ('FAILED', 'BLOCKED')
+                ORDER BY updated_at DESC
+                LIMIT 1
+                """
+            ).fetchone()
+        finally:
+            if str(self.store.path) != ":memory:":
+                connection.close()
+        return {
+            "status": "ok",
+            "queued_jobs": counts.get("QUEUED", 0),
+            "running_jobs": counts.get("RUNNING", 0),
+            "failed_jobs": counts.get("FAILED", 0) + counts.get("BLOCKED", 0),
+            "completed_jobs": counts.get("COMPLETED", 0),
+            "cancelled_jobs": counts.get("CANCELLED", 0),
+            "latest_job": self._job_from_row(latest_row) if latest_row else None,
+            "latest_failed_job": self._job_from_row(failed_row) if failed_row else None,
+            "warnings": [
+                "Scheduler is bounded and only runs operator-requested research preparation jobs.",
+                "Scheduler does not approve proposals, activate models, route orders, or place trades.",
+            ],
+        }
+
+    def _job_from_row(self, row: Any) -> dict[str, Any]:
+        data = dict(row)
+        data["payload"] = _json_loads(data.pop("payload_json", "{}"))
+        data["result"] = _json_loads(data.pop("result_json", "{}"))
+        warnings = _json_loads(data.pop("warnings_json", "[]"))
+        data["warnings"] = warnings if isinstance(warnings, list) else []
+        return data
+
+    def _event_from_row(self, row: Any) -> dict[str, Any]:
+        data = dict(row)
+        data["metadata"] = _json_loads(data.pop("metadata_json", "{}"))
+        return data
+
+
 class ActiveModelRepository:
     def __init__(self, store: SQLiteStore, model_runs: ModelRunRepository) -> None:
         self.store = store
@@ -4342,6 +4630,7 @@ class RepositoryRegistry:
         self.champion_challenger_comparisons = ChampionChallengerComparisonRepository(self.store)
         self.model_proposals = ModelProposalRepository(self.store)
         self.model_decision_ledger = ModelDecisionLedgerRepository(self.store)
+        self.scheduler_jobs = SchedulerJobRepository(self.store)
         self.active_models = ActiveModelRepository(self.store, self.model_runs)
         self.live_signals = LiveSignalRepository(self.store)
         self.scanner_runs = ScannerRunRepository(self.store)

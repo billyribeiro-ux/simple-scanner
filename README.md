@@ -5,7 +5,7 @@ Adaptive Market Decoder is a local-first trading research and live signal platfo
 ## Requirements
 
 - Node.js `24.18.0`
-- pnpm via Corepack
+- pnpm `11.9.0` via Corepack
 - Python `3.14.6`, the latest stable Python release as of June 30, 2026
 - Docker for PostgreSQL/TimescaleDB and Redis
 - Optional FMP API key in `FMP_API_KEY` for live provider smoke and live scanner use
@@ -76,6 +76,8 @@ make replay-window-test
 make model-review-test
 make research-cycle-test
 make research-status-test
+make scheduler-test
+make scheduler-status
 make db-query-diagnostics
 make export-test
 make fmp-smoke
@@ -89,6 +91,8 @@ make test
 `make replay-test` runs the candidate-to-trade market replay unit tests. `make replay-sensitivity-test` runs replay audit/sensitivity tests. `make replay-window-test` runs multi-window replay orchestration tests. `make model-review-test` runs calibration drift, model review, and data quality tests. `make export-test` verifies replay, sensitivity, signal, calibration, drift, review, and window-set export generation.
 
 `make research-cycle-test` runs the controlled research cycle, champion/challenger, proposal lifecycle, and activation guard tests. `make research-status-test` runs the operations research-status, decision-ledger, and Phase 11 export subset.
+
+`make scheduler-test` runs the bounded non-autonomous scheduler persistence, service, API, and runbook regression tests. `make scheduler-status` prints a non-secret local scheduler queue summary.
 
 `make fmp-smoke` is optional and runs live FMP REST checks only when `FMP_API_KEY` is configured. Otherwise it skips with a non-secret message.
 
@@ -116,8 +120,9 @@ FastAPI selects the repository backend explicitly:
 8. For replay validation, pass an explicit `replay_run_id` or `replay_filter`.
 9. Run replay sensitivity and label-vs-replay comparison before treating replay evidence as model-selection input.
 10. Generate replay window sets, calibration drift reports, and model review reports when comparing model readiness across time.
-11. Start the scanner.
-12. Export live signals, replay summaries/trades, sensitivity artifacts, drift/model-review artifacts, history, backtests, or daily reviews.
+11. Use `/operations/scheduler` for bounded data-quality, dry-run, controlled research-cycle, or status-export preparation jobs.
+12. Start the scanner.
+13. Export live signals, replay summaries/trades, sensitivity artifacts, drift/model-review artifacts, history, backtests, operator status, or daily reviews.
 
 ## Backtest Modes
 

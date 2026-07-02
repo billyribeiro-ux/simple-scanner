@@ -15,8 +15,8 @@ Local audit result:
 - Current Homebrew Node: `25.3.0`; on 2026-07-01 it aborts before Corepack can run because a `simdjson` dynamic library is missing. Do not use it for frontend acceptance.
 - Current Python: `python3.14 --version` reports `3.14.6`.
 - Backend venv: `services/quant-engine/.venv` exists and reports Python `3.14.6`.
-- Docker: reachable.
-- Postgres/TimescaleDB and Redis: healthy after `docker compose up -d postgres redis`.
+- Docker: blocked in the 2026-07-01 Phase 13 shell because the active Docker socket `unix:///Users/billyribeiro/.docker/run/docker.sock` does not exist.
+- Postgres/TimescaleDB and Redis: not verified in Phase 13 because Docker is unreachable; Postgres on `localhost:15432` refused connections.
 - Postgres host port: `15432`.
 - `FMP_API_KEY`: optional; live FMP smoke skips when it is not configured.
 - `DATABASE_URL`: optional; no URL selects SQLite local, while a Postgres URL selects the Postgres repository runtime.
@@ -102,9 +102,9 @@ make db-migrate
 make db-inspect
 ```
 
-`make db-inspect` confirms the Alembic revision, expected table count, critical indexes, unique constraints, selected columns, JSON columns, and installed extensions. The current local result is:
+`make db-inspect` confirms the Alembic revision, expected table count, critical indexes, unique constraints, selected columns, JSON columns, and installed extensions. The expected Phase 13 head is `0009_phase13_scheduler`.
 
-On 2026-07-01 Phase 12 verification, Docker Desktop was not reachable from this shell and Postgres on `localhost:15432` refused connections. `docker compose config` passed, but `docker compose up -d postgres redis`, `docker compose ps`, `make db-migrate`, `make db-inspect`, and `make db-query-diagnostics` were blocked by the unavailable daemon/database.
+On 2026-07-01 Phase 13 verification, Docker Desktop was not reachable from this shell and Postgres on `localhost:15432` refused connections. `docker compose config` passed, but `docker compose up -d postgres redis`, `docker compose ps`, `make db-migrate`, `make db-inspect`, and `make db-query-diagnostics` were blocked by the unavailable daemon/database. Use `docs/docker-postgres-troubleshooting.md` before claiming Postgres verification.
 
 Read-only query diagnostics:
 

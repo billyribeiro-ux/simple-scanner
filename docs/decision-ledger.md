@@ -35,3 +35,7 @@ Normal operation appends rows and does not mutate old decisions. Ledger payloads
 ## Operator UI
 
 Phase 12 exposes the ledger at `/research/decision-ledger`. Filters include model version, proposal ID, research cycle ID, decision type, start timestamp, and end timestamp. Rows link back to proposal and cycle detail pages when IDs are present and show reason codes, evidence refs, actor, status, and timestamp.
+
+## Scheduler Events
+
+Phase 13 scheduler operations use `scheduler_job_events` for queue audit events instead of model-governance decision rows. If a scheduler-run research cycle creates a proposal, the cycle/proposal services still write normal decision-ledger events. Queue events must remain non-secret and cannot represent approval or activation decisions.

@@ -64,5 +64,13 @@ The Phase 2 quant core favors deterministic, testable Python loops over prematur
 - Research-cycle XLSX exports read persisted artifacts and write multiple sheets. They are operator reports, not hot-path scanner work.
 - Dry-run should be used before expensive windows. It estimates dirty-window/rebuild work and can block stale data before training or replay.
 - V1 artifact reuse is explicit-ID based. Future optimization should add config-hash lookup for replay/window/calibration/review artifacts and a `force=true` override rather than rerunning matching expensive work.
-- Future scheduler/queue work should run cycles off the request path, enforce max window counts, and preserve the same proposal/ledger semantics.
 - Future live data refresh should remain gated by `FMP_API_KEY` and should write provider request accounting without secrets.
+
+## Phase 13 Scheduler Performance Notes
+
+- Scheduler jobs are synchronous and operator-triggered in V1. There is no background daemon, infinite loop, or unbounded polling.
+- `run-pending` defaults to `3` jobs and is hard-capped at `10` jobs per request.
+- Research-cycle jobs still rely on the existing cycle bounds such as `max_window_count`; operators should dry-run before expensive replay/window work.
+- Job lists and events are paginated by `limit` and `offset`.
+- Job payloads/results should remain compact metadata and artifact references, not large raw market-data blobs.
+- Future workerization should add explicit leases, heartbeats, retry policy, payload/result size limits, and artifact reuse by config hash before increasing throughput.
