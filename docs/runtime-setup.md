@@ -221,3 +221,7 @@ Set `FMP_API_KEY` only in the shell or ignored local env files such as `.env.loc
 ## Phase 15 FMP Runtime
 
 Run `make fmp-smoke` or `make fmp-live-smoke` after setting `FMP_API_KEY` in the shell or ignored local env files. If the key is absent, smoke skips successfully. WebSocket probes remain disabled unless `AMD_ENABLE_FMP_WS_PROBE=true`.
+
+## Phase 16 Runtime Notes
+
+Target runtime remains Node `24.18.0`, pnpm `11.9.0`, and Python `3.14.6`. Live entitlement and live seed require `FMP_API_KEY`. Seed dry-run and freshness checks can run without it.

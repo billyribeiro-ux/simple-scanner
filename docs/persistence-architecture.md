@@ -229,6 +229,16 @@ The bounded worker path is terminal-only through `make scheduler-worker-once` an
 
 ## Phase 15 Persistence Update
 
-PostgreSQL now verifies Alembic revision `0011_phase15_fmp_provider`. SQLite bootstrap and Postgres migrations add `provider_capability_checks` and `ingestion_runs`.
+Phase 15 added `provider_capability_checks` and `ingestion_runs`.
 
 `provider_capability_checks` records endpoint entitlement status, response shape summaries, sample counts, latency, and redacted notes. `ingestion_runs` records bounded FMP quote/EOD/intraday/incremental refresh summaries, provider request IDs, dirty windows, errors, and warnings.
+
+## Phase 16 Persistence Update
+
+PostgreSQL now verifies Alembic revision `0012_phase16_fmp_freshness`. SQLite bootstrap and Postgres migrations add:
+
+- operator review fields on `provider_capability_checks`;
+- `quote_snapshots`;
+- `data_freshness_reports`.
+
+`quote_snapshots` stores durable quote snapshots from FMP batch quote ingestion without secrets. `data_freshness_reports` stores local readiness reports for bars, quote snapshots, dirty windows, capability review state, warnings, and recommendations.

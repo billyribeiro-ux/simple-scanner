@@ -87,3 +87,7 @@ Use `/research/decision-ledger` to filter by model version, proposal ID, researc
 - `/operations`: FMP provider status card linking to provider and data pages.
 
 These pages are data operations only. They do not contain broker execution, order routing, or automatic activation controls.
+
+## Phase 16 Provider/Data UI
+
+`/operations/provider` adds capability review controls, review summary status, and seed dry-run/live buttons. `/operations/data` adds freshness checks and quote snapshot tables. `/operations` shows the latest freshness status.

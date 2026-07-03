@@ -96,7 +96,9 @@ export type SchedulerJobCreatePayload = {
     | 'fmp_quote_snapshot'
     | 'fmp_eod_refresh'
     | 'fmp_intraday_refresh'
-    | 'fmp_incremental_intraday_refresh';
+    | 'fmp_incremental_intraday_refresh'
+    | 'fmp_seed_ingestion'
+    | 'data_freshness_check';
   payload?: Record<string, unknown>;
   priority?: number;
   scheduled_for?: string;
@@ -110,6 +112,27 @@ export type FmpActionPayload = {
   include_websocket?: boolean;
   start?: string;
   end?: string;
+  dry_run?: boolean;
+  include_quotes?: boolean;
+  include_eod?: boolean;
+  include_intraday?: boolean;
+  require_reviewed_capabilities?: boolean;
+  allow_unreviewed_capabilities?: boolean;
+  max_intraday_days?: number;
+  max_quote_age_seconds?: number;
+  persist?: boolean;
+};
+
+export type ProviderCapabilityReviewPayload = {
+  operator_review_status:
+    | 'UNREVIEWED'
+    | 'REVIEWED_ACCESSIBLE'
+    | 'REVIEWED_PARTIAL'
+    | 'REVIEWED_BLOCKED'
+    | 'REVIEWED_RATE_LIMITED'
+    | 'REVIEWED_UNUSABLE';
+  reviewed_by?: string;
+  review_notes?: string;
 };
 
 async function getJson<T>(path: string, fallback: T, parser?: Parser<T>): Promise<T> {
@@ -220,6 +243,19 @@ export async function checkProviderCapabilities(
   return postJson('/provider/capabilities/check', payload, { status: 'error' });
 }
 
+export async function reviewProviderCapability(
+  checkId: string,
+  payload: ProviderCapabilityReviewPayload,
+): Promise<Record<string, unknown>> {
+  return postJson(`/provider/capabilities/${encodeURIComponent(checkId)}/review`, payload, {
+    status: 'error',
+  });
+}
+
+export async function getCapabilityReviewSummary(): Promise<Record<string, unknown>> {
+  return getJson('/provider/capabilities/review-summary', { status: 'offline' });
+}
+
 export async function runFmpSmoke(): Promise<Record<string, unknown>> {
   return postJson('/provider/fmp/smoke', undefined, { status: 'error' });
 }
@@ -244,8 +280,28 @@ export async function ingestFmpIncrementalIntraday(
   return postJson('/data/ingest/fmp/incremental-intraday', payload, { status: 'error' });
 }
 
+export async function ingestFmpSeed(payload: FmpActionPayload): Promise<Record<string, unknown>> {
+  return postJson('/data/ingest/fmp/seed', payload, { status: 'error' });
+}
+
 export async function listFmpIngestionRuns(): Promise<Record<string, unknown>> {
   return getJson('/data/ingestion-runs', { ingestion_runs: [] });
+}
+
+export async function listQuoteSnapshots(symbols?: string): Promise<Record<string, unknown>> {
+  return getJson(`/data/quotes/snapshots${queryString({ symbols, limit: 200 })}`, {
+    quote_snapshots: [],
+  });
+}
+
+export async function checkDataFreshness(
+  payload: FmpActionPayload = {},
+): Promise<Record<string, unknown>> {
+  return postJson('/data/freshness/check', payload, { status: 'error' });
+}
+
+export async function getLatestFreshness(): Promise<Record<string, unknown>> {
+  return getJson('/data/freshness/latest', { status: 'not_found' });
 }
 
 export async function getDataQualityReport(

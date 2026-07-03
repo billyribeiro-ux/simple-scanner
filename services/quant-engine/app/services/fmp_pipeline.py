@@ -6,6 +6,7 @@ import os
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from app.config import Settings, get_settings
 from app.data.fmp import (
@@ -17,7 +18,7 @@ from app.data.fmp import (
     FMPMarketDataProvider,
     FMPResponse,
 )
-from app.data.symbols import normalize_symbols
+from app.data.symbols import normalize_symbol, normalize_symbols
 from app.db.repositories import RepositoryRegistry
 from app.exports.service import ExportService
 from app.schemas.market import Bar, Quote
@@ -35,6 +36,12 @@ DEFAULT_FMP_ENDPOINT_KEYS = [
     "intraday_5min",
     "intraday_15min",
 ]
+DEFAULT_SEED_SYMBOLS = ["AMZN", "AAPL", "TSLA", "SPY", "QQQ", "IWM", "NVDA", "GOOGL", "BABA", "SHOP"]
+DEFAULT_SEED_INTERVALS = ["1day", "1min", "5min", "15min"]
+DEFAULT_BAR_FRESHNESS_MINUTES = {"1day": 2880, "1min": 30, "5min": 90, "15min": 180}
+DEFAULT_QUOTE_FRESHNESS_SECONDS = 900
+ACCESSIBLE_REVIEW_STATUS = "REVIEWED_ACCESSIBLE"
+BLOCKING_REVIEW_STATUSES = {"REVIEWED_BLOCKED", "REVIEWED_RATE_LIMITED", "REVIEWED_UNUSABLE"}
 
 
 def _now() -> datetime:
@@ -167,18 +174,31 @@ class FMPLiveDataService:
         response = await self.provider.request_endpoint("batch_quote", symbols=selected_symbols)
         provider_request_id = self._record_provider_response(response)
         quotes = self._quotes_from_response(response)
-        warnings = ["quote_snapshot_persisted_as_provider_request_no_quote_table"]
+        ingestion_run_id = f"ingestion_{uuid4().hex}"
+        snapshot_rows = self._quote_snapshots_from_response(
+            response,
+            provider_request_id=provider_request_id,
+            ingestion_run_id=ingestion_run_id,
+        )
+        snapshot_counts = self.repos.quote_snapshots.upsert_many(snapshot_rows)
+        warnings: list[str] = []
         return self._save_run(
+            ingestion_run_id=ingestion_run_id,
             ingestion_type="quote_snapshot",
             symbols=selected_symbols,
             intervals=[],
             records_fetched=len(quotes),
-            records_inserted=0,
+            records_inserted=int(snapshot_counts.get("records_inserted") or 0),
+            records_updated=int(snapshot_counts.get("records_updated") or 0),
             provider_request_ids=[provider_request_id],
             warnings=warnings,
             errors=self._response_errors(response),
             status="COMPLETED" if response.status in {"ACCESSIBLE", "EMPTY"} else "FAILED",
-        ) | {"quotes": [quote.model_dump(mode="json") for quote in quotes]}
+        ) | {
+            "quotes": [quote.model_dump(mode="json") for quote in quotes],
+            "quote_snapshot_ids": snapshot_counts.get("quote_snapshot_ids") or [],
+            "quote_snapshot_status": "persisted",
+        }
 
     async def ingest_eod(self, symbols: list[str] | None, start: datetime, end: datetime) -> dict[str, Any]:
         selected_symbols = self._bounded_symbols(symbols)
@@ -235,9 +255,352 @@ class FMPLiveDataService:
             "ingestion_run_id": ingestion_run_id,
         }
 
+    def review_capability(
+        self,
+        check_id: str,
+        *,
+        operator_review_status: str,
+        reviewed_by: str | None = None,
+        review_notes: str | None = None,
+    ) -> dict[str, Any]:
+        reviewed = self.repos.provider_capabilities.review(
+            check_id,
+            operator_review_status=operator_review_status,
+            reviewed_by=reviewed_by,
+            review_notes=review_notes,
+            reviewed_at=_now(),
+        )
+        if reviewed is None:
+            return {"status": "not_found", "check_id": check_id}
+        return {
+            "status": "ok",
+            "capability": reviewed,
+            "review_summary": self.capability_review_summary(),
+            "no_secrets": True,
+        }
+
+    def capability_review_summary(
+        self,
+        *,
+        required_endpoints: list[str] | None = None,
+    ) -> dict[str, Any]:
+        required = list(required_endpoints or DEFAULT_FMP_ENDPOINT_KEYS)
+        latest_rows = self.repos.provider_capabilities.latest_matrix(provider=FMP_PROVIDER)
+        by_endpoint = {str(row.get("endpoint_key")): row for row in latest_rows}
+        missing = [endpoint for endpoint in required if endpoint not in by_endpoint]
+        unreviewed: list[str] = []
+        accessible: list[str] = []
+        blocked: list[dict[str, Any]] = []
+        partial: list[str] = []
+        for endpoint in required:
+            row = by_endpoint.get(endpoint)
+            if row is None:
+                continue
+            provider_status = str(row.get("status") or "UNKNOWN").upper()
+            review_status = str(row.get("operator_review_status") or "UNREVIEWED").upper()
+            if review_status == ACCESSIBLE_REVIEW_STATUS and provider_status in {"ACCESSIBLE", "EMPTY"}:
+                accessible.append(endpoint)
+            elif review_status in BLOCKING_REVIEW_STATUSES or provider_status in {"DENIED", "RATE_LIMITED", "ERROR", "SKIPPED_NO_KEY"}:
+                blocked.append(
+                    {
+                        "endpoint_key": endpoint,
+                        "provider_status": provider_status,
+                        "operator_review_status": review_status,
+                        "error_code": row.get("error_code"),
+                    }
+                )
+            elif review_status == "REVIEWED_PARTIAL":
+                partial.append(endpoint)
+            else:
+                unreviewed.append(endpoint)
+        if blocked:
+            status = "BLOCKED"
+        elif missing or unreviewed:
+            status = "UNREVIEWED"
+        elif partial or len(accessible) < len(required):
+            status = "PARTIAL"
+        else:
+            status = "READY"
+        return {
+            "status": status,
+            "provider": FMP_PROVIDER,
+            "required_endpoints": required,
+            "required_count": len(required),
+            "accessible_reviewed_count": len(accessible),
+            "missing_endpoints": missing,
+            "unreviewed_endpoints": unreviewed,
+            "partial_endpoints": partial,
+            "blocked_endpoints": blocked,
+            "latest_capabilities": [by_endpoint[endpoint] for endpoint in required if endpoint in by_endpoint],
+            "operator_review_required": True,
+            "no_secrets": True,
+        }
+
+    def list_quote_snapshots(
+        self,
+        *,
+        symbols: list[str] | None = None,
+        limit: int = 200,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        selected_symbols = normalize_symbols(symbols or [])
+        return {
+            "status": "ok",
+            "provider": FMP_PROVIDER,
+            "symbols": selected_symbols,
+            "quote_snapshots": self.repos.quote_snapshots.list(
+                symbols=selected_symbols or None,
+                limit=limit,
+                offset=offset,
+            ),
+            "limit": limit,
+            "offset": offset,
+            "no_secrets": True,
+        }
+
+    async def seed_ingestion(
+        self,
+        *,
+        symbols: list[str] | None = None,
+        intervals: list[str] | None = None,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        include_quotes: bool = True,
+        include_eod: bool = True,
+        include_intraday: bool = True,
+        max_intraday_days: int = DEFAULT_MAX_INTRADAY_DAYS,
+        require_reviewed_capabilities: bool = True,
+        allow_unreviewed_capabilities: bool = False,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        selected_symbols = self._bounded_symbols(symbols or DEFAULT_SEED_SYMBOLS)
+        selected_intervals = self._bounded_seed_intervals(intervals)
+        seed_end = end or _now()
+        seed_start = start or seed_end - timedelta(days=min(max_intraday_days, DEFAULT_MAX_INTRADAY_DAYS))
+        if (seed_end - seed_start).days > min(max_intraday_days, DEFAULT_MAX_INTRADAY_DAYS):
+            raise ValueError("FMP seed ingestion intraday span exceeds the configured bounded window")
+        intraday_intervals = [item for item in selected_intervals if item != "1day"]
+        required_endpoints = self._required_seed_endpoints(
+            selected_intervals,
+            include_quotes=include_quotes,
+            include_eod=include_eod,
+            include_intraday=include_intraday,
+        )
+        review_summary = self.capability_review_summary(required_endpoints=required_endpoints)
+        would_block = bool(
+            require_reviewed_capabilities
+            and not allow_unreviewed_capabilities
+            and review_summary.get("status") != "READY"
+        )
+        plan = {
+            "provider": FMP_PROVIDER,
+            "symbols": selected_symbols,
+            "intervals": selected_intervals,
+            "start": seed_start.isoformat(),
+            "end": seed_end.isoformat(),
+            "include_quotes": include_quotes,
+            "include_eod": include_eod,
+            "include_intraday": include_intraday,
+            "max_intraday_days": max_intraday_days,
+            "required_endpoints": required_endpoints,
+            "review_summary": review_summary,
+            "requires_fmp_api_key": not dry_run,
+            "no_broker_execution": True,
+        }
+        if dry_run:
+            return {
+                "status": "dry_run",
+                "plan": plan,
+                "would_block": would_block,
+                "warnings": ["seed_ingestion_dry_run_no_provider_call"] + (["capability_review_not_ready"] if would_block else []),
+                "model_activation_unchanged": True,
+                "no_secrets": True,
+            }
+        if not self.settings.fmp_api_key:
+            return self._blocked_run("seed_ingestion", selected_symbols, selected_intervals, start=seed_start, end=seed_end) | {
+                "plan": plan,
+                "review_summary": review_summary,
+            }
+        if would_block:
+            return self._save_run(
+                ingestion_type="seed_ingestion",
+                symbols=selected_symbols,
+                intervals=selected_intervals,
+                start=seed_start,
+                end=seed_end,
+                records_fetched=0,
+                records_inserted=0,
+                provider_request_ids=[],
+                status="BLOCKED",
+                errors=[{"reason": "operator_review_required", "review_status": review_summary.get("status")}],
+                warnings=["Required FMP capabilities must be operator-reviewed before live seed ingestion."],
+            ) | {"plan": plan, "review_summary": review_summary}
+        child_runs: list[dict[str, Any]] = []
+        if include_quotes:
+            child_runs.append(await self.ingest_quotes(selected_symbols))
+        if include_eod and "1day" in selected_intervals:
+            child_runs.append(await self.ingest_eod(selected_symbols, seed_start, seed_end))
+        if include_intraday and intraday_intervals:
+            self._guard_intraday_span(seed_start, seed_end)
+            child_runs.append(await self.ingest_intraday(selected_symbols, intraday_intervals, seed_start, seed_end))
+        provider_request_ids = [
+            str(request_id)
+            for run in child_runs
+            for request_id in (run.get("provider_request_ids") or [])
+        ]
+        errors = [error for run in child_runs for error in (run.get("errors") or [])]
+        warnings = [str(warning) for run in child_runs for warning in (run.get("warnings") or [])]
+        fetched = sum(int(run.get("records_fetched") or 0) for run in child_runs)
+        inserted = sum(int(run.get("records_inserted") or 0) for run in child_runs)
+        updated = sum(int(run.get("records_updated") or 0) for run in child_runs)
+        skipped = sum(int(run.get("records_skipped") or 0) for run in child_runs)
+        statuses = {str(run.get("status") or "UNKNOWN").upper() for run in child_runs}
+        status = "COMPLETED" if statuses <= {"COMPLETED"} else ("PARTIAL" if fetched else "FAILED")
+        return self._save_run(
+            ingestion_type="seed_ingestion",
+            symbols=selected_symbols,
+            intervals=selected_intervals,
+            start=seed_start,
+            end=seed_end,
+            records_fetched=fetched,
+            records_inserted=inserted,
+            records_updated=updated,
+            records_skipped=skipped,
+            provider_request_ids=provider_request_ids,
+            dirty_windows=self.repos.pipeline_windows.list_dirty(symbols=selected_symbols, intervals=intraday_intervals or None),
+            errors=errors,
+            warnings=warnings,
+            status=status,
+        ) | {
+            "plan": plan,
+            "review_summary": review_summary,
+            "child_runs": child_runs,
+            "model_activation_unchanged": True,
+            "no_broker_execution": True,
+            "no_secrets": True,
+        }
+
+    def freshness_check(
+        self,
+        *,
+        symbols: list[str] | None = None,
+        intervals: list[str] | None = None,
+        max_bar_age_minutes: dict[str, int] | None = None,
+        max_quote_age_seconds: int = DEFAULT_QUOTE_FRESHNESS_SECONDS,
+        include_quotes: bool = True,
+        require_reviewed_capabilities: bool = True,
+        persist: bool = True,
+        reference_time: datetime | None = None,
+    ) -> dict[str, Any]:
+        generated_at = _now()
+        age_reference = reference_time or generated_at
+        selected_symbols = self._bounded_symbols(symbols or DEFAULT_SEED_SYMBOLS)
+        selected_intervals = self._bounded_seed_intervals(intervals or DEFAULT_SEED_INTERVALS)
+        age_limits = {**DEFAULT_BAR_FRESHNESS_MINUTES, **(max_bar_age_minutes or {})}
+        latest_bars: list[dict[str, Any]] = []
+        latest_quotes: list[dict[str, Any]] = []
+        missing_items: list[dict[str, Any]] = []
+        stale_items: list[dict[str, Any]] = []
+        for symbol in selected_symbols:
+            for interval in selected_intervals:
+                bars = self.repos.bars.query(symbols=[symbol], intervals=[interval])
+                latest = max(bars, key=lambda bar: bar.timestamp_utc, default=None)
+                if latest is None:
+                    missing_items.append({"type": "bar", "symbol": symbol, "interval": interval})
+                    latest_bars.append({"symbol": symbol, "interval": interval, "latest_bar_timestamp_utc": None, "bar_count": 0})
+                    continue
+                age_minutes = max(0.0, (age_reference - latest.timestamp_utc).total_seconds() / 60.0)
+                row = {
+                    "symbol": symbol,
+                    "interval": interval,
+                    "latest_bar_timestamp_utc": latest.timestamp_utc.isoformat(),
+                    "age_minutes": round(age_minutes, 2),
+                    "max_age_minutes": age_limits.get(interval),
+                    "bar_count": len(bars),
+                    "source": latest.source,
+                }
+                latest_bars.append(row)
+                if age_limits.get(interval) is not None and age_minutes > float(age_limits[interval]):
+                    stale_items.append({"type": "bar", **row})
+        if include_quotes:
+            quote_rows = {str(row.get("symbol")): row for row in self.repos.quote_snapshots.latest_by_symbol(selected_symbols)}
+            for symbol in selected_symbols:
+                quote = quote_rows.get(symbol)
+                if quote is None:
+                    missing_items.append({"type": "quote", "symbol": symbol})
+                    latest_quotes.append({"symbol": symbol, "latest_quote_timestamp_utc": None})
+                    continue
+                timestamp = _parse_datetime(quote.get("timestamp_utc")) or generated_at
+                age_seconds = max(0.0, (age_reference - timestamp).total_seconds())
+                row = {
+                    "symbol": symbol,
+                    "latest_quote_timestamp_utc": timestamp.isoformat(),
+                    "age_seconds": round(age_seconds, 2),
+                    "max_age_seconds": max_quote_age_seconds,
+                    "price": quote.get("price"),
+                    "source": quote.get("source") or FMP_PROVIDER,
+                }
+                latest_quotes.append(row)
+                if age_seconds > max_quote_age_seconds:
+                    stale_items.append({"type": "quote", **row})
+        required_endpoints = self._required_seed_endpoints(selected_intervals, include_quotes=include_quotes, include_eod="1day" in selected_intervals, include_intraday=True)
+        capability_summary = self.capability_review_summary(required_endpoints=required_endpoints)
+        dirty_status = self.repos.pipeline_windows.status(symbols=selected_symbols, intervals=[item for item in selected_intervals if item != "1day"])
+        warnings: list[str] = []
+        if missing_items:
+            warnings.append("freshness_missing_required_data")
+        if stale_items:
+            warnings.append("freshness_stale_required_data")
+        if dirty_status.get("dirty_window_count"):
+            warnings.append("freshness_dirty_pipeline_windows")
+        if require_reviewed_capabilities and capability_summary.get("status") != "READY":
+            warnings.append("freshness_capability_review_not_ready")
+        if require_reviewed_capabilities and capability_summary.get("status") != "READY":
+            status = "BLOCKED"
+        elif missing_items:
+            status = "BLOCKED"
+        elif stale_items or dirty_status.get("dirty_window_count"):
+            status = "STALE"
+        else:
+            status = "READY"
+        recommendations = self._freshness_recommendations(status, missing_items, stale_items, dirty_status, capability_summary)
+        payload = {
+            "provider": FMP_PROVIDER,
+            "status": status,
+            "symbols": selected_symbols,
+            "intervals": selected_intervals,
+            "required_capability_endpoints": required_endpoints,
+            "latest_bars": latest_bars,
+            "latest_quotes": latest_quotes,
+            "missing_items": missing_items,
+            "stale_items": stale_items,
+            "dirty_windows": dirty_status.get("dirty_windows") or [],
+            "dirty_window_status": dirty_status,
+            "capability_summary": capability_summary,
+            "warnings": sorted(set(warnings)),
+            "recommendations": recommendations,
+            "max_bar_age_minutes": age_limits,
+            "max_quote_age_seconds": max_quote_age_seconds,
+            "generated_at": generated_at.isoformat(),
+            "freshness_reference_time": age_reference.isoformat(),
+            "no_broker_execution": True,
+            "model_activation_unchanged": True,
+            "no_secrets": True,
+        }
+        if persist:
+            saved = self.repos.data_freshness_reports.save(payload)
+            payload["freshness_report_id"] = saved.get("freshness_report_id")
+            payload["persisted_report"] = saved
+        return payload
+
+    def latest_freshness_report(self) -> dict[str, Any]:
+        latest = self.repos.data_freshness_reports.latest(provider=FMP_PROVIDER)
+        return latest or {"status": "not_found", "provider": FMP_PROVIDER}
+
     def provider_status(self) -> dict[str, Any]:
         latest_matrix = self.repos.provider_capabilities.latest_matrix(provider=FMP_PROVIDER)
         latest_ingestion = self.repos.ingestion_runs.latest(provider=FMP_PROVIDER)
+        latest_freshness = self.repos.data_freshness_reports.latest(provider=FMP_PROVIDER)
         provider_requests = self.repos.provider_requests.list_all()
         provider_errors = [
             row for row in provider_requests if str(row.get("status") or "").upper() not in {"ACCESSIBLE", "OK", "SUCCESS", "EMPTY"}
@@ -247,6 +610,8 @@ class FMPLiveDataService:
             **self.key_status(),
             "latest_capabilities": latest_matrix,
             "latest_ingestion_run": latest_ingestion,
+            "capability_review_summary": self.capability_review_summary(),
+            "latest_freshness_report": latest_freshness,
             "latest_provider_errors": provider_errors,
             "warnings": self._capability_warnings(latest_matrix)
             + (latest_ingestion.get("warnings") if isinstance(latest_ingestion, dict) else []),
@@ -321,6 +686,36 @@ class FMPLiveDataService:
         rows = self.repos.provider_requests.list_all()
         return self._export_rows("fmp_provider_requests", kind, rows, source_id="fmp")
 
+    def export_entitlement_review(self, kind: str = "json") -> dict[str, Any]:
+        payload = self.capability_review_summary()
+        rows = payload.get("latest_capabilities") or []
+        return self._export_payload("fmp_entitlement_review", kind, payload, rows, source_id="fmp")
+
+    def export_quote_snapshots(self, kind: str = "csv") -> dict[str, Any]:
+        rows = self.repos.quote_snapshots.list(limit=1000)
+        return self._export_rows("fmp_quote_snapshots", kind, rows, source_id="fmp")
+
+    def export_seed_ingestion(self, kind: str = "json") -> dict[str, Any]:
+        rows = self.repos.ingestion_runs.list(provider=FMP_PROVIDER, ingestion_type="seed_ingestion", limit=1000)
+        payload = {
+            "status": "ok",
+            "seed_ingestion_runs": rows,
+            "created_at": _now().isoformat(),
+            "no_secrets": True,
+        }
+        return self._export_payload("fmp_seed_ingestion", kind, payload, rows, source_id="fmp")
+
+    def export_freshness(self, kind: str = "json") -> dict[str, Any]:
+        rows = self.repos.data_freshness_reports.list(provider=FMP_PROVIDER, limit=1000)
+        payload = {
+            "status": "ok",
+            "freshness_reports": rows,
+            "latest_freshness_report": rows[0] if rows else None,
+            "created_at": _now().isoformat(),
+            "no_secrets": True,
+        }
+        return self._export_payload("data_freshness_report", kind, payload, rows, source_id="fmp")
+
     async def _ingest_bars(
         self,
         ingestion_type: str,
@@ -385,6 +780,7 @@ class FMPLiveDataService:
     def _save_run(
         self,
         *,
+        ingestion_run_id: str | None = None,
         ingestion_type: str,
         symbols: list[str],
         intervals: list[str],
@@ -402,6 +798,7 @@ class FMPLiveDataService:
     ) -> dict[str, Any]:
         return self.repos.ingestion_runs.save(
             {
+                "ingestion_run_id": ingestion_run_id,
                 "provider": FMP_PROVIDER,
                 "ingestion_type": ingestion_type,
                 "symbols": symbols,
@@ -449,6 +846,54 @@ class FMPLiveDataService:
         rows = response.data if isinstance(response.data, list) else []
         return [self.provider._quote_from_row(row) for row in rows if isinstance(row, dict)]  # noqa: SLF001
 
+    def _quote_snapshots_from_response(
+        self,
+        response: FMPResponse,
+        *,
+        provider_request_id: str,
+        ingestion_run_id: str,
+    ) -> list[dict[str, Any]]:
+        if response.status not in {"ACCESSIBLE", "EMPTY"}:
+            return []
+        rows = response.data if isinstance(response.data, list) else []
+        snapshots = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            quote = self.provider._quote_from_row(row)  # noqa: SLF001
+            timestamp = self._quote_timestamp(row, quote)
+            symbol = normalize_symbol(str(row.get("symbol") or quote.symbol))
+            flags = []
+            if not quote.price:
+                flags.append("missing_or_zero_price")
+            if row.get("volume") in {None, ""}:
+                flags.append("missing_volume")
+            snapshots.append(
+                {
+                    "provider": FMP_PROVIDER,
+                    "endpoint_key": response.endpoint_key,
+                    "symbol": symbol,
+                    "timestamp_utc": timestamp,
+                    "provider_timestamp": str(row.get("timestamp")) if row.get("timestamp") is not None else None,
+                    "price": quote.price,
+                    "bid": self._number(row, "bid", "bidPrice"),
+                    "ask": self._number(row, "ask", "askPrice"),
+                    "open": self._number(row, "open", "dayOpen"),
+                    "high": self._number(row, "dayHigh", "high"),
+                    "low": self._number(row, "dayLow", "low"),
+                    "previous_close": self._number(row, "previousClose", "prevClose"),
+                    "volume": int(row.get("volume") or 0) if row.get("volume") is not None and row.get("volume") != "" else None,
+                    "change": self._number(row, "change", "changes"),
+                    "change_percent": self._number(row, "changesPercentage", "changePercentage"),
+                    "source": quote.source,
+                    "ingestion_run_id": ingestion_run_id,
+                    "provider_request_id": provider_request_id,
+                    "raw_fields": row,
+                    "data_quality_flags": flags,
+                }
+            )
+        return snapshots
+
     def _bars_from_response(self, response: FMPResponse, symbol: str, interval: str) -> list[Bar]:
         if response.status not in {"ACCESSIBLE", "EMPTY"}:
             return []
@@ -462,6 +907,28 @@ class FMPLiveDataService:
             for row in rows
             if isinstance(row, dict)
         ]
+
+    def _quote_timestamp(self, row: dict[str, Any], quote: Quote) -> datetime:
+        raw = row.get("timestamp")
+        if isinstance(raw, (int, float)):
+            return datetime.fromtimestamp(float(raw), tz=UTC)
+        if isinstance(raw, str) and raw.strip():
+            try:
+                parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+                return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+            except ValueError:
+                pass
+        return quote.timestamp_utc or _now()
+
+    def _number(self, row: dict[str, Any], *keys: str) -> float | None:
+        for key in keys:
+            value = row.get(key)
+            if value is not None and value != "":
+                try:
+                    return float(value)
+                except (TypeError, ValueError):
+                    return None
+        return None
 
     def _response_errors(self, response: FMPResponse) -> list[dict[str, Any]]:
         if response.status in {"ACCESSIBLE", "EMPTY"}:
@@ -488,6 +955,30 @@ class FMPLiveDataService:
         if invalid:
             raise ValueError(f"Unsupported FMP intraday intervals: {','.join(invalid)}")
         return selected
+
+    def _bounded_seed_intervals(self, intervals: list[str] | None) -> list[str]:
+        selected = [str(interval) for interval in (intervals or DEFAULT_SEED_INTERVALS)]
+        invalid = sorted(set(selected) - (SUPPORTED_INTRADAY_INTERVALS | {"1day"}))
+        if invalid:
+            raise ValueError(f"Unsupported FMP seed intervals: {','.join(invalid)}")
+        return [interval for interval in DEFAULT_SEED_INTERVALS if interval in selected]
+
+    def _required_seed_endpoints(
+        self,
+        intervals: list[str],
+        *,
+        include_quotes: bool,
+        include_eod: bool,
+        include_intraday: bool,
+    ) -> list[str]:
+        required: list[str] = []
+        if include_quotes:
+            required.append("batch_quote")
+        if include_eod and "1day" in intervals:
+            required.append("historical_eod_full")
+        if include_intraday:
+            required.extend(f"intraday_{interval}" for interval in intervals if interval != "1day")
+        return required
 
     def _guard_intraday_span(self, start: datetime, end: datetime) -> None:
         if end < start:
@@ -521,6 +1012,27 @@ class FMPLiveDataService:
             steps.append("Use REST polling and keep WebSocket disabled unless explicitly probing entitlement.")
         else:
             steps.append("Set FMP_API_KEY in the runtime environment before live ingestion.")
+        return steps
+
+    def _freshness_recommendations(
+        self,
+        status: str,
+        missing_items: list[dict[str, Any]],
+        stale_items: list[dict[str, Any]],
+        dirty_status: dict[str, Any],
+        capability_summary: dict[str, Any],
+    ) -> list[str]:
+        steps = []
+        if capability_summary.get("status") != "READY":
+            steps.append("Run FMP capability checks and mark required endpoints REVIEWED_ACCESSIBLE.")
+        if any(item.get("type") == "quote" for item in missing_items + stale_items):
+            steps.append("Run quote snapshot ingestion or seed ingestion after FMP_API_KEY is configured.")
+        if any(item.get("type") == "bar" for item in missing_items + stale_items):
+            steps.append("Run bounded seed ingestion or incremental intraday refresh for stale symbols/intervals.")
+        if dirty_status.get("dirty_window_count"):
+            steps.append("Rebuild features, candidates, labels, and replay artifacts for dirty data windows.")
+        if status == "READY":
+            steps.append("Data freshness is ready for research-cycle dry-runs; model activation remains manual.")
         return steps
 
     def _export_rows(self, export_type: str, kind: str, rows: list[dict[str, Any]], *, source_id: str) -> dict[str, Any]:

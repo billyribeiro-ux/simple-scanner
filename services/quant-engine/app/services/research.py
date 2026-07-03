@@ -14,6 +14,7 @@ from app.models.replay_evidence import (
     REPLAY_AWARE_VALIDATION_MODE,
     REPLAY_AWARE_VALIDATION_PURPOSE,
 )
+from app.services.fmp_pipeline import FMPLiveDataService
 from app.services.workflows import (
     DataQualityService,
     ExportWorkflowService,
@@ -684,8 +685,22 @@ class ResearchCycleService:
         end = _parse_datetime(cycle.get("end"))
         data_quality = DataQualityService(self.repos).report(symbols=symbols, intervals=intervals, start=start, end=end, session=str(cycle.get("session") or "rth"))
         stale_status = self.repos.pipeline_windows.status(symbols=symbols, intervals=intervals)
+        freshness_report = FMPLiveDataService(self.repos).freshness_check(
+            symbols=symbols,
+            intervals=intervals,
+            include_quotes=bool(config.get("require_quote_freshness", False)),
+            require_reviewed_capabilities=bool(config.get("require_reviewed_capabilities_for_research", False)),
+            persist=True,
+            reference_time=end,
+        )
         latest_bars = self._latest_bars(symbols, intervals)
-        warnings = sorted(set(list(data_quality.get("warnings") or []) + [f"stale_{key}" for key in (stale_status.get("dirty_by_artifact") or {}).keys()]))
+        warnings = sorted(
+            set(
+                list(data_quality.get("warnings") or [])
+                + [f"stale_{key}" for key in (stale_status.get("dirty_by_artifact") or {}).keys()]
+                + [str(item) for item in (freshness_report.get("warnings") or [])]
+            )
+        )
         suggested_rebuild_steps = [
             f"rebuild_{artifact}"
             for artifact, count in sorted((stale_status.get("dirty_by_artifact") or {}).items())
@@ -699,11 +714,18 @@ class ResearchCycleService:
         elif stale_status.get("dirty_window_count") and not bool(config.get("allow_stale", False)):
             blocked = True
             block_reason = "stale_artifacts_present"
+        elif freshness_report.get("status") in {"BLOCKED", "STALE"} and not bool(config.get("allow_stale", False)):
+            blocked = True
+            block_reason = f"data_freshness_{str(freshness_report.get('status')).lower()}"
+        if freshness_report.get("status") in {"BLOCKED", "STALE"} and bool(config.get("allow_stale", False)):
+            warnings.append(f"allow_stale_data_freshness_{str(freshness_report.get('status')).lower()}")
+            warnings = sorted(set(warnings))
         summary = {
             "symbols": symbols,
             "intervals": intervals,
             "dirty_window_count": stale_status.get("dirty_window_count", 0),
             "missing_bar_window_count": (data_quality.get("summary") or {}).get("missing_bar_window_count", 0),
+            "freshness_status": freshness_report.get("status"),
             "suggested_rebuild_step_count": len(suggested_rebuild_steps),
             "blocked": blocked,
             "block_reason": block_reason,
@@ -713,6 +735,7 @@ class ResearchCycleService:
         return {
             "summary": summary,
             "data_quality_report": data_quality,
+            "freshness_report": freshness_report,
             "stale_window_status": stale_status,
             "latest_bars": latest_bars,
             "suggested_rebuild_steps": suggested_rebuild_steps,

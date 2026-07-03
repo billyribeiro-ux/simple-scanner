@@ -167,3 +167,7 @@ FMP scheduler job types:
 All FMP scheduler jobs require `FMP_API_KEY`. If missing, the job becomes `BLOCKED` with `fmp_api_key_required`.
 
 Phase 15 safety boundaries remain: REST polling default, WebSocket probe disabled by default, no broker execution, no order routing, and no automatic model activation.
+
+## Phase 16 FMP Review And Freshness
+
+Run capability checks, review required endpoints, dry-run seed ingestion, then run live seed only if `FMP_API_KEY` is present. Run `POST /data/freshness/check` before research cycles. Use `allow_stale=true` only when intentionally accepting stale-data warnings.

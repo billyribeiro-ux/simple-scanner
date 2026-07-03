@@ -56,3 +56,7 @@ curl -s -X POST http://localhost:8000/data/ingest/fmp/incremental-intraday \
 Safe to trust: endpoint status, persisted request metadata, ingestion run counts, bar upsert idempotency, and local data coverage warnings.
 
 Not safe to trust: entitlement without a live check, exchange-calendar-perfect missing window estimates, WebSocket production readiness, or any metric as a profitability claim.
+
+## Phase 16 Operator Review And Freshness
+
+Run capability checks, review required endpoints as `REVIEWED_ACCESSIBLE`, run seed dry-run, then run live seed only when the key and review gate are ready. `/operations/provider` contains review and seed controls. `/operations/data` contains freshness checks and quote snapshot tables. Research cycles block on `BLOCKED` or `STALE` freshness unless `allow_stale=true`.

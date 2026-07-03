@@ -8,17 +8,21 @@
   import StatusBadge from '$lib/components/StatusBadge.svelte';
   import {
     checkProviderCapabilities,
+    getCapabilityReviewSummary,
     getProviderStatus,
     ingestFmpEod,
     ingestFmpIncrementalIntraday,
     ingestFmpIntraday,
     ingestFmpQuotes,
+    ingestFmpSeed,
     listFmpIngestionRuns,
+    reviewProviderCapability,
     runFmpSmoke,
   } from '$lib/api';
   import { formatDateTime, normalizeSymbolsInput } from '$lib/governance';
 
   let status = $state<Record<string, unknown>>({ status: 'loading' });
+  let reviewSummary = $state<Record<string, unknown>>({ status: 'loading' });
   let runs = $state<Record<string, unknown>>({ ingestion_runs: [] });
   let latestResult = $state<unknown>(null);
   let loading = $state(false);
@@ -26,6 +30,9 @@
   let intervals = $state('1min,5min,15min');
   let start = $state(new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString());
   let end = $state(new Date().toISOString());
+  let reviewer = $state('local-operator');
+  let reviewNotes = $state('');
+  let reviewStatus = $state('REVIEWED_ACCESSIBLE');
 
   function record(value: unknown): Record<string, unknown> {
     return value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
@@ -53,9 +60,14 @@
 
   async function refresh() {
     loading = true;
-    const [nextStatus, nextRuns] = await Promise.all([getProviderStatus(), listFmpIngestionRuns()]);
+    const [nextStatus, nextRuns, nextReview] = await Promise.all([
+      getProviderStatus(),
+      listFmpIngestionRuns(),
+      getCapabilityReviewSummary(),
+    ]);
     status = nextStatus;
     runs = nextRuns;
+    reviewSummary = nextReview;
     loading = false;
   }
 
@@ -68,6 +80,31 @@
     if (action === 'eod') latestResult = await ingestFmpEod(body);
     if (action === 'intraday') latestResult = await ingestFmpIntraday(body);
     if (action === 'incremental') latestResult = await ingestFmpIncrementalIntraday(body);
+    if (action === 'seed-dry-run') {
+      latestResult = await ingestFmpSeed({
+        ...body,
+        intervals: ['1day', ...intervalList()],
+        dry_run: true,
+      });
+    }
+    if (action === 'seed') {
+      latestResult = await ingestFmpSeed({
+        ...body,
+        intervals: ['1day', ...intervalList()],
+        dry_run: false,
+      });
+    }
+    await refresh();
+  }
+
+  async function review(checkId: unknown) {
+    if (!checkId) return;
+    loading = true;
+    latestResult = await reviewProviderCapability(String(checkId), {
+      operator_review_status: reviewStatus as 'REVIEWED_ACCESSIBLE',
+      reviewed_by: reviewer,
+      review_notes: reviewNotes,
+    });
     await refresh();
   }
 
@@ -118,6 +155,11 @@
       <small>Optional entitlement probe</small>
     </div>
     <div class="panel metric">
+      <span>Review gate</span>
+      <StatusBadge value={String(record(reviewSummary).status ?? 'unknown')} />
+      <small>{record(reviewSummary).accessible_reviewed_count ?? 0} reviewed endpoints</small>
+    </div>
+    <div class="panel metric">
       <span>Latest ingestion</span>
       <strong>{record(record(status).latest_ingestion_run).status ?? '-'}</strong>
       <small
@@ -143,7 +185,27 @@
       <button class="btn" onclick={() => runAction('incremental')} disabled={loading}
         >Incremental</button
       >
+      <button class="btn" onclick={() => runAction('seed-dry-run')} disabled={loading}
+        >Seed dry-run</button
+      >
+      <button class="btn" onclick={() => runAction('seed')} disabled={loading}>Seed</button>
     </div>
+  </section>
+
+  <section class="panel form-grid">
+    <label class="field">Reviewer <input bind:value={reviewer} /></label>
+    <label class="field">
+      Review
+      <select bind:value={reviewStatus}>
+        <option>REVIEWED_ACCESSIBLE</option>
+        <option>REVIEWED_PARTIAL</option>
+        <option>REVIEWED_BLOCKED</option>
+        <option>REVIEWED_RATE_LIMITED</option>
+        <option>REVIEWED_UNUSABLE</option>
+        <option>UNREVIEWED</option>
+      </select>
+    </label>
+    <label class="field wide">Notes <input bind:value={reviewNotes} /></label>
   </section>
 
   <section class="panel">
@@ -156,7 +218,9 @@
             <th>Status</th>
             <th>HTTP</th>
             <th>Rows</th>
+            <th>Review</th>
             <th>Checked</th>
+            <th></th>
           </tr>
         </thead>
         <tbody>
@@ -166,7 +230,13 @@
               <td><StatusBadge value={String(row.status ?? 'UNKNOWN')} /></td>
               <td>{row.http_status ?? '-'}</td>
               <td>{row.sample_count ?? 0}</td>
+              <td><StatusBadge value={String(row.operator_review_status ?? 'UNREVIEWED')} /></td>
               <td>{formatDateTime(row.checked_at as string)}</td>
+              <td>
+                <button class="btn small" onclick={() => review(row.check_id)} disabled={loading}
+                  >Review</button
+                >
+              </td>
             </tr>
           {/each}
         </tbody>
@@ -203,6 +273,7 @@
   </section>
 
   <section class="panel">
+    <JsonPanel title="Review summary" value={reviewSummary} />
     <JsonPanel title="Latest action" value={latestResult ?? status} />
   </section>
 </div>
@@ -247,6 +318,11 @@
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
     gap: 14px;
+  }
+
+  .small {
+    min-height: 32px;
+    padding: 6px 10px;
   }
 
   .wide {

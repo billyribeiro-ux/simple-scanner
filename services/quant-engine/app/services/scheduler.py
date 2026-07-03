@@ -28,6 +28,8 @@ SCHEDULER_JOB_TYPES = {
     "fmp_eod_refresh",
     "fmp_intraday_refresh",
     "fmp_incremental_intraday_refresh",
+    "fmp_seed_ingestion",
+    "data_freshness_check",
 }
 SCHEDULER_TERMINAL_STATUSES = {"COMPLETED", "FAILED", "CANCELLED", "BLOCKED"}
 DEFAULT_MAX_JOBS = 3
@@ -409,6 +411,8 @@ class SchedulerService:
             "fmp_eod_refresh",
             "fmp_intraday_refresh",
             "fmp_incremental_intraday_refresh",
+            "fmp_seed_ingestion",
+            "data_freshness_check",
         }:
             return self._fmp_job(job_type, payload)
         return {"status": "error", "reason": "unsupported_scheduler_job_type", "job_type": job_type}
@@ -489,6 +493,35 @@ class SchedulerService:
         return {"status": "ok", "path": str(path), "rows": 1, "export": record}
 
     def _fmp_job(self, job_type: str, payload: dict[str, Any]) -> dict[str, Any]:
+        service = FMPLiveDataService(self.repos)
+        symbols = normalize_symbols(payload.get("symbols") or get_settings().symbol_list)[:10]
+        intervals = [str(item) for item in payload.get("intervals") or ["1min", "5min", "15min"]]
+        if job_type == "data_freshness_check":
+            return service.freshness_check(
+                symbols=symbols,
+                intervals=intervals,
+                max_bar_age_minutes=payload.get("max_bar_age_minutes") if isinstance(payload.get("max_bar_age_minutes"), dict) else None,
+                max_quote_age_seconds=int(payload.get("max_quote_age_seconds") or 900),
+                include_quotes=bool(payload.get("include_quotes", True)),
+                require_reviewed_capabilities=bool(payload.get("require_reviewed_capabilities", True)),
+                persist=bool(payload.get("persist", True)),
+            ) | {"model_activation_unchanged": True, "no_broker_execution": True}
+        if job_type == "fmp_seed_ingestion" and bool(payload.get("dry_run")):
+            return _run_coro(
+                service.seed_ingestion(
+                    symbols=symbols,
+                    intervals=[str(item) for item in payload.get("intervals") or ["1day", "1min", "5min", "15min"]],
+                    start=_parse_datetime(payload.get("start")),
+                    end=_parse_datetime(payload.get("end")),
+                    include_quotes=bool(payload.get("include_quotes", True)),
+                    include_eod=bool(payload.get("include_eod", True)),
+                    include_intraday=bool(payload.get("include_intraday", True)),
+                    max_intraday_days=int(payload.get("max_intraday_days") or 5),
+                    require_reviewed_capabilities=bool(payload.get("require_reviewed_capabilities", True)),
+                    allow_unreviewed_capabilities=bool(payload.get("allow_unreviewed_capabilities", False)),
+                    dry_run=True,
+                )
+            ) | {"model_activation_unchanged": True, "no_broker_execution": True}
         if not os.environ.get("FMP_API_KEY"):
             return {
                 "status": "blocked",
@@ -497,9 +530,6 @@ class SchedulerService:
                 "model_activation_unchanged": True,
                 "no_broker_execution": True,
             }
-        service = FMPLiveDataService(self.repos)
-        symbols = normalize_symbols(payload.get("symbols") or get_settings().symbol_list)[:10]
-        intervals = [str(item) for item in payload.get("intervals") or ["1min", "5min", "15min"]]
         if job_type == "fmp_capability_check":
             return _run_coro(
                 service.capability_check(
@@ -527,6 +557,22 @@ class SchedulerService:
                 "model_activation_unchanged": True,
                 "no_broker_execution": True,
             }
+        if job_type == "fmp_seed_ingestion":
+            return _run_coro(
+                service.seed_ingestion(
+                    symbols=symbols,
+                    intervals=[str(item) for item in payload.get("intervals") or ["1day", "1min", "5min", "15min"]],
+                    start=_parse_datetime(payload.get("start")),
+                    end=_parse_datetime(payload.get("end")),
+                    include_quotes=bool(payload.get("include_quotes", True)),
+                    include_eod=bool(payload.get("include_eod", True)),
+                    include_intraday=bool(payload.get("include_intraday", True)),
+                    max_intraday_days=int(payload.get("max_intraday_days") or 5),
+                    require_reviewed_capabilities=bool(payload.get("require_reviewed_capabilities", True)),
+                    allow_unreviewed_capabilities=bool(payload.get("allow_unreviewed_capabilities", False)),
+                    dry_run=False,
+                )
+            ) | {"model_activation_unchanged": True, "no_broker_execution": True}
         return {"status": "error", "reason": "unsupported_scheduler_job_type", "job_type": job_type}
 
     def _cycle_payload(self, payload: dict[str, Any]) -> dict[str, Any]:

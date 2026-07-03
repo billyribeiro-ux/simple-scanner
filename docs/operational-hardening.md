@@ -184,3 +184,7 @@ Model evidence cells, score audits, and exports must contain no FMP keys, databa
 - Scheduler FMP jobs block when `FMP_API_KEY` is absent.
 - WebSocket remains an optional entitlement probe, disabled by default.
 - Provider/data UI contains no broker or order controls.
+
+## Phase 16 Provider Hardening
+
+Seed ingestion is review-gated and bounded to 10 symbols and five intraday days. Freshness reports are persisted locally and never contain API keys. Scheduler seed/freshness jobs remain explicit operator jobs.

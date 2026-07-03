@@ -171,6 +171,19 @@ class ProviderCapabilityCheckRequest(BaseModel):
     include_websocket: bool = False
 
 
+class ProviderCapabilityReviewRequest(BaseModel):
+    operator_review_status: Literal[
+        "UNREVIEWED",
+        "REVIEWED_ACCESSIBLE",
+        "REVIEWED_PARTIAL",
+        "REVIEWED_BLOCKED",
+        "REVIEWED_RATE_LIMITED",
+        "REVIEWED_UNUSABLE",
+    ]
+    reviewed_by: str | None = None
+    review_notes: str | None = None
+
+
 class FMPQuoteIngestRequest(BaseModel):
     symbols: list[str] | None = None
 
@@ -186,6 +199,34 @@ class FMPIncrementalIntradayRequest(BaseModel):
     symbols: list[str] | None = None
     intervals: list[Literal["1min", "5min", "15min"]] | None = None
     end: datetime | None = None
+
+
+class FMPSeedIngestRequest(BaseModel):
+    symbols: list[str] | None = Field(
+        default_factory=lambda: ["AMZN", "AAPL", "TSLA", "SPY", "QQQ", "IWM", "NVDA", "GOOGL", "BABA", "SHOP"]
+    )
+    intervals: list[Literal["1day", "1min", "5min", "15min"]] = Field(
+        default_factory=lambda: ["1day", "1min", "5min", "15min"]
+    )
+    start: datetime | None = None
+    end: datetime | None = None
+    include_quotes: bool = True
+    include_eod: bool = True
+    include_intraday: bool = True
+    max_intraday_days: int = 5
+    require_reviewed_capabilities: bool = True
+    allow_unreviewed_capabilities: bool = False
+    dry_run: bool = False
+
+
+class DataFreshnessCheckRequest(BaseModel):
+    symbols: list[str] | None = None
+    intervals: list[Literal["1day", "1min", "5min", "15min"]] | None = None
+    max_bar_age_minutes: dict[str, int] | None = None
+    max_quote_age_seconds: int = 900
+    include_quotes: bool = True
+    require_reviewed_capabilities: bool = True
+    persist: bool = True
 
 
 class ProviderExportRequest(BaseModel):
@@ -437,6 +478,8 @@ class SchedulerJobRequest(BaseModel):
         "fmp_eod_refresh",
         "fmp_intraday_refresh",
         "fmp_incremental_intraday_refresh",
+        "fmp_seed_ingestion",
+        "data_freshness_check",
     ]
     payload: dict[str, Any] = Field(default_factory=dict)
     priority: int = 100

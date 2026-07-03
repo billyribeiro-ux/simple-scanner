@@ -57,6 +57,8 @@ EXPECTED_TABLES = {
     "model_runs",
     "pipeline_build_windows",
     "ingestion_runs",
+    "quote_snapshots",
+    "data_freshness_reports",
     "provider_capability_checks",
     "provider_requests",
     "model_decision_ledger",
@@ -76,7 +78,7 @@ EXPECTED_TABLES = {
     "validation_reports",
     "validation_windows",
 }
-EXPECTED_ALEMBIC_REVISION = "0011_phase15_fmp_provider"
+EXPECTED_ALEMBIC_REVISION = "0012_phase16_fmp_freshness"
 
 
 def _now_iso() -> str:
@@ -1014,6 +1016,10 @@ class SQLiteStore:
                         sample_count INTEGER NOT NULL DEFAULT 0,
                         latency_ms INTEGER,
                         entitlement_notes_json TEXT DEFAULT '{}',
+                        operator_review_status TEXT NOT NULL DEFAULT 'UNREVIEWED',
+                        reviewed_by TEXT,
+                        reviewed_at TEXT,
+                        review_notes TEXT,
                         checked_at TEXT NOT NULL,
                         created_at TEXT NOT NULL
                     );
@@ -1051,6 +1057,67 @@ class SQLiteStore:
 
                     CREATE INDEX IF NOT EXISTS ix_ingestion_runs_status_created
                         ON ingestion_runs(status, created_at);
+
+                    CREATE TABLE IF NOT EXISTS quote_snapshots (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        quote_snapshot_id TEXT NOT NULL UNIQUE,
+                        provider TEXT NOT NULL,
+                        endpoint_key TEXT NOT NULL,
+                        symbol TEXT NOT NULL,
+                        timestamp_utc TEXT NOT NULL,
+                        provider_timestamp TEXT,
+                        price REAL,
+                        bid REAL,
+                        ask REAL,
+                        open REAL,
+                        high REAL,
+                        low REAL,
+                        previous_close REAL,
+                        volume INTEGER,
+                        change REAL,
+                        change_percent REAL,
+                        source TEXT NOT NULL DEFAULT 'fmp',
+                        ingestion_run_id TEXT,
+                        provider_request_id TEXT,
+                        raw_fields_json TEXT DEFAULT '{}',
+                        data_quality_flags_json TEXT DEFAULT '[]',
+                        created_at TEXT NOT NULL,
+                        UNIQUE(provider, endpoint_key, symbol, timestamp_utc)
+                    );
+
+                    CREATE INDEX IF NOT EXISTS ix_quote_snapshots_symbol_timestamp
+                        ON quote_snapshots(symbol, timestamp_utc);
+
+                    CREATE INDEX IF NOT EXISTS ix_quote_snapshots_provider_endpoint
+                        ON quote_snapshots(provider, endpoint_key, timestamp_utc);
+
+                    CREATE TABLE IF NOT EXISTS data_freshness_reports (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        freshness_report_id TEXT NOT NULL UNIQUE,
+                        provider TEXT NOT NULL,
+                        status TEXT NOT NULL,
+                        symbols_json TEXT DEFAULT '[]',
+                        intervals_json TEXT DEFAULT '[]',
+                        required_capability_endpoints_json TEXT DEFAULT '[]',
+                        latest_bars_json TEXT DEFAULT '[]',
+                        latest_quotes_json TEXT DEFAULT '[]',
+                        missing_items_json TEXT DEFAULT '[]',
+                        stale_items_json TEXT DEFAULT '[]',
+                        dirty_windows_json TEXT DEFAULT '[]',
+                        capability_summary_json TEXT DEFAULT '{}',
+                        warnings_json TEXT DEFAULT '[]',
+                        recommendations_json TEXT DEFAULT '[]',
+                        max_bar_age_minutes_json TEXT DEFAULT '{}',
+                        max_quote_age_seconds INTEGER,
+                        generated_at TEXT NOT NULL,
+                        created_at TEXT NOT NULL
+                    );
+
+                    CREATE INDEX IF NOT EXISTS ix_data_freshness_reports_status_generated
+                        ON data_freshness_reports(status, generated_at);
+
+                    CREATE INDEX IF NOT EXISTS ix_data_freshness_reports_provider_generated
+                        ON data_freshness_reports(provider, generated_at);
 
                     CREATE TABLE IF NOT EXISTS exports (
                         export_id TEXT PRIMARY KEY,
@@ -1241,6 +1308,10 @@ class SQLiteStore:
                     "ALTER TABLE scheduler_jobs ADD COLUMN max_attempts INTEGER NOT NULL DEFAULT 1",
                     "ALTER TABLE scheduler_jobs ADD COLUMN timeout_seconds INTEGER NOT NULL DEFAULT 900",
                     "ALTER TABLE scheduler_jobs ADD COLUMN last_error TEXT",
+                    "ALTER TABLE provider_capability_checks ADD COLUMN operator_review_status TEXT NOT NULL DEFAULT 'UNREVIEWED'",
+                    "ALTER TABLE provider_capability_checks ADD COLUMN reviewed_by TEXT",
+                    "ALTER TABLE provider_capability_checks ADD COLUMN reviewed_at TEXT",
+                    "ALTER TABLE provider_capability_checks ADD COLUMN review_notes TEXT",
                 ):
                     try:
                         connection.execute(statement)
@@ -1263,10 +1334,25 @@ class SQLiteStore:
                     "CREATE INDEX IF NOT EXISTS ix_provider_capability_checks_status ON provider_capability_checks(status, checked_at)"
                 )
                 connection.execute(
+                    "CREATE INDEX IF NOT EXISTS ix_provider_capability_checks_review ON provider_capability_checks(provider, operator_review_status, checked_at)"
+                )
+                connection.execute(
                     "CREATE INDEX IF NOT EXISTS ix_ingestion_runs_provider_type_created ON ingestion_runs(provider, ingestion_type, created_at)"
                 )
                 connection.execute(
                     "CREATE INDEX IF NOT EXISTS ix_ingestion_runs_status_created ON ingestion_runs(status, created_at)"
+                )
+                connection.execute(
+                    "CREATE INDEX IF NOT EXISTS ix_quote_snapshots_symbol_timestamp ON quote_snapshots(symbol, timestamp_utc)"
+                )
+                connection.execute(
+                    "CREATE INDEX IF NOT EXISTS ix_quote_snapshots_provider_endpoint ON quote_snapshots(provider, endpoint_key, timestamp_utc)"
+                )
+                connection.execute(
+                    "CREATE INDEX IF NOT EXISTS ix_data_freshness_reports_status_generated ON data_freshness_reports(status, generated_at)"
+                )
+                connection.execute(
+                    "CREATE INDEX IF NOT EXISTS ix_data_freshness_reports_provider_generated ON data_freshness_reports(provider, generated_at)"
                 )
                 connection.commit()
             finally:
@@ -4219,6 +4305,10 @@ class ProviderCapabilityRepository:
             "sample_count": int(payload.get("sample_count") or 0),
             "latency_ms": payload.get("latency_ms"),
             "entitlement_notes": _redact_secret_payload(payload.get("entitlement_notes") or {}),
+            "operator_review_status": str(payload.get("operator_review_status") or "UNREVIEWED"),
+            "reviewed_by": _safe_text(payload.get("reviewed_by")),
+            "reviewed_at": (_parse_datetime(payload["reviewed_at"]).isoformat() if payload.get("reviewed_at") else None),
+            "review_notes": _safe_text(payload.get("review_notes")),
             "checked_at": checked_at,
             "created_at": str(payload.get("created_at") or now),
         }
@@ -4230,9 +4320,10 @@ class ProviderCapabilityRepository:
                     INSERT INTO provider_capability_checks(
                         check_id, provider, endpoint_key, endpoint_category, symbol_scope_json, request_type,
                         status, http_status, error_code, error_class, response_shape_json, sample_symbol,
-                        sample_count, latency_ms, entitlement_notes_json, checked_at, created_at
+                        sample_count, latency_ms, entitlement_notes_json, operator_review_status,
+                        reviewed_by, reviewed_at, review_notes, checked_at, created_at
                     )
-                    VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(check_id) DO UPDATE SET
                         status=excluded.status,
                         http_status=excluded.http_status,
@@ -4242,6 +4333,10 @@ class ProviderCapabilityRepository:
                         sample_count=excluded.sample_count,
                         latency_ms=excluded.latency_ms,
                         entitlement_notes_json=excluded.entitlement_notes_json,
+                        operator_review_status=provider_capability_checks.operator_review_status,
+                        reviewed_by=provider_capability_checks.reviewed_by,
+                        reviewed_at=provider_capability_checks.reviewed_at,
+                        review_notes=provider_capability_checks.review_notes,
                         checked_at=excluded.checked_at
                     """,
                     (
@@ -4260,6 +4355,10 @@ class ProviderCapabilityRepository:
                         row["sample_count"],
                         row["latency_ms"],
                         _json_dumps(row["entitlement_notes"]),
+                        row["operator_review_status"],
+                        row["reviewed_by"],
+                        row["reviewed_at"],
+                        row["review_notes"],
                         row["checked_at"],
                         row["created_at"],
                     ),
@@ -4269,6 +4368,52 @@ class ProviderCapabilityRepository:
                 if str(self.store.path) != ":memory:":
                     connection.close()
         return row
+
+    def get(self, check_id: str) -> dict[str, Any] | None:
+        connection = self.store.connect()
+        try:
+            row = connection.execute(
+                "SELECT * FROM provider_capability_checks WHERE check_id = ?",
+                (check_id,),
+            ).fetchone()
+            return self._row(row) if row is not None else None
+        finally:
+            if str(self.store.path) != ":memory:":
+                connection.close()
+
+    def review(
+        self,
+        check_id: str,
+        *,
+        operator_review_status: str,
+        reviewed_by: str | None = None,
+        review_notes: str | None = None,
+        reviewed_at: datetime | str | None = None,
+    ) -> dict[str, Any] | None:
+        reviewed_at_text = _parse_datetime(reviewed_at or _now_iso()).isoformat()
+        status = str(operator_review_status or "UNREVIEWED").upper()
+        with self.store._lock:
+            connection = self.store.connect()
+            try:
+                connection.execute(
+                    """
+                    UPDATE provider_capability_checks
+                    SET operator_review_status = ?, reviewed_by = ?, reviewed_at = ?, review_notes = ?
+                    WHERE check_id = ?
+                    """,
+                    (
+                        status,
+                        _safe_text(reviewed_by),
+                        reviewed_at_text if status != "UNREVIEWED" else None,
+                        _safe_text(review_notes),
+                        check_id,
+                    ),
+                )
+                connection.commit()
+            finally:
+                if str(self.store.path) != ":memory:":
+                    connection.close()
+        return self.get(check_id)
 
     def list(
         self,
@@ -4441,6 +4586,297 @@ class IngestionRunRepository:
         data["dirty_windows"] = _json_loads(data.pop("dirty_windows_json", "[]"))
         data["errors"] = _json_loads(data.pop("errors_json", "[]"))
         data["warnings"] = _json_loads(data.pop("warnings_json", "[]"))
+        return data
+
+
+class QuoteSnapshotRepository:
+    def __init__(self, store: SQLiteStore) -> None:
+        self.store = store
+
+    def upsert_many(self, snapshots: Iterable[dict[str, Any]]) -> dict[str, Any]:
+        now = _now_iso()
+        rows: list[tuple[Any, ...]] = []
+        ids: list[str] = []
+        for snapshot in snapshots:
+            symbol = normalize_symbol(str(snapshot.get("symbol") or ""))
+            timestamp_utc = _parse_datetime(snapshot.get("timestamp_utc") or now).isoformat()
+            provider = str(snapshot.get("provider") or "fmp")
+            endpoint_key = str(snapshot.get("endpoint_key") or "batch_quote")
+            snapshot_id = str(
+                snapshot.get("quote_snapshot_id")
+                or _stable_id("quote_snapshot", provider, endpoint_key, symbol, timestamp_utc)
+            )
+            ids.append(snapshot_id)
+            rows.append(
+                (
+                    snapshot_id,
+                    provider,
+                    endpoint_key,
+                    symbol,
+                    timestamp_utc,
+                    _safe_text(snapshot.get("provider_timestamp")),
+                    snapshot.get("price"),
+                    snapshot.get("bid"),
+                    snapshot.get("ask"),
+                    snapshot.get("open"),
+                    snapshot.get("high"),
+                    snapshot.get("low"),
+                    snapshot.get("previous_close"),
+                    snapshot.get("volume"),
+                    snapshot.get("change"),
+                    snapshot.get("change_percent"),
+                    str(snapshot.get("source") or provider),
+                    snapshot.get("ingestion_run_id"),
+                    snapshot.get("provider_request_id"),
+                    _json_dumps(_redact_secret_payload(snapshot.get("raw_fields") or {})),
+                    _json_dumps(snapshot.get("data_quality_flags") or []),
+                    str(snapshot.get("created_at") or now),
+                )
+            )
+        if not rows:
+            return {"records_inserted": 0, "records_updated": 0, "records_skipped": 0, "quote_snapshot_ids": []}
+        existing = self._existing_ids(ids)
+        with self.store._lock:
+            connection = self.store.connect()
+            try:
+                connection.executemany(
+                    """
+                    INSERT INTO quote_snapshots(
+                        quote_snapshot_id, provider, endpoint_key, symbol, timestamp_utc, provider_timestamp,
+                        price, bid, ask, open, high, low, previous_close, volume, change, change_percent,
+                        source, ingestion_run_id, provider_request_id, raw_fields_json, data_quality_flags_json,
+                        created_at
+                    )
+                    VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(provider, endpoint_key, symbol, timestamp_utc) DO UPDATE SET
+                        price=excluded.price,
+                        bid=excluded.bid,
+                        ask=excluded.ask,
+                        open=excluded.open,
+                        high=excluded.high,
+                        low=excluded.low,
+                        previous_close=excluded.previous_close,
+                        volume=excluded.volume,
+                        change=excluded.change,
+                        change_percent=excluded.change_percent,
+                        ingestion_run_id=excluded.ingestion_run_id,
+                        provider_request_id=excluded.provider_request_id,
+                        raw_fields_json=excluded.raw_fields_json,
+                        data_quality_flags_json=excluded.data_quality_flags_json
+                    """,
+                    rows,
+                )
+                connection.commit()
+            finally:
+                if str(self.store.path) != ":memory:":
+                    connection.close()
+        inserted = len([item for item in ids if item not in existing])
+        updated = len(rows) - inserted
+        return {
+            "records_inserted": inserted,
+            "records_updated": updated,
+            "records_skipped": 0,
+            "quote_snapshot_ids": ids,
+        }
+
+    def _existing_ids(self, ids: list[str]) -> set[str]:
+        if not ids:
+            return set()
+        placeholders = ",".join("?" for _ in ids)
+        connection = self.store.connect()
+        try:
+            rows = connection.execute(
+                f"SELECT quote_snapshot_id FROM quote_snapshots WHERE quote_snapshot_id IN ({placeholders})",  # noqa: S608 - fixed placeholders with bound parameters.
+                ids,
+            ).fetchall()
+            return {str(row["quote_snapshot_id"]) for row in rows}
+        finally:
+            if str(self.store.path) != ":memory:":
+                connection.close()
+
+    def list(
+        self,
+        *,
+        symbols: Iterable[str] | None = None,
+        limit: int = 200,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        normalized = [normalize_symbol(symbol) for symbol in symbols or []]
+        if normalized:
+            clauses.append(f"symbol IN ({','.join('?' for _ in normalized)})")
+            params.extend(normalized)
+        sql = "SELECT * FROM quote_snapshots"
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
+        sql += " ORDER BY timestamp_utc DESC, symbol LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
+        connection = self.store.connect()
+        try:
+            return [self._row(row) for row in connection.execute(sql, params).fetchall()]
+        finally:
+            if str(self.store.path) != ":memory:":
+                connection.close()
+
+    def latest_by_symbol(self, symbols: Iterable[str] | None = None) -> builtins.list[dict[str, Any]]:
+        latest: dict[str, dict[str, Any]] = {}
+        for row in self.list(symbols=symbols, limit=1000):
+            latest.setdefault(str(row["symbol"]), row)
+        return list(latest.values())
+
+    def _row(self, row: Any) -> dict[str, Any]:
+        data = dict(row)
+        data["raw_fields"] = _json_loads(data.pop("raw_fields_json", "{}"))
+        data["data_quality_flags"] = _json_loads(data.pop("data_quality_flags_json", "[]"))
+        return data
+
+
+class DataFreshnessReportRepository:
+    def __init__(self, store: SQLiteStore) -> None:
+        self.store = store
+
+    def save(self, payload: dict[str, Any]) -> dict[str, Any]:
+        now = _now_iso()
+        generated_at = _parse_datetime(payload.get("generated_at") or now).isoformat()
+        report_id = str(
+            payload.get("freshness_report_id")
+            or _stable_id(
+                "freshness",
+                payload.get("provider") or "fmp",
+                payload.get("status") or "UNKNOWN",
+                generated_at,
+            )
+        )
+        row = {
+            "freshness_report_id": report_id,
+            "provider": str(payload.get("provider") or "fmp"),
+            "status": str(payload.get("status") or "UNKNOWN"),
+            "symbols": normalize_symbols(payload.get("symbols") or []),
+            "intervals": [str(item) for item in payload.get("intervals") or []],
+            "required_capability_endpoints": [str(item) for item in payload.get("required_capability_endpoints") or []],
+            "latest_bars": _redact_secret_payload(payload.get("latest_bars") or []),
+            "latest_quotes": _redact_secret_payload(payload.get("latest_quotes") or []),
+            "missing_items": _redact_secret_payload(payload.get("missing_items") or []),
+            "stale_items": _redact_secret_payload(payload.get("stale_items") or []),
+            "dirty_windows": _redact_secret_payload(payload.get("dirty_windows") or []),
+            "capability_summary": _redact_secret_payload(payload.get("capability_summary") or {}),
+            "warnings": _redact_secret_payload(payload.get("warnings") or []),
+            "recommendations": _redact_secret_payload(payload.get("recommendations") or []),
+            "max_bar_age_minutes": payload.get("max_bar_age_minutes") or {},
+            "max_quote_age_seconds": payload.get("max_quote_age_seconds"),
+            "generated_at": generated_at,
+            "created_at": str(payload.get("created_at") or now),
+        }
+        with self.store._lock:
+            connection = self.store.connect()
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO data_freshness_reports(
+                        freshness_report_id, provider, status, symbols_json, intervals_json,
+                        required_capability_endpoints_json, latest_bars_json, latest_quotes_json,
+                        missing_items_json, stale_items_json, dirty_windows_json, capability_summary_json,
+                        warnings_json, recommendations_json, max_bar_age_minutes_json, max_quote_age_seconds,
+                        generated_at, created_at
+                    )
+                    VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(freshness_report_id) DO UPDATE SET
+                        status=excluded.status,
+                        latest_bars_json=excluded.latest_bars_json,
+                        latest_quotes_json=excluded.latest_quotes_json,
+                        missing_items_json=excluded.missing_items_json,
+                        stale_items_json=excluded.stale_items_json,
+                        dirty_windows_json=excluded.dirty_windows_json,
+                        capability_summary_json=excluded.capability_summary_json,
+                        warnings_json=excluded.warnings_json,
+                        recommendations_json=excluded.recommendations_json
+                    """,
+                    (
+                        row["freshness_report_id"],
+                        row["provider"],
+                        row["status"],
+                        _json_dumps(row["symbols"]),
+                        _json_dumps(row["intervals"]),
+                        _json_dumps(row["required_capability_endpoints"]),
+                        _json_dumps(row["latest_bars"]),
+                        _json_dumps(row["latest_quotes"]),
+                        _json_dumps(row["missing_items"]),
+                        _json_dumps(row["stale_items"]),
+                        _json_dumps(row["dirty_windows"]),
+                        _json_dumps(row["capability_summary"]),
+                        _json_dumps(row["warnings"]),
+                        _json_dumps(row["recommendations"]),
+                        _json_dumps(row["max_bar_age_minutes"]),
+                        row["max_quote_age_seconds"],
+                        row["generated_at"],
+                        row["created_at"],
+                    ),
+                )
+                connection.commit()
+            finally:
+                if str(self.store.path) != ":memory:":
+                    connection.close()
+        return self.get(report_id) or row
+
+    def get(self, freshness_report_id: str) -> dict[str, Any] | None:
+        connection = self.store.connect()
+        try:
+            row = connection.execute(
+                "SELECT * FROM data_freshness_reports WHERE freshness_report_id = ?",
+                (freshness_report_id,),
+            ).fetchone()
+            return self._row(row) if row is not None else None
+        finally:
+            if str(self.store.path) != ":memory:":
+                connection.close()
+
+    def latest(self, *, provider: str = "fmp") -> dict[str, Any] | None:
+        rows = self.list(provider=provider, limit=1)
+        return rows[0] if rows else None
+
+    def list(
+        self,
+        *,
+        provider: str | None = None,
+        status: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if provider:
+            clauses.append("provider = ?")
+            params.append(provider)
+        if status:
+            clauses.append("status = ?")
+            params.append(status)
+        sql = "SELECT * FROM data_freshness_reports"
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
+        sql += " ORDER BY generated_at DESC LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
+        connection = self.store.connect()
+        try:
+            return [self._row(row) for row in connection.execute(sql, params).fetchall()]
+        finally:
+            if str(self.store.path) != ":memory:":
+                connection.close()
+
+    def _row(self, row: Any) -> dict[str, Any]:
+        data = dict(row)
+        data["symbols"] = _json_loads(data.pop("symbols_json", "[]"))
+        data["intervals"] = _json_loads(data.pop("intervals_json", "[]"))
+        data["required_capability_endpoints"] = _json_loads(data.pop("required_capability_endpoints_json", "[]"))
+        data["latest_bars"] = _json_loads(data.pop("latest_bars_json", "[]"))
+        data["latest_quotes"] = _json_loads(data.pop("latest_quotes_json", "[]"))
+        data["missing_items"] = _json_loads(data.pop("missing_items_json", "[]"))
+        data["stale_items"] = _json_loads(data.pop("stale_items_json", "[]"))
+        data["dirty_windows"] = _json_loads(data.pop("dirty_windows_json", "[]"))
+        data["capability_summary"] = _json_loads(data.pop("capability_summary_json", "{}"))
+        data["warnings"] = _json_loads(data.pop("warnings_json", "[]"))
+        data["recommendations"] = _json_loads(data.pop("recommendations_json", "[]"))
+        data["max_bar_age_minutes"] = _json_loads(data.pop("max_bar_age_minutes_json", "{}"))
         return data
 
 
@@ -5235,6 +5671,8 @@ class RepositoryRegistry:
         self.provider_requests = ProviderRequestRepository(self.store)
         self.provider_capabilities = ProviderCapabilityRepository(self.store)
         self.ingestion_runs = IngestionRunRepository(self.store)
+        self.quote_snapshots = QuoteSnapshotRepository(self.store)
+        self.data_freshness_reports = DataFreshnessReportRepository(self.store)
         self.replays = ReplayRepository(self.store)
         self.replay_sensitivity = ReplaySensitivityRepository(self.store)
         self.backtest_comparisons = BacktestComparisonRepository(self.store)

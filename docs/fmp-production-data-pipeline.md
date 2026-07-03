@@ -35,3 +35,7 @@ Phase 15 adds a REST-only FMP ingestion path for provider verification and persi
 ## Safety
 
 The pipeline does not place orders, route orders, activate models, deploy models, claim profitability, or use WebSocket for production ingestion.
+
+## Phase 16 Update
+
+Phase 16 adds operator-reviewed entitlement, durable `quote_snapshots`, aggregate `seed_ingestion` runs, and persisted `data_freshness_reports`. Use `POST /data/ingest/fmp/seed` with `{"dry_run":true}` before live seed. Live seed requires `FMP_API_KEY` and reviewed accessible required endpoints unless an operator explicitly overrides the review guard.

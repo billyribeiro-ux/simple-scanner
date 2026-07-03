@@ -22,16 +22,19 @@ from app.schemas.market import (
     CalibrationAuditRequest,
     CalibrationDriftRequest,
     CounterfactualComparisonRequest,
+    DataFreshnessCheckRequest,
     ExportRequest,
     FMPBarsIngestRequest,
     FMPIncrementalIntradayRequest,
     FMPQuoteIngestRequest,
+    FMPSeedIngestRequest,
     IngestRequest,
     ModelComparisonRequest,
     ModelReviewRequest,
     ProposalActivationRequest,
     ProposalDecisionRequest,
     ProviderCapabilityCheckRequest,
+    ProviderCapabilityReviewRequest,
     ProviderExportRequest,
     ReplayBacktestRequest,
     ReplayWindowRunRequest,
@@ -147,6 +150,21 @@ async def provider_capabilities_check(request: ProviderCapabilityCheckRequest | 
     )
 
 
+@router.post("/provider/capabilities/{check_id}/review")
+async def provider_capabilities_review(check_id: str, request: ProviderCapabilityReviewRequest) -> dict[str, object]:
+    return FMPLiveDataService(repos()).review_capability(
+        check_id,
+        operator_review_status=request.operator_review_status,
+        reviewed_by=request.reviewed_by,
+        review_notes=request.review_notes,
+    )
+
+
+@router.get("/provider/capabilities/review-summary")
+async def provider_capabilities_review_summary() -> dict[str, object]:
+    return FMPLiveDataService(repos()).capability_review_summary()
+
+
 @router.get("/provider/capabilities/history")
 async def provider_capabilities_history(
     endpoint_key: str | None = None,
@@ -215,6 +233,24 @@ async def ingest_fmp_incremental_intraday(request: FMPIncrementalIntradayRequest
     return await FMPLiveDataService(repos()).incremental_intraday(request.symbols, request.intervals, request.end)
 
 
+@router.post("/data/ingest/fmp/seed")
+async def ingest_fmp_seed(request: FMPSeedIngestRequest | None = None) -> dict[str, object]:
+    request = request or FMPSeedIngestRequest()
+    return await FMPLiveDataService(repos()).seed_ingestion(
+        symbols=request.symbols,
+        intervals=request.intervals,
+        start=request.start,
+        end=request.end,
+        include_quotes=request.include_quotes,
+        include_eod=request.include_eod,
+        include_intraday=request.include_intraday,
+        max_intraday_days=request.max_intraday_days,
+        require_reviewed_capabilities=request.require_reviewed_capabilities,
+        allow_unreviewed_capabilities=request.allow_unreviewed_capabilities,
+        dry_run=request.dry_run,
+    )
+
+
 @router.get("/data/ingestion-runs")
 async def data_ingestion_runs(limit: int = 100, offset: int = 0) -> dict[str, object]:
     return FMPLiveDataService(repos()).list_ingestion_runs(limit=limit, offset=offset)
@@ -228,6 +264,35 @@ async def data_ingestion_run(ingestion_run_id: str) -> dict[str, object]:
 @router.get("/data/bars")
 async def data_bars() -> list[dict[str, object]]:
     return [bar.model_dump(mode="json") for bar in repos().bars.list_all()]
+
+
+@router.get("/data/quotes/snapshots")
+async def data_quote_snapshots(
+    symbols: str | None = None,
+    limit: int = 200,
+    offset: int = 0,
+) -> dict[str, object]:
+    selected = [item.strip() for item in symbols.split(",") if item.strip()] if symbols else None
+    return FMPLiveDataService(repos()).list_quote_snapshots(symbols=selected, limit=limit, offset=offset)
+
+
+@router.post("/data/freshness/check")
+async def data_freshness_check(request: DataFreshnessCheckRequest | None = None) -> dict[str, object]:
+    request = request or DataFreshnessCheckRequest()
+    return FMPLiveDataService(repos()).freshness_check(
+        symbols=request.symbols,
+        intervals=request.intervals,
+        max_bar_age_minutes=request.max_bar_age_minutes,
+        max_quote_age_seconds=request.max_quote_age_seconds,
+        include_quotes=request.include_quotes,
+        require_reviewed_capabilities=request.require_reviewed_capabilities,
+        persist=request.persist,
+    )
+
+
+@router.get("/data/freshness/latest")
+async def data_freshness_latest() -> dict[str, object]:
+    return FMPLiveDataService(repos()).latest_freshness_report()
 
 
 @router.get("/data/quality-report")
@@ -1130,6 +1195,30 @@ async def export_fmp_data_coverage(request: ProviderExportRequest | None = None)
 async def export_fmp_provider_requests(request: ProviderExportRequest | None = None) -> dict[str, object]:
     request = request or ProviderExportRequest(kind="csv")
     return FMPLiveDataService(repos()).export_provider_requests(request.kind)
+
+
+@router.post("/exports/fmp-entitlement-review")
+async def export_fmp_entitlement_review(request: ProviderExportRequest | None = None) -> dict[str, object]:
+    request = request or ProviderExportRequest()
+    return FMPLiveDataService(repos()).export_entitlement_review(request.kind)
+
+
+@router.post("/exports/fmp-quote-snapshots")
+async def export_fmp_quote_snapshots(request: ProviderExportRequest | None = None) -> dict[str, object]:
+    request = request or ProviderExportRequest(kind="csv")
+    return FMPLiveDataService(repos()).export_quote_snapshots(request.kind)
+
+
+@router.post("/exports/fmp-seed-ingestion")
+async def export_fmp_seed_ingestion(request: ProviderExportRequest | None = None) -> dict[str, object]:
+    request = request or ProviderExportRequest()
+    return FMPLiveDataService(repos()).export_seed_ingestion(request.kind)
+
+
+@router.post("/exports/data-freshness-report")
+async def export_data_freshness_report(request: ProviderExportRequest | None = None) -> dict[str, object]:
+    request = request or ProviderExportRequest()
+    return FMPLiveDataService(repos()).export_freshness(request.kind)
 
 
 @router.get("/exports/{export_id}")

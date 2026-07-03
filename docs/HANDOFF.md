@@ -4,9 +4,65 @@ Report status date: 2026-07-02
 
 ## Executive State
 
-Phase 15 adds safe FMP REST entitlement verification, header-only provider access, persisted capability checks, persisted ingestion runs, bounded FMP REST ingestion, provider/source data-quality coverage, FMP scheduler jobs, and provider/data operator UI. Node `24.18.0` remains the target runtime and frontend target-runtime gates use pnpm `11.9.0` through Corepack. Python `3.14.6` is installed, `services/quant-engine/.venv` exists on Python `3.14.6`, Postgres/TimescaleDB and Redis are healthy through Docker Compose, and Alembic now verifies at `0011_phase15_fmp_provider`.
+Phase 16 adds operator-reviewed FMP entitlement, durable quote snapshots, bounded seed ingestion, data freshness reports, scheduler jobs for seed/freshness, research-cycle freshness gates, and provider/data operator UI updates. Node `24.18.0` remains the target runtime and frontend target-runtime gates use pnpm `11.9.0` through Corepack. Python `3.14.6` is installed, `services/quant-engine/.venv` exists on Python `3.14.6`, and Alembic now verifies at `0012_phase16_fmp_freshness`.
 
 This remains a local-first scanner, research, validation, backtest, signal, and export platform only. It is not a broker, auto-trader, order router, self-learning system, or profitability system.
+
+## Phase 16 Operator Flow
+
+1. Set `FMP_API_KEY` safely in the runtime shell or ignored env file. Never commit it.
+2. Run live entitlement only when the key is present:
+
+```bash
+curl -s -X POST http://localhost:8000/provider/capabilities/check \
+  -H 'content-type: application/json' \
+  -d '{"symbols":["SPY","QQQ","AAPL","NVDA"]}'
+```
+
+3. Review each measured capability row:
+
+```bash
+curl -s -X POST http://localhost:8000/provider/capabilities/{check_id}/review \
+  -H 'content-type: application/json' \
+  -d '{"operator_review_status":"REVIEWED_ACCESSIBLE","reviewed_by":"local-operator"}'
+```
+
+4. Check review readiness:
+
+```bash
+curl -s http://localhost:8000/provider/capabilities/review-summary
+```
+
+5. Run seed dry-run without a provider call:
+
+```bash
+curl -s -X POST http://localhost:8000/data/ingest/fmp/seed \
+  -H 'content-type: application/json' \
+  -d '{"dry_run":true}'
+```
+
+6. Run live seed only after key and reviews are ready:
+
+```bash
+curl -s -X POST http://localhost:8000/data/ingest/fmp/seed \
+  -H 'content-type: application/json' \
+  -d '{"dry_run":false}'
+```
+
+7. Check freshness:
+
+```bash
+curl -s -X POST http://localhost:8000/data/freshness/check \
+  -H 'content-type: application/json' \
+  -d '{"persist":true}'
+curl -s http://localhost:8000/data/freshness/latest
+```
+
+Research cycles include a freshness report and block on `BLOCKED` or `STALE` by default. `allow_stale=true` allows execution with explicit warnings. Quote freshness and capability-review gating for research are opt-in with `require_quote_freshness=true` and `require_reviewed_capabilities_for_research=true`.
+
+View `/operations/provider` for entitlement review and seed controls. View `/operations/data` for quote snapshots, freshness, coverage, and ingestion history.
+
+Safe to trust: persisted provider status, operator review metadata, quote snapshots, bars, dirty-window status, and mocked regression tests. Not safe to trust yet: live FMP entitlement in this shell, because `FMP_API_KEY` was missing during verification.
 
 ## Runtime Pins
 
@@ -61,7 +117,9 @@ make scheduler-recover-stale
 make export-test
 make fmp-entitlement-test
 make fmp-ingestion-test
+make fmp-seed-test
 make data-quality-test
+make data-freshness-test
 make fmp-smoke
 make fmp-live-smoke
 make db-query-diagnostics
@@ -109,8 +167,10 @@ The persisted contract now includes replay audit, sensitivity, replay-aware mode
 - `scheduler_jobs`: bounded operator-queued research preparation jobs with status, priority, schedule time, payload, result, warnings, failure reason, and optional research cycle ID.
 - `scheduler_job_events`: append-only scheduler job events with event type, message, non-secret metadata, and timestamp.
 - `scheduler_jobs` Phase 14 worker fields: `lease_owner`, `lease_expires_at`, `heartbeat_at`, `attempt_count`, `max_attempts`, `timeout_seconds`, and `last_error`.
-- `provider_capability_checks`: one row per FMP endpoint entitlement probe with status, HTTP status, response shape, latency, sample count, and non-secret entitlement notes.
+- `provider_capability_checks`: one row per FMP endpoint entitlement probe with status, HTTP status, response shape, latency, sample count, non-secret entitlement notes, and operator review fields.
 - `ingestion_runs`: one row per bounded FMP ingestion request with endpoint keys, symbols, intervals, counts, dirty windows, provider request IDs, warnings, and errors.
+- `quote_snapshots`: durable quote snapshot rows from FMP batch quotes with idempotent provider/symbol/timestamp keys and redacted raw fields.
+- `data_freshness_reports`: persisted freshness reports for bars, quote snapshots, dirty windows, capability review state, warnings, and recommendations.
 
 Safe status fields are exposed through `GET /health`, `GET /config`, and `make doctor`: `persistence_backend`, `runtime_mode`, `database_configured`, `database_reachable`, `fallback_enabled`, and `fallback_reason`. Full database URLs, passwords, and API keys are never returned.
 
@@ -120,13 +180,13 @@ Safe status fields are exposed through `GET /health`, `GET /config`, and `make d
 - Repository-backed API route state instead of route-level `_MEMORY`.
 - SQLite local API persistence and reinitialization survival for bars, features, labels, replay runs/trades, model runs, active model, scanner runs/signals, exports, and daily reviews.
 - Postgres API persistence and reinitialization survival for the same vertical slice after `make db-migrate`.
-- Alembic migration and schema inspection expectations now target revision `0011_phase15_fmp_provider`; local Postgres execution is verified in this shell when `make db-migrate` and `make db-inspect` are run.
+- Alembic migration and schema inspection expectations now target revision `0012_phase16_fmp_freshness`; local Postgres execution must be verified with `make db-migrate` and `make db-inspect`.
 - SQLite/Postgres repository parity for symbols, bars, features, labels, replay runs/trades, sensitivity runs/scenarios, comparisons, pipeline build windows, replay-aware evidence cells, candidate score audits, calibration audits, replay window sets/results, drift reports, model review reports, models, scanner runs, signals, provider requests, exports, and daily reviews.
 - CSV/XLSX/JSON export generation from persisted signals, replay runs/trades, replay sensitivity runs, replay-aware model summaries, evidence cells, score audits, replay-aware validation reports, calibration reports, replay window sets, calibration drift reports, model review reports, and daily reviews, with file hashes and workbook sheets recorded.
 - CSV/XLSX/JSON export generation for research cycles, model proposals, and champion/challenger comparisons from persisted source IDs, with file hashes and workbook sheet names recorded.
 - FMP REST client security behavior: header-only auth, no query-string key generation, redacted exceptions/metadata, request IDs, latency capture, endpoint classification, and mocked entitlement/ingestion regression tests.
-- Persisted FMP capability checks, ingestion runs, provider request accounting, and source-aware data-quality reporting in SQLite and Postgres schema paths.
-- Provider/data operator UI route wiring for `/operations/provider` and `/operations/data`, with no broker execution controls and no frontend secret exposure.
+- Persisted FMP capability checks, operator review metadata, quote snapshots, ingestion runs, provider request accounting, freshness reports, and source-aware data-quality reporting in SQLite and Postgres schema paths.
+- Provider/data operator UI route wiring for `/operations/provider` and `/operations/data`, with review, seed, freshness, and quote snapshot controls but no broker execution controls and no frontend secret exposure.
 - Approval of a model proposal is separate from activation. Explicit proposal activation requires `confirm_manual_activation=true`, accepted validation, non-blocking readiness, and a proposal recommendation that is eligible for activation.
 - The Phase 12 operator UI enforces approval/activation separation with a disabled activation panel until the proposal is approved, the confirmation checkbox is checked, and `ACTIVATE SCANNER MODEL` is typed.
 - The scheduler can queue and run data-quality reports, research-cycle dry-runs/runs, research-cycle exports, and operator-status exports; it cannot approve, reject, activate, deploy, route orders, or place trades.
@@ -177,7 +237,7 @@ make db-inspect
 make db-query-diagnostics
 ```
 
-Phase 15 keeps the recovered Phase 14 Docker/Postgres/Redis path and adds migration `0011_phase15_fmp_provider` for FMP capability checks and ingestion runs.
+Phase 16 keeps the recovered Docker/Postgres/Redis path and adds migration `0012_phase16_fmp_freshness` for operator review fields, quote snapshots, and data freshness reports.
 
 Daily operator setup:
 
@@ -449,7 +509,7 @@ curl -s -X POST http://localhost:8000/exports/replay-aware-validation.xlsx \
   -d '{"kind":"replay-aware-validation","run_id":"{report_id}"}'
 ```
 
-Safe to trust: deterministic replay outcome dataset rules, persisted evidence cells, shrinkage/backoff hierarchy, score audits, replay-aware activation guard, and SQLite/Postgres persistence once migrations are applied through `0011_phase15_fmp_provider`.
+Safe to trust: deterministic replay outcome dataset rules, persisted evidence cells, shrinkage/backoff hierarchy, score audits, replay-aware activation guard, and SQLite/Postgres persistence once migrations are applied through `0012_phase16_fmp_freshness`.
 
 Not safe to trust: `signal_quality_score` as a calibrated probability, replay as live fill proof, portfolio-overlap skipped candidates as losses, or any output as a profitability claim.
 
@@ -499,7 +559,7 @@ Safe to trust: persisted replay/config provenance, counterfactual candidate-qual
 
 Not safe to trust: counterfactual replay as executable portfolio P/L, `signal_quality_score` as calibrated probability, or any replay/calibration metric as a profitability claim.
 
-## Phase 15 FMP Live Data Handoff
+## Phase 16 FMP Live Data Handoff
 
 Set `FMP_API_KEY` only in the runtime environment or ignored local env files. Do not paste it into commands, docs, committed files, exports, logs, scheduler payloads, or frontend variables.
 
@@ -514,6 +574,29 @@ curl -s -X POST http://localhost:8000/provider/capabilities/check \
 ```
 
 If the key is missing, smoke and live ingestion skip or block safely with non-secret status. Capability rows persist in `provider_capability_checks`.
+
+Review measured capabilities and check readiness:
+
+```bash
+curl -s -X POST http://localhost:8000/provider/capabilities/{check_id}/review \
+  -H 'content-type: application/json' \
+  -d '{"operator_review_status":"REVIEWED_ACCESSIBLE","reviewed_by":"local-operator"}'
+curl -s http://localhost:8000/provider/capabilities/review-summary
+```
+
+Run seed dry-run, live seed, and freshness checks:
+
+```bash
+curl -s -X POST http://localhost:8000/data/ingest/fmp/seed \
+  -H 'content-type: application/json' \
+  -d '{"dry_run":true}'
+curl -s -X POST http://localhost:8000/data/ingest/fmp/seed \
+  -H 'content-type: application/json' \
+  -d '{"dry_run":false}'
+curl -s -X POST http://localhost:8000/data/freshness/check \
+  -H 'content-type: application/json' \
+  -d '{"persist":true}'
+```
 
 Run bounded ingestion:
 

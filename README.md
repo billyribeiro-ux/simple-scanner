@@ -82,6 +82,10 @@ make scheduler-worker-once
 make scheduler-recover-stale
 make db-query-diagnostics
 make export-test
+make fmp-entitlement-test
+make fmp-ingestion-test
+make fmp-seed-test
+make data-freshness-test
 make fmp-smoke
 make test
 ```
@@ -96,7 +100,15 @@ make test
 
 `make scheduler-test` runs the bounded non-autonomous scheduler persistence, service, API, one-shot worker, and runbook regression tests. `make scheduler-status` prints a non-secret local scheduler queue summary. `make scheduler-worker-once` leases and runs at most a bounded batch once, then exits; it is not a daemon. `make scheduler-recover-stale` recovers expired scheduler leases once without leasing new work.
 
-`make fmp-smoke` is optional and runs live FMP REST checks only when `FMP_API_KEY` is configured. Otherwise it skips with a non-secret message.
+`make fmp-smoke` is optional and runs live FMP REST checks only when `FMP_API_KEY` is configured. Otherwise it skips with a non-secret message. `make fmp-seed-test` and `make data-freshness-test` are mocked Phase 16 tests for operator-reviewed FMP capability checks, durable quote snapshots, bounded seed ingestion, and freshness gates.
+
+Phase 16 adds data-only FMP readiness routes:
+
+- `POST /provider/capabilities/check` records bounded live entitlement checks when `FMP_API_KEY` is present, or `SKIPPED_NO_KEY` when absent.
+- `POST /provider/capabilities/{check_id}/review` marks a measured capability row as operator-reviewed without changing the measured result.
+- `POST /data/ingest/fmp/seed` dry-runs or executes bounded quote/EOD/intraday seed ingestion for the default universe.
+- `POST /data/freshness/check` persists a local freshness report from quote snapshots, bars, dirty windows, and capability review state.
+- `GET /data/freshness/latest` returns the latest persisted freshness report.
 
 ## Persistence Contract
 
@@ -114,17 +126,20 @@ FastAPI selects the repository backend explicitly:
 
 1. Set `FMP_API_KEY` in your shell or ignored env file.
 2. Start services with `make db-up`.
-3. Ingest bars through the Training page or `POST /data/ingest`.
-4. Build features and labels.
-5. Train and validate a model.
-6. Activate only a passing model.
-7. Run `POST /backtest/run` for label-derived evidence, or `POST /backtest/replay` for candidate-to-trade market replay.
-8. For replay validation, pass an explicit `replay_run_id` or `replay_filter`.
-9. Run replay sensitivity and label-vs-replay comparison before treating replay evidence as model-selection input.
-10. Generate replay window sets, calibration drift reports, and model review reports when comparing model readiness across time.
-11. Use `/operations/scheduler` for bounded data-quality, dry-run, controlled research-cycle, or status-export preparation jobs; use `make scheduler-worker-once` only when an operator wants the local one-shot worker path.
-12. Start the scanner.
-13. Export live signals, replay summaries/trades, sensitivity artifacts, drift/model-review artifacts, history, backtests, operator status, or daily reviews.
+3. Run FMP capability checks, then operator-review accessible required endpoints.
+4. Run FMP seed ingestion dry-run, then live seed ingestion if the key and reviews are ready.
+5. Run a data freshness check and clear dirty downstream windows by rebuilding features/candidates/labels/replay.
+6. Ingest bars through the Training page or `POST /data/ingest` for mocked/local workflows.
+7. Build features and labels.
+8. Train and validate a model.
+9. Activate only a passing model.
+10. Run `POST /backtest/run` for label-derived evidence, or `POST /backtest/replay` for candidate-to-trade market replay.
+11. For replay validation, pass an explicit `replay_run_id` or `replay_filter`.
+12. Run replay sensitivity and label-vs-replay comparison before treating replay evidence as model-selection input.
+13. Generate replay window sets, calibration drift reports, and model review reports when comparing model readiness across time.
+14. Use `/operations/scheduler` for bounded data-quality, FMP seed dry-run, freshness checks, controlled research-cycle, or status-export preparation jobs; use `make scheduler-worker-once` only when an operator wants the local one-shot worker path.
+15. Start the scanner.
+16. Export live signals, replay summaries/trades, sensitivity artifacts, drift/model-review artifacts, FMP review/freshness reports, history, backtests, operator status, or daily reviews.
 
 ## Backtest Modes
 

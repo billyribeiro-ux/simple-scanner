@@ -154,6 +154,17 @@
       <small>{count(record(provider).latest_capabilities)} endpoint checks</small>
       <a class="link" href="/operations/data">Data coverage</a>
     </div>
+    <div class="panel metric">
+      <span>Data freshness</span>
+      <a class="link" href="/operations/data">
+        {field(record(provider).latest_freshness_report, 'status', 'not checked')}
+      </a>
+      <small
+        >{formatDateTime(
+          field(record(provider).latest_freshness_report, 'generated_at', ''),
+        )}</small
+      >
+    </div>
   </section>
 
   <section class="panel status-grid">

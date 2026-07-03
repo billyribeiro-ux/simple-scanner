@@ -7,7 +7,7 @@ LOCAL_POSTGRES_HOST ?= localhost
 LOCAL_POSTGRES_PORT ?= 15432
 LOCAL_POSTGRES_DB ?= adaptive_market_decoder
 
-.PHONY: help doctor frontend-doctor setup setup-backend require-backend-venv quant-test backend-test backend-lint backend-typecheck api-smoke api-smoke-sqlite api-smoke-postgres repository-parity-test replay-test replay-sensitivity-test replay-window-test model-review-test research-cycle-test research-status-test scheduler-test scheduler-status scheduler-worker-once scheduler-recover-stale export-test fmp-entitlement-test fmp-ingestion-test data-quality-test fmp-smoke fmp-live-smoke dev api-dev web-dev db-up db-down db-migrate db-inspect db-diagnostics db-query-diagnostics db-reset-dev ingest features labels train validate backtest scanner export test lint typecheck
+.PHONY: help doctor frontend-doctor setup setup-backend require-backend-venv quant-test backend-test backend-lint backend-typecheck api-smoke api-smoke-sqlite api-smoke-postgres repository-parity-test replay-test replay-sensitivity-test replay-window-test model-review-test research-cycle-test research-status-test scheduler-test scheduler-status scheduler-worker-once scheduler-recover-stale export-test fmp-entitlement-test fmp-ingestion-test fmp-seed-test data-quality-test data-freshness-test fmp-smoke fmp-live-smoke dev api-dev web-dev db-up db-down db-migrate db-inspect db-diagnostics db-query-diagnostics db-reset-dev ingest features labels train validate backtest scanner export test lint typecheck
 
 help:
 	@printf "Adaptive Market Decoder commands\n\n"
@@ -49,7 +49,9 @@ help:
 	@printf "  make export-test        Run export workbook/CSV tests\n"
 	@printf "  make fmp-entitlement-test Run mocked FMP entitlement/client tests\n"
 	@printf "  make fmp-ingestion-test Run mocked FMP ingestion/API tests\n"
+	@printf "  make fmp-seed-test      Run mocked FMP seed/review/snapshot tests\n"
 	@printf "  make data-quality-test  Run data quality provider/source coverage tests\n"
+	@printf "  make data-freshness-test Run data freshness gate tests\n"
 	@printf "  make fmp-smoke           Run optional live FMP REST smoke if FMP_API_KEY is configured\n"
 	@printf "  make fmp-live-smoke      Alias for make fmp-smoke\n"
 	@printf "  make test lint typecheck Run backend and frontend quality gates\n"
@@ -162,8 +164,14 @@ fmp-entitlement-test: require-backend-venv
 fmp-ingestion-test: require-backend-venv
 	cd $(SERVICE_DIR) && PYTHONPATH=. .venv/bin/python -m pytest tests/quant/test_phase15_fmp_provider.py -k "ingest or api or scheduler or export"
 
+fmp-seed-test: require-backend-venv
+	cd $(SERVICE_DIR) && PYTHONPATH=. .venv/bin/python -m pytest tests/quant/test_phase16_fmp_freshness.py -k "seed or quote or review or api or scheduler or export"
+
 data-quality-test: require-backend-venv
 	cd $(SERVICE_DIR) && PYTHONPATH=. .venv/bin/python -m pytest tests/quant/test_phase15_fmp_provider.py -k "quality"
+
+data-freshness-test: require-backend-venv
+	cd $(SERVICE_DIR) && PYTHONPATH=. .venv/bin/python -m pytest tests/quant/test_phase16_fmp_freshness.py -k "freshness or research"
 
 fmp-smoke: require-backend-venv
 	PYTHONPATH=$(SERVICE_DIR) $(SERVICE_DIR)/.venv/bin/python scripts/fmp_smoke.py

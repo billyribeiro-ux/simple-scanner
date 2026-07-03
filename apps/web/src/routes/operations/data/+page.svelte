@@ -4,11 +4,20 @@
   import ChartLineUpIcon from 'phosphor-svelte/lib/ChartLineUpIcon';
   import JsonPanel from '$lib/components/JsonPanel.svelte';
   import StatusBadge from '$lib/components/StatusBadge.svelte';
-  import { getDataQualityReport, listFmpIngestionRuns } from '$lib/api';
+  import {
+    checkDataFreshness,
+    getDataQualityReport,
+    getLatestFreshness,
+    listFmpIngestionRuns,
+    listQuoteSnapshots,
+  } from '$lib/api';
   import { formatDateTime } from '$lib/governance';
 
   let report = $state<Record<string, unknown>>({ status: 'loading' });
+  let freshness = $state<Record<string, unknown>>({ status: 'loading' });
+  let quotes = $state<Record<string, unknown>>({ quote_snapshots: [] });
   let runs = $state<Record<string, unknown>>({ ingestion_runs: [] });
+  let latestResult = $state<unknown>(null);
   let loading = $state(false);
   let symbols = $state('SPY,AAPL,NVDA');
   let intervals = $state('1min,5min,15min');
@@ -23,13 +32,34 @@
 
   async function refresh() {
     loading = true;
-    const [nextReport, nextRuns] = await Promise.all([
+    const [nextReport, nextRuns, nextFreshness, nextQuotes] = await Promise.all([
       getDataQualityReport({ symbols, intervals }),
       listFmpIngestionRuns(),
+      getLatestFreshness(),
+      listQuoteSnapshots(symbols),
     ]);
     report = nextReport;
     runs = nextRuns;
+    freshness = nextFreshness;
+    quotes = nextQuotes;
     loading = false;
+  }
+
+  async function runFreshnessCheck() {
+    loading = true;
+    latestResult = await checkDataFreshness({
+      symbols: symbols
+        .split(',')
+        .map((item) => item.trim())
+        .filter(Boolean),
+      intervals: intervals
+        .split(',')
+        .map((item) => item.trim())
+        .filter(Boolean),
+      include_quotes: true,
+      persist: true,
+    });
+    await refresh();
   }
 
   onMount(() => {
@@ -57,6 +87,10 @@
   <section class="panel form-grid">
     <label class="field">Symbols <input bind:value={symbols} /></label>
     <label class="field">Intervals <input bind:value={intervals} /></label>
+    <button class="btn primary" onclick={runFreshnessCheck} disabled={loading}>
+      <ArrowClockwiseIcon size={18} />
+      Check freshness
+    </button>
   </section>
 
   <section class="grid">
@@ -78,9 +112,47 @@
       >
     </div>
     <div class="panel metric">
+      <span>Freshness</span>
+      <StatusBadge value={String(record(freshness).status ?? 'not checked')} />
+      <small>{formatDateTime(record(freshness).generated_at as string)}</small>
+    </div>
+    <div class="panel metric">
+      <span>Quote snapshots</span>
+      <strong>{list(record(quotes).quote_snapshots).length}</strong>
+      <small>Durable latest rows</small>
+    </div>
+    <div class="panel metric">
       <span>Ingestion runs</span>
       <strong>{record(record(report).summary).ingestion_run_count ?? 0}</strong>
       <small>FMP source coverage</small>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Quote snapshots</h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Symbol</th>
+            <th>Price</th>
+            <th>Volume</th>
+            <th>Timestamp</th>
+            <th>Flags</th>
+          </tr>
+        </thead>
+        <tbody>
+          {#each list(record(quotes).quote_snapshots) as quote}
+            <tr>
+              <td class="mono">{quote.symbol}</td>
+              <td>{quote.price ?? '-'}</td>
+              <td>{quote.volume ?? '-'}</td>
+              <td>{formatDateTime(quote.timestamp_utc as string)}</td>
+              <td>{JSON.stringify(quote.data_quality_flags ?? [])}</td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
     </div>
   </section>
 
@@ -152,6 +224,7 @@
   {/if}
 
   <section class="panel">
+    <JsonPanel title="Freshness report" value={latestResult ?? freshness} />
     <JsonPanel title="Quality report" value={report} />
   </section>
 </div>

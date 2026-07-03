@@ -44,3 +44,7 @@ The report now includes:
 - recommended refresh steps
 
 It still reads persisted local data only. It does not query FMP directly and does not claim exchange-calendar-perfect missing-window detection.
+
+## Phase 16 Freshness Reports
+
+`POST /data/freshness/check` persists a local freshness report using bars, quote snapshots, dirty pipeline windows, and capability review state. `GET /data/freshness/latest` returns the latest report. Research cycles include the report and block on stale or missing data by default.

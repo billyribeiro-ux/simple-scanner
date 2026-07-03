@@ -100,3 +100,7 @@ The scheduler cannot perform this action.
 5. Open `/operations/data`.
 6. Confirm latest bars, provider request summary, dirty windows, and warnings.
 7. Rebuild features only after data-quality warnings are understood.
+
+## Phase 16 Daily Freshness Check
+
+Confirm `/operations/provider` review readiness and `/operations/data` freshness status. Run seed dry-run before live seed. Do not run research cycles on `BLOCKED` or `STALE` freshness unless `allow_stale=true` is an intentional operator decision.

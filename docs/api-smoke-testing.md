@@ -235,3 +235,7 @@ Phase 13 adds `make scheduler-test`, which covers scheduler persistence, service
 Additional FMP surfaces include `POST /provider/fmp/smoke`, `POST /provider/capabilities/check`, `POST /data/ingest/fmp/quotes`, `POST /data/ingest/fmp/eod`, `POST /data/ingest/fmp/intraday`, `POST /data/ingest/fmp/incremental-intraday`, `GET /data/ingestion-runs`, and `GET /operations/provider-status`.
 
 Missing-key routes return safe skipped or blocked statuses and never expose the key.
+
+## Phase 16 FMP API Coverage
+
+Additional mocked coverage includes capability review, review summary, durable quote snapshots, seed dry-run/live guards, data freshness reports, `fmp_seed_ingestion`, `data_freshness_check`, and freshness exports. Live entitlement is still only claimed after `FMP_API_KEY` is present and a bounded check is run.

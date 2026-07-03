@@ -29,4 +29,8 @@ No route returns the value.
 
 ## WebSocket
 
-WebSocket remains disabled by default. A bounded entitlement probe may be attempted only when `AMD_ENABLE_FMP_WS_PROBE=true` and `FMP_API_KEY` is present. There is no production WebSocket ingestion in Phase 15.
+WebSocket remains disabled by default. A bounded entitlement probe may be attempted only when `AMD_ENABLE_FMP_WS_PROBE=true` and `FMP_API_KEY` is present. There is no production WebSocket ingestion.
+
+## Phase 16 Security Addendum
+
+Operator review stores only review metadata on measured capability rows. Quote snapshots and freshness reports redact raw fields and do not store keys. Seed dry-run performs no provider call. Live seed blocks when `FMP_API_KEY` is absent.

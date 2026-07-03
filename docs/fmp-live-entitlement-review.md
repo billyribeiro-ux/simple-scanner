@@ -1,0 +1,50 @@
+# FMP Live Entitlement Review
+
+Phase 16 separates measured provider access from operator review.
+
+## Safe Setup
+
+Set `FMP_API_KEY` only in the runtime shell or an ignored env file. Do not put it in committed files, frontend code, request URLs, docs, exports, or logs.
+
+```bash
+export FMP_API_KEY="..."
+```
+
+The FMP client uses header auth only. Query-string API keys are stripped before requests and provider metadata is redacted.
+
+## Run Capability Checks
+
+```bash
+curl -s -X POST http://localhost:8000/provider/capabilities/check \
+  -H 'content-type: application/json' \
+  -d '{"symbols":["SPY","QQQ","AAPL","NVDA"],"endpoint_keys":["quote","quote_short","batch_quote","batch_quote_short","historical_eod_full","intraday_1min","intraday_5min","intraday_15min"]}'
+```
+
+If `FMP_API_KEY` is absent, rows persist with `SKIPPED_NO_KEY`. If present, each endpoint records status, HTTP status, latency, sample count, response shape, and non-secret entitlement notes.
+
+## Review Capability Rows
+
+Review does not change the measured provider result. It adds only:
+
+- `operator_review_status`
+- `reviewed_by`
+- `reviewed_at`
+- `review_notes`
+
+```bash
+curl -s -X POST http://localhost:8000/provider/capabilities/{check_id}/review \
+  -H 'content-type: application/json' \
+  -d '{"operator_review_status":"REVIEWED_ACCESSIBLE","reviewed_by":"local-operator","review_notes":"sample rows and shape reviewed"}'
+```
+
+Valid statuses are `UNREVIEWED`, `REVIEWED_ACCESSIBLE`, `REVIEWED_PARTIAL`, `REVIEWED_BLOCKED`, `REVIEWED_RATE_LIMITED`, and `REVIEWED_UNUSABLE`.
+
+## Readiness Summary
+
+```bash
+curl -s http://localhost:8000/provider/capabilities/review-summary
+```
+
+`READY` means all required endpoints have a usable provider result and are marked `REVIEWED_ACCESSIBLE`. `UNREVIEWED`, `PARTIAL`, or `BLOCKED` prevents live seed ingestion unless the operator explicitly overrides the review guard.
+
+WebSocket remains disabled by default and is not used for production ingestion.

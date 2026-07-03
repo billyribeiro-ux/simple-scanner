@@ -103,3 +103,7 @@ There is no auto-run toggle and no activation control in scheduler UI.
 Allowed FMP job types are `fmp_capability_check`, `fmp_quote_snapshot`, `fmp_eod_refresh`, `fmp_intraday_refresh`, and `fmp_incremental_intraday_refresh`.
 
 FMP jobs require `FMP_API_KEY`; if it is missing, the job becomes `BLOCKED` with `fmp_api_key_required`. Jobs are bounded to 10 symbols, `1min/5min/15min` intraday intervals, and a conservative five-day intraday span. They persist provider request IDs and ingestion run IDs only. They never approve proposals, activate models, route orders, or place trades.
+
+## Phase 16 FMP Jobs
+
+`fmp_seed_ingestion` supports dry-run without a key and live seed with key/review gates. `data_freshness_check` reads local persisted data and can run without a key. Both jobs are operator-queued, bounded, and never activate models.

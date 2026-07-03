@@ -87,3 +87,7 @@ The Phase 2 quant core favors deterministic, testable Python loops over prematur
 ## Phase 15 FMP Data Performance Notes
 
 FMP ingestion is deliberately bounded: 10 symbols per job, `1min/5min/15min` intervals, and a conservative five-day intraday default. Bar writes use the existing idempotent upsert key and mark downstream feature/label/replay windows dirty. REST polling remains the default live-data path.
+
+## Phase 16 Freshness Performance Notes
+
+Freshness checks query latest bars, quote snapshots, dirty windows, and capability summaries from local persistence. They do not call FMP. Seed ingestion remains bounded to 10 symbols and five intraday days.
