@@ -104,3 +104,7 @@ The scheduler cannot perform this action.
 ## Phase 16 Daily Freshness Check
 
 Confirm `/operations/provider` review readiness and `/operations/data` freshness status. Run seed dry-run before live seed. Do not run research cycles on `BLOCKED` or `STALE` freshness unless `allow_stale=true` is an intentional operator decision.
+
+## Phase 17 Daily FMP Status
+
+The 2026-07-03 live FMP attempt was blocked because `FMP_API_KEY` was missing from the runtime shell. Treat provider readiness as blocked until a runtime key is configured, smoke passes, required endpoints are reviewed accessible, and a bounded live seed succeeds.

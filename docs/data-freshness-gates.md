@@ -47,3 +47,9 @@ curl -s -X POST http://localhost:8000/scheduler/jobs \
 ```
 
 A `BLOCKED` freshness result makes the scheduler job terminal status `BLOCKED`; this is intentional operator feedback, not an execution failure.
+
+## Phase 17 Operator Result
+
+On 2026-07-03, `FMP_API_KEY` was missing and no live seed ran. A local freshness check persisted `BLOCKED` with warnings for missing required data and capability review not ready. This verifies the local gate path, not real-data freshness.
+
+Real-data freshness, real incremental duplicate avoidance, and real-data research-cycle freshness behavior remain unverified until bounded live seed succeeds.

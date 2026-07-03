@@ -1,12 +1,28 @@
 # Adaptive Market Decoder Handoff
 
-Report status date: 2026-07-02
+Report status date: 2026-07-03
 
 ## Executive State
 
-Phase 16 adds operator-reviewed FMP entitlement, durable quote snapshots, bounded seed ingestion, data freshness reports, scheduler jobs for seed/freshness, research-cycle freshness gates, and provider/data operator UI updates. Node `24.18.0` remains the target runtime and frontend target-runtime gates use pnpm `11.9.0` through Corepack. Python `3.14.6` is installed, `services/quant-engine/.venv` exists on Python `3.14.6`, and Alembic now verifies at `0012_phase16_fmp_freshness`.
+Phase 17 attempted the first live FMP entitlement execution and bounded seed verification, but `FMP_API_KEY` was missing from the runtime shell. The no-key smoke path persisted `SKIPPED_NO_KEY` rows for all required endpoints, review summary reported `BLOCKED`, seed dry-run reported `would_block=true`, local freshness persisted `BLOCKED`, and no live seed ingestion ran. Node `24.18.0` remains the target runtime and frontend target-runtime gates use pnpm `11.9.0` through Corepack. Python `3.14.6` is installed, `services/quant-engine/.venv` exists on Python `3.14.6`, and Alembic verifies at `0012_phase16_fmp_freshness`.
 
 This remains a local-first scanner, research, validation, backtest, signal, and export platform only. It is not a broker, auto-trader, order router, self-learning system, or profitability system.
+
+## Phase 17 Live FMP Verification Result
+
+`FMP_API_KEY` is missing in this shell. Do not use a chat-provided key as a replacement for runtime environment loading. Do not claim live entitlement until the key is present in the shell or an ignored env file.
+
+Verified on 2026-07-03:
+
+- `make fmp-smoke` and `make fmp-live-smoke` ran and skipped safely.
+- Required endpoints `quote`, `quote_short`, `batch_quote`, `batch_quote_short`, `historical_eod_full`, `intraday_1min`, `intraday_5min`, and `intraday_15min` persisted as `SKIPPED_NO_KEY`.
+- Capability review summary: `BLOCKED`, with 8 blocked endpoints and 0 reviewed accessible endpoints.
+- Seed dry-run: `dry_run`, `would_block=true`, no provider call.
+- Freshness report: `BLOCKED`.
+- Redacted exports for entitlement review, capability matrix, quote snapshots, seed ingestion, freshness, and data coverage were generated with file hashes.
+- Backend, database, frontend, scheduler, export, and secret-scan gates passed.
+
+Live FMP endpoint accessibility, live seed counts, incremental refresh idempotency on real data, and real-data research-cycle freshness behavior remain unverified.
 
 ## Phase 16 Operator Flow
 
@@ -196,7 +212,7 @@ Safe status fields are exposed through `GET /health`, `GET /config`, and `make d
 
 ## What Is Not Safe To Trust Yet
 
-- Live FMP endpoint entitlement under this machine's key unless `FMP_API_KEY` is loaded at runtime and `make fmp-smoke` or `POST /provider/capabilities/check` is run. Missing-key behavior is safe and persisted as skipped/blocked, but endpoint availability remains unknown without the runtime key.
+- Live FMP endpoint entitlement under this machine's key. Phase 17 proved the no-key path only: all required endpoints were `SKIPPED_NO_KEY`, review summary was `BLOCKED`, and endpoint availability remains unknown until the runtime key is loaded.
 - Market replay as execution-grade reality. Replay is now auditable and sensitivity-tested, but fills are still simulated from OHLCV with conservative same-bar rules, configurable slippage/spread, and no true market depth.
 - Model calibration as a live probability. Calibration/drift reports are operational diagnostics, not calibrated probability estimates.
 - Live trading readiness. No broker execution or order routing exists.
@@ -456,12 +472,12 @@ curl -s -X POST http://localhost:8000/exports/sensitivity-summary.xlsx \
 
 ## Current Blockers
 
-- Optional live FMP smoke and live endpoint entitlement classification require `FMP_API_KEY` to be configured outside the committed repo.
+- Live FMP smoke, live endpoint entitlement classification, live seed ingestion, real-data incremental refresh, and real-data freshness proof require `FMP_API_KEY` to be configured outside the committed repo.
 - Frontend acceptance still requires using Node `24.18.0` through NVM because the Homebrew Node `25.3.0` binary on this machine fails before Corepack.
 
 ## Exact Next Recommended Phase
 
-Phase 16 should verify live FMP entitlement with a runtime-only key, run a bounded real-data ingestion cycle, compare real FMP coverage against scanner feature/replay readiness, and improve operator diagnostics for incomplete data windows. Do not add broker execution, order routing, automatic activation, production WebSocket ingestion, options data, self-learning language, autonomous scheduling, or profitability claims.
+Phase 18 should load `FMP_API_KEY` into the runtime environment outside tracked files, rerun Phase 17 live entitlement, review measured endpoint rows honestly, run bounded live seed only if review summary is `READY`, run incremental intraday refresh twice, run freshness and research-cycle checks, export clean reports, and rerun secret scans. Do not add broker execution, order routing, automatic activation, production WebSocket ingestion, options data, self-learning language, autonomous scheduling, or profitability claims.
 
 ## Phase 8 Replay-Aware Model Selection Historical Notes
 

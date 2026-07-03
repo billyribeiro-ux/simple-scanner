@@ -48,3 +48,9 @@ curl -s http://localhost:8000/provider/capabilities/review-summary
 `READY` means all required endpoints have a usable provider result and are marked `REVIEWED_ACCESSIBLE`. `UNREVIEWED`, `PARTIAL`, or `BLOCKED` prevents live seed ingestion unless the operator explicitly overrides the review guard.
 
 WebSocket remains disabled by default and is not used for production ingestion.
+
+## Phase 17 Operator Result
+
+On 2026-07-03, `FMP_API_KEY` was missing from the runtime shell. `make fmp-smoke` and `make fmp-live-smoke` ran and skipped safely. All required endpoint rows were persisted as `SKIPPED_NO_KEY`, review summary reported `BLOCKED`, and no endpoint was marked `REVIEWED_ACCESSIBLE`.
+
+Live endpoint accessibility remains unknown until a runtime key is loaded outside tracked files and the capability check is rerun. Do not review skipped rows as accessible.

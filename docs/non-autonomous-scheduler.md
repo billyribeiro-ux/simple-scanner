@@ -107,3 +107,7 @@ FMP jobs require `FMP_API_KEY`; if it is missing, the job becomes `BLOCKED` with
 ## Phase 16 FMP Jobs
 
 `fmp_seed_ingestion` supports dry-run without a key and live seed with key/review gates. `data_freshness_check` reads local persisted data and can run without a key. Both jobs are operator-queued, bounded, and never activate models.
+
+## Phase 17 Scheduler Result
+
+The 2026-07-03 Phase 17 run did not execute live FMP scheduler jobs because `FMP_API_KEY` was missing. General scheduler status, one-shot worker, and stale recovery commands passed with zero queued, running, or recovered jobs. Live FMP scheduler verification remains blocked until the runtime key is present and endpoint reviews are ready.

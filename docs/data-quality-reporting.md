@@ -48,3 +48,7 @@ It still reads persisted local data only. It does not query FMP directly and doe
 ## Phase 16 Freshness Reports
 
 `POST /data/freshness/check` persists a local freshness report using bars, quote snapshots, dirty pipeline windows, and capability review state. `GET /data/freshness/latest` returns the latest report. Research cycles include the report and block on stale or missing data by default.
+
+## Phase 17 Operator Result
+
+The 2026-07-03 Phase 17 run did not ingest live FMP data because `FMP_API_KEY` was missing. `GET /data/quality-report` and no-key exports remain safe persisted-data paths, but real provider coverage and real missing-window conclusions remain unverified until bounded live seed succeeds.

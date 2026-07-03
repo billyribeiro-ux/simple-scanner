@@ -171,3 +171,9 @@ Phase 15 safety boundaries remain: REST polling default, WebSocket probe disable
 ## Phase 16 FMP Review And Freshness
 
 Run capability checks, review required endpoints, dry-run seed ingestion, then run live seed only if `FMP_API_KEY` is present. Run `POST /data/freshness/check` before research cycles. Use `allow_stale=true` only when intentionally accepting stale-data warnings.
+
+## Phase 17 FMP Live Verification Result
+
+The 2026-07-03 live verification attempt found `FMP_API_KEY` missing. `make fmp-smoke` and `make fmp-live-smoke` skipped safely, required endpoints persisted as `SKIPPED_NO_KEY`, review summary was `BLOCKED`, seed dry-run would block, and freshness was `BLOCKED`.
+
+Next live attempt: load the key into the runtime shell or ignored env file, run smoke, review measured accessible rows honestly, run seed dry-run, and run live seed only if review summary is `READY`.

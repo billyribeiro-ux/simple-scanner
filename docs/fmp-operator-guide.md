@@ -60,3 +60,7 @@ Not safe to trust: entitlement without a live check, exchange-calendar-perfect m
 ## Phase 16 Operator Review And Freshness
 
 Run capability checks, review required endpoints as `REVIEWED_ACCESSIBLE`, run seed dry-run, then run live seed only when the key and review gate are ready. `/operations/provider` contains review and seed controls. `/operations/data` contains freshness checks and quote snapshot tables. Research cycles block on `BLOCKED` or `STALE` freshness unless `allow_stale=true`.
+
+## Phase 17 Operator Result
+
+The 2026-07-03 operator attempt found `FMP_API_KEY` missing. Smoke targets skipped safely, the review summary was `BLOCKED`, seed dry-run would block, and freshness persisted `BLOCKED`. Load the key outside tracked files before the next live entitlement attempt. Do not mark skipped endpoint rows accessible.

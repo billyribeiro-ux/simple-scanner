@@ -61,3 +61,9 @@ curl -s -X POST http://localhost:8000/scheduler/jobs \
 ```
 
 The scheduler is bounded and non-autonomous. It never activates models.
+
+## Phase 17 Operator Result
+
+On 2026-07-03, `FMP_API_KEY` was missing from the runtime shell. Seed dry-run returned `dry_run` with `would_block=true` and made no provider calls. Live seed was not run because required endpoints were `SKIPPED_NO_KEY` and review summary was `BLOCKED`.
+
+Real quote snapshot, EOD bar, intraday bar, and incremental-refresh counts remain unverified until the runtime key is present and the required endpoints are reviewed accessible.
