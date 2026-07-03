@@ -54,3 +54,22 @@ WebSocket remains disabled by default and is not used for production ingestion.
 On 2026-07-03, `FMP_API_KEY` was missing from the runtime shell. `make fmp-smoke` and `make fmp-live-smoke` ran and skipped safely. All required endpoint rows were persisted as `SKIPPED_NO_KEY`, review summary reported `BLOCKED`, and no endpoint was marked `REVIEWED_ACCESSIBLE`.
 
 Live endpoint accessibility remains unknown until a runtime key is loaded outside tracked files and the capability check is rerun. Do not review skipped rows as accessible.
+
+## Phase 18 Operator Result
+
+On 2026-07-03, a runtime-only `FMP_API_KEY` was provided and the entitlement flow was rerun. All eight required REST endpoints returned `ACCESSIBLE` with HTTP 200 and usable sample counts. The latest measured rows were reviewed as `REVIEWED_ACCESSIBLE`, and the persisted review summary ended `READY`.
+
+Latest reviewed sample counts:
+
+| Endpoint | Sample count |
+| --- | ---: |
+| `quote` | 1 |
+| `quote_short` | 1 |
+| `batch_quote` | 4 |
+| `batch_quote_short` | 4 |
+| `historical_eod_full` | 6 |
+| `intraday_1min` | 1170 |
+| `intraday_5min` | 468 |
+| `intraday_15min` | 156 |
+
+Do not infer future entitlement from this result without rerunning the capability check. Provider plans and market-data availability can change.

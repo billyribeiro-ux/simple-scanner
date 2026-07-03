@@ -1,6 +1,6 @@
 # Operator Daily Procedure
 
-Status date: 2026-07-02
+Status date: 2026-07-03
 
 This procedure prepares and reviews research artifacts. It does not create trading authority, route orders, or automatically activate models.
 
@@ -107,4 +107,17 @@ Confirm `/operations/provider` review readiness and `/operations/data` freshness
 
 ## Phase 17 Daily FMP Status
 
-The 2026-07-03 live FMP attempt was blocked because `FMP_API_KEY` was missing from the runtime shell. Treat provider readiness as blocked until a runtime key is configured, smoke passes, required endpoints are reviewed accessible, and a bounded live seed succeeds.
+The first 2026-07-03 live FMP attempt was blocked because `FMP_API_KEY` was missing from the runtime shell. That is historical Phase 17 context; Phase 18 superseded it with a runtime-key success path.
+
+## Phase 18 Daily FMP Status
+
+The 2026-07-03 runtime-key FMP rerun passed live entitlement and seed ingestion. Treat provider readiness as `READY` only after rerunning the capability check and confirming all required rows are reviewed accessible.
+
+Current local data state after Phase 18:
+
+- Live FMP seed exists.
+- Freshness is `STALE`.
+- Dirty pipeline windows remain.
+- Research cycles should block by default unless `allow_stale=true` is an explicit diagnostic decision.
+
+Daily next step: run freshness first, rebuild stale artifacts where needed, then run research dry-runs before any full controlled cycle.

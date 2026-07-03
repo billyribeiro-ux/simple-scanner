@@ -148,6 +148,10 @@ def test_ingest_intraday_idempotent_and_quality_coverage(tmp_path, monkeypatch) 
     second = asyncio.run(service.ingest_intraday(["SPY"], ["1min"], start, end))
     assert first["status"] == "COMPLETED"
     assert second["status"] == "COMPLETED"
+    assert first["records_inserted"] == 1
+    assert first["records_updated"] == 0
+    assert second["records_inserted"] == 0
+    assert second["records_updated"] == 1
     assert len(repo.bars.query(symbols=["SPY"], intervals=["1min"])) == 1
     quality = service.coverage_report(symbols=["SPY"], intervals=["1min"], start=start - timedelta(days=1), end=end)
     assert quality["summary"]["source_breakdown"]["fmp"] == 1

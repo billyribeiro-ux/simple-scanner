@@ -1,6 +1,6 @@
 # Local Operator Runbook
 
-Status date: 2026-07-02
+Status date: 2026-07-03
 
 Adaptive Market Decoder is a local-first scanner and research platform. It does not route orders, place trades, connect to brokers, automatically approve proposals, automatically activate scanner models, call itself self-learning, or claim profitability.
 
@@ -177,3 +177,18 @@ Run capability checks, review required endpoints, dry-run seed ingestion, then r
 The 2026-07-03 live verification attempt found `FMP_API_KEY` missing. `make fmp-smoke` and `make fmp-live-smoke` skipped safely, required endpoints persisted as `SKIPPED_NO_KEY`, review summary was `BLOCKED`, seed dry-run would block, and freshness was `BLOCKED`.
 
 Next live attempt: load the key into the runtime shell or ignored env file, run smoke, review measured accessible rows honestly, run seed dry-run, and run live seed only if review summary is `READY`.
+
+## Phase 18 FMP Live Verification Result
+
+The 2026-07-03 runtime-key rerun completed. Required REST endpoints are `ACCESSIBLE` and reviewed, review summary is `READY`, and live seed persisted real quote snapshots plus EOD/intraday bars.
+
+Current operator state:
+
+- Bars: 11999.
+- Quote snapshots: 10.
+- Provider request records: 182.
+- Freshness: `STALE`.
+- Latest research-cycle-scope freshness: 12 stale groups and 160 dirty windows.
+- Research cycles block by default on stale artifacts.
+
+Next operator action: rebuild stale/dirty feature, candidate, label, and replay artifacts before treating research cycles as clean, or deliberately use `allow_stale=true` only for diagnostic runs. Do not activate models from stale-data diagnostics.

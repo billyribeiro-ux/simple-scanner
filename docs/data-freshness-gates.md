@@ -53,3 +53,26 @@ A `BLOCKED` freshness result makes the scheduler job terminal status `BLOCKED`; 
 On 2026-07-03, `FMP_API_KEY` was missing and no live seed ran. A local freshness check persisted `BLOCKED` with warnings for missing required data and capability review not ready. This verifies the local gate path, not real-data freshness.
 
 Real-data freshness, real incremental duplicate avoidance, and real-data research-cycle freshness behavior remain unverified until bounded live seed succeeds.
+
+## Phase 18 Operator Result
+
+On 2026-07-03, bounded live seed succeeded and real-data freshness was verified. The result is currently `STALE`, not `READY`.
+
+Default universe freshness after endpoint review:
+
+- Report: `freshness_6433ebca9abebe945f9d2ede6ad3a685`
+- Status: `STALE`
+- Missing required data: 0
+- Stale required data groups: 40
+- Dirty windows: 400
+- Warnings: `freshness_dirty_pipeline_windows`, `freshness_stale_required_data`
+
+Research-cycle-scope freshness after the final controlled cycle:
+
+- Report: `freshness_58830eb27b2e92978aebd9bd0b8a2344`
+- Status: `STALE`
+- Missing required data: 0
+- Stale required data groups: 12
+- Dirty windows: 160
+
+Research cycles block by default on these stale/dirty artifacts. `allow_stale=true` completed only as a diagnostic path with explicit warnings and `model_activation_unchanged=true`.

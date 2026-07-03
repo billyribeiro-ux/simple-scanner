@@ -1,6 +1,6 @@
 # Data Quality Reporting
 
-Status date: 2026-07-01
+Status date: 2026-07-03
 
 `GET /data/quality-report` summarizes persisted local data quality without querying FMP or exposing secrets.
 
@@ -52,3 +52,15 @@ It still reads persisted local data only. It does not query FMP directly and doe
 ## Phase 17 Operator Result
 
 The 2026-07-03 Phase 17 run did not ingest live FMP data because `FMP_API_KEY` was missing. `GET /data/quality-report` and no-key exports remain safe persisted-data paths, but real provider coverage and real missing-window conclusions remain unverified until bounded live seed succeeds.
+
+## Phase 18 Operator Result
+
+Bounded live FMP seed succeeded on 2026-07-03. `GET /data/quality-report` now reads real local FMP bars and provider accounting:
+
+- Bars: 11999.
+- Source breakdown: `fmp`.
+- Latest bar groups: 40.
+- Provider request records: 182.
+- Quote snapshots: 10.
+
+The quality and freshness reports intentionally remain conservative. Current freshness is `STALE` because strict age thresholds and dirty build windows are still active after ingestion.

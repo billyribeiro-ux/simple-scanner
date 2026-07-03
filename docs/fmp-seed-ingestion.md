@@ -66,4 +66,25 @@ The scheduler is bounded and non-autonomous. It never activates models.
 
 On 2026-07-03, `FMP_API_KEY` was missing from the runtime shell. Seed dry-run returned `dry_run` with `would_block=true` and made no provider calls. Live seed was not run because required endpoints were `SKIPPED_NO_KEY` and review summary was `BLOCKED`.
 
-Real quote snapshot, EOD bar, intraday bar, and incremental-refresh counts remain unverified until the runtime key is present and the required endpoints are reviewed accessible.
+At the end of Phase 17, real quote snapshot, EOD bar, intraday bar, and incremental-refresh counts were still unverified. Phase 18 superseded that state with a runtime-key live seed.
+
+## Phase 18 Operator Result
+
+On 2026-07-03, the runtime key was available and required endpoint review reached `READY`. Live seed then completed:
+
+- Initial seed run: `ingestion_67f0fb86daeb3de661eb7d4d91d39c79`
+- Status: `COMPLETED`
+- Provider requests: 41
+- Records fetched: 12009
+- Records inserted: 12009
+- Records updated: 0
+- Errors: 0
+- Warnings: 0
+
+Current persisted local FMP data after Phase 18:
+
+- Bars: 11999
+- Quote snapshots: 10
+- Provider request records: 182
+
+Post-fix incremental intraday refresh over `SPY,QQQ,AAPL,NVDA` and `1min,5min,15min` ran twice with 1976 fetched, 0 inserted, and 1976 updated per run. Bar count stayed flat, confirming duplicate avoidance and corrected insertion/update accounting.

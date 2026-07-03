@@ -1,6 +1,6 @@
 # FMP Operator Guide
 
-Status date: 2026-07-01
+Status date: 2026-07-03
 
 ## Setup
 
@@ -64,3 +64,15 @@ Run capability checks, review required endpoints as `REVIEWED_ACCESSIBLE`, run s
 ## Phase 17 Operator Result
 
 The 2026-07-03 operator attempt found `FMP_API_KEY` missing. Smoke targets skipped safely, the review summary was `BLOCKED`, seed dry-run would block, and freshness persisted `BLOCKED`. Load the key outside tracked files before the next live entitlement attempt. Do not mark skipped endpoint rows accessible.
+
+## Phase 18 Operator Result
+
+The 2026-07-03 runtime-key rerun succeeded. Required REST endpoints are accessible and reviewed, review summary is `READY`, and bounded live seed persisted real FMP data. Current freshness is still `STALE`, so research cycles block by default until dirty/stale artifacts are handled or `allow_stale=true` is deliberately used.
+
+Latest high-signal counts:
+
+- Required reviewed endpoints: 8 of 8.
+- Current bars: 11999.
+- Quote snapshots: 10.
+- Latest post-fix incremental refreshes: 1976 fetched, 0 inserted, 1976 updated each.
+- Latest research-cycle-scope freshness: `STALE`, 12 stale groups, 160 dirty windows.

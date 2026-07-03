@@ -4,13 +4,40 @@ Report status date: 2026-07-03
 
 ## Executive State
 
-Phase 17 attempted the first live FMP entitlement execution and bounded seed verification, but `FMP_API_KEY` was missing from the runtime shell. The no-key smoke path persisted `SKIPPED_NO_KEY` rows for all required endpoints, review summary reported `BLOCKED`, seed dry-run reported `would_block=true`, local freshness persisted `BLOCKED`, and no live seed ingestion ran. Node `24.18.0` remains the target runtime and frontend target-runtime gates use pnpm `11.9.0` through Corepack. Python `3.14.6` is installed, `services/quant-engine/.venv` exists on Python `3.14.6`, and Alembic verifies at `0012_phase16_fmp_freshness`.
+Phase 18 completed runtime-key FMP bring-up and real-data seed verification. `FMP_API_KEY` was supplied only through the runtime environment and was not written to tracked files, docs, exports, logs, provider metadata, or frontend bundles. All eight required FMP REST endpoints are `ACCESSIBLE` with HTTP 200, the latest rows are reviewed `REVIEWED_ACCESSIBLE`, and review summary is `READY`. Bounded live seed persisted real quote snapshots, EOD bars, and intraday bars. Freshness is still `STALE`, so research cycles block by default unless `allow_stale=true` is a deliberate diagnostic decision.
+
+Node `24.18.0` remains the target runtime and frontend target-runtime gates use pnpm `11.9.0` through Corepack. Python `3.14.6` is installed, `services/quant-engine/.venv` exists on Python `3.14.6`, and Alembic verifies at `0012_phase16_fmp_freshness`.
 
 This remains a local-first scanner, research, validation, backtest, signal, and export platform only. It is not a broker, auto-trader, order router, self-learning system, or profitability system.
 
+## Phase 18 Live FMP Verification Result
+
+Runtime-key verification completed on 2026-07-03:
+
+- `make fmp-smoke` and `make fmp-live-smoke` returned `ACCESSIBLE` for `quote`, `quote_short`, `batch_quote`, `batch_quote_short`, `historical_eod_full`, `intraday_1min`, `intraday_5min`, and `intraday_15min`.
+- Latest reviewed sample counts: quote 1, quote-short 1, batch quote 4, batch quote-short 4, EOD 6, 1min 1170, 5min 468, 15min 156.
+- Capability review summary: `READY`, 8 reviewed accessible, 0 blocked, 0 missing, 0 unreviewed.
+- Initial full live seed: `ingestion_67f0fb86daeb3de661eb7d4d91d39c79`, `COMPLETED`, 12009 fetched, 12009 inserted, 41 provider requests, 0 errors.
+- Current persisted bars: 11999.
+- Current quote snapshots: 10.
+- Current provider request records: 182.
+- Post-fix incremental runs `ingestion_97a9a4a054f4585fffc19aa0d540ed74` and `ingestion_4907dd2706ac17c9e11192e0f66628f5` each fetched 1976 bars, inserted 0, updated 1976, and kept bar count flat.
+- Default-universe freshness: `STALE`, 0 missing, 40 stale groups, 400 dirty windows.
+- Latest research-cycle-scope freshness: `STALE`, 0 missing, 12 stale groups, 160 dirty windows.
+- Research cycle `research_cycle_032e2882c97523fdfc28d9821afa8162` dry-run and default run blocked on `stale_artifacts_present`; `allow_stale=true` completed diagnostically with `model_activation_unchanged=true`, `proposal_status=REVIEW_REQUIRED`, and `recommended_action=BLOCK_ALL_CHANGES`.
+
+Phase 18 included one narrow code fix: FMP bar ingestion now reports actual insert/update counts after idempotent upserts instead of counting every upsert attempt as an insert.
+
+Detailed records:
+
+- `docs/status/PHASE_18_COMPLETION_2026-07-03.md`
+- `docs/status/PHASE_18_LIVE_FMP_ENDPOINT_MATRIX_2026-07-03.md`
+- `docs/status/PHASE_18_REAL_SEED_INGESTION_2026-07-03.md`
+- `docs/status/PHASE_18_FRESHNESS_RESULTS_2026-07-03.md`
+
 ## Phase 17 Live FMP Verification Result
 
-`FMP_API_KEY` is missing in this shell. Do not use a chat-provided key as a replacement for runtime environment loading. Do not claim live entitlement until the key is present in the shell or an ignored env file.
+During Phase 17, `FMP_API_KEY` was missing in that verification shell. That phase proved the no-key path only and did not establish live entitlement.
 
 Verified on 2026-07-03:
 
@@ -78,7 +105,7 @@ Research cycles include a freshness report and block on `BLOCKED` or `STALE` by 
 
 View `/operations/provider` for entitlement review and seed controls. View `/operations/data` for quote snapshots, freshness, coverage, and ingestion history.
 
-Safe to trust: persisted provider status, operator review metadata, quote snapshots, bars, dirty-window status, and mocked regression tests. Not safe to trust yet: live FMP entitlement in this shell, because `FMP_API_KEY` was missing during verification.
+Safe to trust: persisted provider status, operator review metadata, quote snapshots, bars, dirty-window status, mocked regression tests, and Phase 18 live FMP REST entitlement for the runtime key at the time it was measured. Do not treat this as a permanent provider-plan guarantee; rerun entitlement before future live ingestion.
 
 ## Runtime Pins
 
@@ -212,7 +239,8 @@ Safe status fields are exposed through `GET /health`, `GET /config`, and `make d
 
 ## What Is Not Safe To Trust Yet
 
-- Live FMP endpoint entitlement under this machine's key. Phase 17 proved the no-key path only: all required endpoints were `SKIPPED_NO_KEY`, review summary was `BLOCKED`, and endpoint availability remains unknown until the runtime key is loaded.
+- Freshness readiness. Phase 18 live FMP entitlement and seed succeeded, but freshness is currently `STALE` and dirty pipeline windows remain.
+- Permanent FMP entitlement under this machine's key. Phase 18 proved endpoint access at measurement time only; provider plan access and data availability can change.
 - Market replay as execution-grade reality. Replay is now auditable and sensitivity-tested, but fills are still simulated from OHLCV with conservative same-bar rules, configurable slippage/spread, and no true market depth.
 - Model calibration as a live probability. Calibration/drift reports are operational diagnostics, not calibrated probability estimates.
 - Live trading readiness. No broker execution or order routing exists.

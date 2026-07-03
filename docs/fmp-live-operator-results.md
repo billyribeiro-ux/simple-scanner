@@ -2,6 +2,30 @@
 
 Status date: 2026-07-03
 
+## Phase 18 Result
+
+Phase 18 completed runtime-key live FMP bring-up on 2026-07-03. `FMP_API_KEY` was provided only through the runtime environment and was not written to tracked files, docs, exports, logs, provider metadata, or frontend bundles.
+
+What was verified:
+
+- `make doctor` reported only key presence, not the value.
+- `make fmp-smoke` and `make fmp-live-smoke` completed with redacted metadata.
+- Required endpoint rows persisted as `ACCESSIBLE` with HTTP 200.
+- The latest required endpoint rows were operator-reviewed as `REVIEWED_ACCESSIBLE`.
+- Review summary ended `READY`.
+- Seed dry-run succeeded and live seed ran only after review readiness.
+- Real quote snapshots, EOD bars, intraday bars, provider requests, ingestion runs, and dirty windows were persisted.
+- Post-fix incremental intraday refresh ran twice with 0 inserts, 1976 updates per run, and flat bar count.
+- Freshness checks persisted `STALE`, not `READY`, because bars are stale against strict thresholds and dirty build windows remain.
+- A research-cycle dry-run and default run blocked on stale artifacts; `allow_stale=true` completed diagnostically without model activation.
+- Backend, database, frontend, scheduler, export, compile, and secret-scan gates passed.
+
+What remains gated:
+
+- Freshness is still `STALE`.
+- Research cycles should remain blocked by default until stale artifacts are rebuilt or `allow_stale=true` is an explicit operator decision.
+- WebSocket production ingestion remains disabled.
+
 ## Phase 17 Result
 
 The first Phase 17 operator execution did not prove live FMP entitlement because `FMP_API_KEY` was missing from the runtime shell.
@@ -30,29 +54,26 @@ What was not verified:
 
 ## Current Endpoint Evidence
 
-| Endpoint key | Measured status in this shell | Operator review | Live accessibility |
-| --- | --- | --- | --- |
-| `quote` | `SKIPPED_NO_KEY` | not accessible | unknown |
-| `quote_short` | `SKIPPED_NO_KEY` | not accessible | unknown |
-| `batch_quote` | `SKIPPED_NO_KEY` | not accessible | unknown |
-| `batch_quote_short` | `SKIPPED_NO_KEY` | not accessible | unknown |
-| `historical_eod_full` | `SKIPPED_NO_KEY` | not accessible | unknown |
-| `intraday_1min` | `SKIPPED_NO_KEY` | not accessible | unknown |
-| `intraday_5min` | `SKIPPED_NO_KEY` | not accessible | unknown |
-| `intraday_15min` | `SKIPPED_NO_KEY` | not accessible | unknown |
+| Endpoint key | Measured status | HTTP | Sample count | Operator review |
+| --- | --- | ---: | ---: | --- |
+| `quote` | `ACCESSIBLE` | 200 | 1 | `REVIEWED_ACCESSIBLE` |
+| `quote_short` | `ACCESSIBLE` | 200 | 1 | `REVIEWED_ACCESSIBLE` |
+| `batch_quote` | `ACCESSIBLE` | 200 | 4 | `REVIEWED_ACCESSIBLE` |
+| `batch_quote_short` | `ACCESSIBLE` | 200 | 4 | `REVIEWED_ACCESSIBLE` |
+| `historical_eod_full` | `ACCESSIBLE` | 200 | 6 | `REVIEWED_ACCESSIBLE` |
+| `intraday_1min` | `ACCESSIBLE` | 200 | 1170 | `REVIEWED_ACCESSIBLE` |
+| `intraday_5min` | `ACCESSIBLE` | 200 | 468 | `REVIEWED_ACCESSIBLE` |
+| `intraday_15min` | `ACCESSIBLE` | 200 | 156 | `REVIEWED_ACCESSIBLE` |
 
-Do not mark any row `REVIEWED_ACCESSIBLE` until a live response has a usable shape and sample count.
+Review summary: `READY`, 8 reviewed accessible, 0 blocked, 0 missing, 0 unreviewed.
 
-## Next Operator Attempt
+## Latest Real-Data Evidence
 
-1. Load `FMP_API_KEY` into the runtime shell or an ignored local env file.
-2. Confirm `make doctor` says the key is present without printing it.
-3. Run `make fmp-smoke` and `make fmp-live-smoke`.
-4. Run the capability check and review rows honestly.
-5. Run seed dry-run.
-6. Run live seed only if the review summary is `READY`.
-7. Run incremental intraday refresh twice.
-8. Run freshness checks and exports.
-9. Run secret scans over source, docs, exports, frontend output, provider metadata, scheduler artifacts, and model artifacts.
+- Initial full seed: `ingestion_67f0fb86daeb3de661eb7d4d91d39c79`, `COMPLETED`, 12009 fetched, 12009 inserted, 41 provider requests, 0 errors.
+- Current persisted bars: 11999.
+- Current quote snapshots: 10.
+- Post-fix incremental runs: `ingestion_97a9a4a054f4585fffc19aa0d540ed74` and `ingestion_4907dd2706ac17c9e11192e0f66628f5`, each 1976 fetched, 0 inserted, 1976 updated.
+- Latest default freshness: `STALE`, 0 missing, 40 stale groups, 400 dirty windows.
+- Latest research-cycle-scope freshness: `STALE`, 0 missing, 12 stale groups, 160 dirty windows.
 
 No broker execution, order routing, production WebSocket ingestion, automatic activation, self-learning behavior, or profitability claim is part of this flow.

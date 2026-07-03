@@ -726,6 +726,7 @@ class FMPLiveDataService:
     ) -> dict[str, Any]:
         fetched = 0
         inserted = 0
+        updated = 0
         errors: list[dict[str, Any]] = []
         provider_request_ids: list[str] = []
         warnings: list[str] = []
@@ -741,7 +742,9 @@ class FMPLiveDataService:
                         errors.extend(response_errors)
                     bars = self._bars_from_response(response, symbol, interval)
                     fetched += len(bars)
-                    inserted += self.repos.bars.upsert_many(bars)
+                    bar_inserts, bar_updates = self._upsert_bars_with_counts(bars)
+                    inserted += bar_inserts
+                    updated += bar_updates
                 except (FMPClientError, ValueError) as exc:
                     errors.append({"symbol": symbol, "interval": interval, "error": str(_redact(str(exc)))})
         dirty = self.repos.pipeline_windows.list_dirty(symbols=symbols, intervals=None if intervals == ["1day"] else intervals)
@@ -754,12 +757,50 @@ class FMPLiveDataService:
             end=end,
             records_fetched=fetched,
             records_inserted=inserted,
+            records_updated=updated,
             provider_request_ids=provider_request_ids,
             dirty_windows=dirty,
             errors=errors,
             warnings=warnings,
             status=status,
         )
+
+    def _upsert_bars_with_counts(self, bars: list[Bar]) -> tuple[int, int]:
+        if not bars:
+            return 0, 0
+        incoming_keys = self._bar_keys(bars)
+        existing_keys = self._existing_bar_keys(bars)
+        self.repos.bars.upsert_many(bars)
+        return len(incoming_keys - existing_keys), len(incoming_keys & existing_keys)
+
+    def _existing_bar_keys(self, bars: list[Bar]) -> set[tuple[str, str, str, str]]:
+        timestamps = [self._bar_timestamp_utc(bar) for bar in bars]
+        existing = self.repos.bars.query(
+            symbols=sorted({bar.symbol for bar in bars}),
+            intervals=sorted({bar.interval for bar in bars}),
+            start=min(timestamps),
+            end=max(timestamps),
+        )
+        return self._bar_keys(existing)
+
+    def _bar_keys(self, bars: list[Bar]) -> set[tuple[str, str, str, str]]:
+        return {
+            (
+                normalize_symbol(bar.symbol),
+                str(bar.interval),
+                self._bar_timestamp_utc(bar).isoformat(),
+                str(bar.source or "unknown"),
+            )
+            for bar in bars
+        }
+
+    def _bar_timestamp_utc(self, bar: Bar) -> datetime:
+        timestamp = _parse_datetime(bar.timestamp_utc)
+        if timestamp is None:
+            raise ValueError("bar timestamp_utc is required")
+        if timestamp.tzinfo is None:
+            return timestamp.replace(tzinfo=UTC)
+        return timestamp.astimezone(UTC)
 
     def _record_provider_response(self, response: FMPResponse) -> str:
         return self.repos.provider_requests.record(
