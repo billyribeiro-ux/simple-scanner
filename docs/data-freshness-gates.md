@@ -76,3 +76,15 @@ Research-cycle-scope freshness after the final controlled cycle:
 - Dirty windows: 160
 
 Research cycles block by default on these stale/dirty artifacts. `allow_stale=true` completed only as a diagnostic path with explicit warnings and `model_activation_unchanged=true`.
+
+## Phase 19 Operator Result
+
+On 2026-07-03, the persisted Phase 18 bars were used to rebuild derived artifacts without FMP calls. Final dirty-window audit is clean:
+
+- Dirty windows: 0
+- Default wall-clock freshness: `STALE`
+- Default warning: `freshness_stale_required_data`
+- Research-cycle historical-reference freshness: `READY`
+- Research warnings: none
+
+The remaining default `STALE` status is bar-age staleness relative to July 3, 2026. It is no longer caused by dirty feature, candidate, label, or replay artifacts. Strict research dry-run passed with `allow_stale=false`, so no diagnostic `allow_stale=true` run was needed.

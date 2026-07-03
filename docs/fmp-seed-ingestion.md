@@ -88,3 +88,15 @@ Current persisted local FMP data after Phase 18:
 - Provider request records: 182
 
 Post-fix incremental intraday refresh over `SPY,QQQ,AAPL,NVDA` and `1min,5min,15min` ran twice with 1976 fetched, 0 inserted, and 1976 updated per run. Bar count stayed flat, confirming duplicate avoidance and corrected insertion/update accounting.
+
+## Phase 19 Artifact Follow-Up
+
+After Phase 18 ingestion, Phase 19 rebuilt local artifacts from persisted bars only:
+
+- `features`: 11999 rows written from persisted bars.
+- `candidate_signals`: 14976 candidate rows written on the final all-interval pass.
+- `labels`: 2088 label rows written on the final all-interval pass.
+- `replay`: strict intraday replay ran for the required research scope and optional default intraday scope.
+- `1day` replay windows: marked not applicable because candidate market replay is intraday-only in V1.
+
+Final dirty-window audit is 0. Future `1day` bar ingestion no longer marks replay windows dirty.

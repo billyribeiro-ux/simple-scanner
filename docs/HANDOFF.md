@@ -4,11 +4,37 @@ Report status date: 2026-07-03
 
 ## Executive State
 
-Phase 18 completed runtime-key FMP bring-up and real-data seed verification. `FMP_API_KEY` was supplied only through the runtime environment and was not written to tracked files, docs, exports, logs, provider metadata, or frontend bundles. All eight required FMP REST endpoints are `ACCESSIBLE` with HTTP 200, the latest rows are reviewed `REVIEWED_ACCESSIBLE`, and review summary is `READY`. Bounded live seed persisted real quote snapshots, EOD bars, and intraday bars. Freshness is still `STALE`, so research cycles block by default unless `allow_stale=true` is a deliberate diagnostic decision.
+Phase 19 completed live-data artifact-readiness repair on top of the Phase 18 FMP seed. `FMP_API_KEY` was not used for the rebuild path. Dirty windows went from 560 to 0 after feature, candidate, label, replay, and daily replay not-applicable cleanup. Default freshness is still `STALE` because the bars are historical relative to July 3, 2026 wall-clock age thresholds. Research-scope freshness is `READY`, and the strict research-cycle dry run passed with `allow_stale=false`; no diagnostic `allow_stale=true` run was needed.
+
+Phase 18 completed runtime-key FMP bring-up and real-data seed verification. `FMP_API_KEY` was supplied only through the runtime environment and was not written to tracked files, docs, exports, logs, provider metadata, or frontend bundles. All eight required FMP REST endpoints are `ACCESSIBLE` with HTTP 200, the latest rows are reviewed `REVIEWED_ACCESSIBLE`, and review summary is `READY`. Bounded live seed persisted real quote snapshots, EOD bars, and intraday bars.
 
 Node `24.18.0` remains the target runtime and frontend target-runtime gates use pnpm `11.9.0` through Corepack. Python `3.14.6` is installed, `services/quant-engine/.venv` exists on Python `3.14.6`, and Alembic verifies at `0012_phase16_fmp_freshness`.
 
 This remains a local-first scanner, research, validation, backtest, signal, and export platform only. It is not a broker, auto-trader, order router, self-learning system, or profitability system.
+
+## Phase 19 Live-Data Artifact Readiness Result
+
+Runtime result on 2026-07-03:
+
+- Initial dirty-window audit: 560 dirty windows, with 140 each for `features`, `candidates`, `labels`, and `replay`.
+- Feature rebuild: 11999 persisted bars read, 11999 features written, 140 feature windows cleared.
+- Candidate rebuild: final all-interval pass read 11999 features, wrote 14976 candidate rows, and cleared 140 candidate windows.
+- Label rebuild: final all-interval pass read 14976 candidate rows, wrote 2088 label rows, and cleared 140 label windows. Skipped or unobserved candidates were not counted as losses.
+- Small replay scope: `SPY,QQQ,AAPL,NVDA`, `1min`, strict stale inputs clean.
+- Optional default intraday replay: all default symbols on `1min,5min,15min`.
+- Daily replay cleanup: 40 `1day` replay windows marked clean as `candidate_market_replay_is_intraday_only`; future `1day` bar upserts no longer create replay dirty windows.
+- Final dirty-window audit: 0 dirty windows.
+- Default freshness: `STALE`, warnings only `freshness_stale_required_data`.
+- Research-scope freshness: `READY`, no warnings.
+- Strict research dry run: `research_cycle_b3e371c34dccba95c8eb29ff3e657bca`, blocked `false`, diagnostic run not needed.
+
+Detailed records:
+
+- `docs/status/PHASE_19_COMPLETION_2026-07-03.md`
+- `docs/status/PHASE_19_DIRTY_WINDOW_AUDIT_2026-07-03.md`
+- `docs/status/PHASE_19_REBUILD_RESULTS_2026-07-03.md`
+- `docs/status/PHASE_19_RESEARCH_CYCLE_DRY_RUN_2026-07-03.md`
+- `docs/live-data-artifact-readiness.md`
 
 ## Phase 18 Live FMP Verification Result
 

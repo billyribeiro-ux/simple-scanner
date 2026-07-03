@@ -11,6 +11,10 @@ The scheduler is a bounded local queue for research-cycle preparation only. Phas
 - `research_cycle_run`
 - `export_research_cycle`
 - `export_operations_status`
+- `rebuild_features`
+- `rebuild_candidates`
+- `rebuild_labels`
+- `run_replay`
 
 ## Job Statuses
 
@@ -111,3 +115,14 @@ FMP jobs require `FMP_API_KEY`; if it is missing, the job becomes `BLOCKED` with
 ## Phase 17 Scheduler Result
 
 The 2026-07-03 Phase 17 run did not execute live FMP scheduler jobs because `FMP_API_KEY` was missing. General scheduler status, one-shot worker, and stale recovery commands passed with zero queued, running, or recovered jobs. Live FMP scheduler verification remains blocked until the runtime key is present and endpoint reviews are ready.
+
+## Phase 19 Artifact Readiness Jobs
+
+Phase 19 added local-only rebuild jobs:
+
+- `rebuild_features`: builds persisted features from persisted bars.
+- `rebuild_candidates`: builds persisted candidates from persisted features.
+- `rebuild_labels`: builds labels from persisted bars, features, and candidates.
+- `run_replay`: runs candidate market replay for intraday intervals, or marks `1day` replay windows as not applicable.
+
+These jobs do not call FMP, require no API key, store no secrets, activate no model, and route no orders. The final Phase 19 run used the same bounded behavior and left dirty windows at 0.

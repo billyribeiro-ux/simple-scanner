@@ -64,3 +64,14 @@ Bounded live FMP seed succeeded on 2026-07-03. `GET /data/quality-report` now re
 - Quote snapshots: 10.
 
 The quality and freshness reports intentionally remain conservative. Current freshness is `STALE` because strict age thresholds and dirty build windows are still active after ingestion.
+
+## Phase 19 Operator Result
+
+Phase 19 removed the dirty-window portion of the quality/freshness blocker:
+
+- Initial dirty windows: 560.
+- Final dirty windows: 0.
+- Default freshness remains `STALE` from bar age only.
+- Research-scope freshness is `READY`.
+
+Use `GET /pipeline/dirty-windows` for an exportable artifact-specific audit before and after rebuilds. Use `docs/live-data-artifact-readiness.md` for the local-only rebuild order.

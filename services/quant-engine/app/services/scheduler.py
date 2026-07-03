@@ -12,6 +12,7 @@ from typing import Any
 from app.config import get_settings
 from app.data.symbols import normalize_symbols
 from app.db.repositories import RepositoryRegistry
+from app.services.artifact_readiness import ArtifactReadinessService
 from app.services.fmp_pipeline import FMPLiveDataService
 from app.services.research import ResearchCycleService, ResearchStatusService
 from app.services.workflows import DataQualityService, ExportWorkflowService
@@ -23,6 +24,10 @@ SCHEDULER_JOB_TYPES = {
     "data_quality_report",
     "export_research_cycle",
     "export_operations_status",
+    "rebuild_features",
+    "rebuild_candidates",
+    "rebuild_labels",
+    "run_replay",
     "fmp_capability_check",
     "fmp_quote_snapshot",
     "fmp_eod_refresh",
@@ -405,6 +410,8 @@ class SchedulerService:
             return self._export_research_cycle(payload)
         if job_type == "export_operations_status":
             return self._export_operations_status()
+        if job_type in {"rebuild_features", "rebuild_candidates", "rebuild_labels", "run_replay"}:
+            return self._artifact_rebuild_job(job_type, payload)
         if job_type in {
             "fmp_capability_check",
             "fmp_quote_snapshot",
@@ -465,6 +472,18 @@ class SchedulerService:
             session=str(payload.get("session") or "rth"),
         )
         return {"status": "ok", "report": report, "warnings": report.get("warnings") or []}
+
+    def _artifact_rebuild_job(self, job_type: str, payload: dict[str, Any]) -> dict[str, Any]:
+        service = ArtifactReadinessService(self.repos)
+        if job_type == "rebuild_features":
+            return service.rebuild_features(payload) | {"model_activation_unchanged": True, "no_broker_execution": True}
+        if job_type == "rebuild_candidates":
+            return service.rebuild_candidates(payload) | {"model_activation_unchanged": True, "no_broker_execution": True}
+        if job_type == "rebuild_labels":
+            return service.rebuild_labels(payload) | {"model_activation_unchanged": True, "no_broker_execution": True}
+        if job_type == "run_replay":
+            return service.rebuild_replay(payload) | {"model_activation_unchanged": True, "no_broker_execution": True}
+        return {"status": "error", "reason": "unsupported_scheduler_job_type", "job_type": job_type}
 
     def _export_research_cycle(self, payload: dict[str, Any]) -> dict[str, Any]:
         cycle_id = payload.get("research_cycle_id")

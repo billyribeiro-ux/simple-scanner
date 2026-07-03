@@ -47,7 +47,7 @@ Open `http://localhost:5173`.
 1. Create a `research_cycle_dry_run` job.
 2. Run the job.
 3. If the job is `BLOCKED`, inspect the reason and warnings.
-4. If stale windows block the cycle, rebuild data/features/labels/replay artifacts or explicitly decide whether `allow_stale=true` is acceptable.
+4. If stale windows block the cycle, run the live-data artifact-readiness audit and rebuild sequence before considering any diagnostic `allow_stale=true` run.
 5. If `refresh_data=true` blocks because `FMP_API_KEY` is missing, either configure the key outside tracked files or rerun without refresh.
 
 ## Run A Controlled Cycle
@@ -121,3 +121,29 @@ Current local data state after Phase 18:
 - Research cycles should block by default unless `allow_stale=true` is an explicit diagnostic decision.
 
 Daily next step: run freshness first, rebuild stale artifacts where needed, then run research dry-runs before any full controlled cycle.
+
+## Phase 19 Daily Artifact Readiness
+
+After any FMP seed or incremental refresh, run:
+
+```bash
+curl -s 'http://localhost:8000/pipeline/dirty-windows?symbols=AMZN,AAPL,TSLA,SPY,QQQ,IWM,NVDA,GOOGL,BABA,SHOP&intervals=1min,5min,15min,1day&export=true'
+```
+
+Then rebuild in order:
+
+1. `POST /pipeline/rebuild/features`
+2. `POST /pipeline/rebuild/candidates`
+3. `POST /pipeline/rebuild/labels`
+4. `POST /pipeline/rebuild/replay`
+5. `POST /data/freshness/check`
+6. `POST /research/cycles/{research_cycle_id}/dry-run`
+
+Equivalent scheduler jobs are `rebuild_features`, `rebuild_candidates`, `rebuild_labels`, `run_replay`, `data_freshness_check`, and `research_cycle_dry_run`.
+
+Current Phase 19 state:
+
+- Dirty windows: 0.
+- Default freshness: `STALE` due wall-clock bar age.
+- Research-scope freshness: `READY`.
+- Strict research dry run: passed with `allow_stale=false`.

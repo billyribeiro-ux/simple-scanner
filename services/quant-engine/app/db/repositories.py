@@ -1544,12 +1544,14 @@ class BarRepository:
             source = str(payload.get("source") or "unknown")
             row_id = _stable_id("bar", symbol, interval, timestamp_utc, source)
             seen_symbols.add(symbol)
-            for artifact_type, version in (
+            dirty_artifacts = [
                 ("features", "features.v2.no_leakage"),
                 ("candidates", "candidate_signals.v1"),
                 ("labels", "labels.v2.no_leakage"),
-                ("replay", "candidate_market_replay"),
-            ):
+            ]
+            if interval in {"1min", "5min", "15min"}:
+                dirty_artifacts.append(("replay", "candidate_market_replay"))
+            for artifact_type, version in dirty_artifacts:
                 key = (artifact_type, symbol, interval, session_date, version)
                 current = dirty_windows.setdefault(key, {"start": timestamp_utc, "end": timestamp_utc})
                 current["start"] = min(current["start"], timestamp_utc)
@@ -5438,6 +5440,82 @@ class PipelineBuildWindowRepository:
                 if str(self.store.path) != ":memory:":
                     connection.close()
         return rows
+
+    def mark_window_built(
+        self,
+        *,
+        artifact_type: str,
+        symbol: str,
+        interval: str,
+        session_date: str | None,
+        version: str,
+        start: datetime | str | None = None,
+        end: datetime | str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        now = _now_iso()
+        normalized_symbol = normalize_symbol(symbol)
+        session_date_value = str(session_date or _date_text(start or end) or "")
+        start_text = start.isoformat() if isinstance(start, datetime) else (str(start) if start is not None else None)
+        end_text = end.isoformat() if isinstance(end, datetime) else (str(end) if end is not None else None)
+        build_window_id = _stable_id(
+            "build_window",
+            artifact_type,
+            normalized_symbol,
+            str(interval),
+            session_date_value,
+            version,
+        )
+        payload = {
+            "artifact_type": artifact_type,
+            "symbol": normalized_symbol,
+            "interval": str(interval),
+            "session_date": session_date_value,
+            "start": start_text,
+            "end": end_text,
+            "version": version,
+            "dirty": False,
+            "metadata": metadata or {},
+        }
+        with self.store._lock:
+            connection = self.store.connect()
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO pipeline_build_windows(
+                        build_window_id, artifact_type, symbol, interval, session_date, start, "end",
+                        version, dirty, stale_reason, payload_json, created_at, updated_at
+                    )
+                    VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(artifact_type, symbol, interval, session_date, version) DO UPDATE SET
+                        start=excluded.start,
+                        "end"=excluded."end",
+                        dirty=excluded.dirty,
+                        stale_reason=excluded.stale_reason,
+                        payload_json=excluded.payload_json,
+                        updated_at=excluded.updated_at
+                    """,
+                    (
+                        build_window_id,
+                        artifact_type,
+                        normalized_symbol,
+                        str(interval),
+                        session_date_value,
+                        start_text,
+                        end_text,
+                        version,
+                        False,
+                        None,
+                        _json_dumps(payload),
+                        now,
+                        now,
+                    ),
+                )
+                connection.commit()
+            finally:
+                if str(self.store.path) != ":memory:":
+                    connection.close()
+        return payload | {"build_window_id": build_window_id}
 
     def _row(self, row: Any) -> dict[str, Any]:
         data = dict(row)

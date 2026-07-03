@@ -48,6 +48,7 @@ from app.schemas.market import (
     SensitivityRequest,
     TrainRequest,
 )
+from app.services.artifact_readiness import ArtifactReadinessService
 from app.services.fmp_pipeline import FMPLiveDataService
 from app.services.research import ModelProposalService, ResearchCycleService, ResearchStatusService
 from app.services.scheduler import SchedulerService
@@ -82,6 +83,12 @@ def _request_date(request: ExportRequest | None) -> date | None:
     if request is None or request.date is None:
         return None
     return date.fromisoformat(request.date)
+
+
+def _csv_query(value: str | None) -> list[str] | None:
+    if value is None:
+        return None
+    return [part.strip() for part in value.split(",") if part.strip()]
 
 
 @router.get("/health")
@@ -654,6 +661,46 @@ async def export_replay_window_set(window_set_id: str) -> dict[str, object]:
 @router.get("/pipeline/status")
 async def pipeline_status() -> dict[str, object]:
     return BacktestService(repos()).pipeline_status()
+
+
+@router.get("/pipeline/dirty-windows")
+async def pipeline_dirty_windows(
+    symbols: str | None = None,
+    intervals: str | None = None,
+    export: bool = False,
+    kind: str = "json",
+) -> dict[str, object]:
+    return ArtifactReadinessService(repos()).dirty_window_audit(
+        symbols=_csv_query(symbols),
+        intervals=_csv_query(intervals),
+        export=export,
+        kind=kind,
+    )
+
+
+@router.post("/pipeline/rebuild/features")
+async def rebuild_pipeline_features(request: dict[str, object] | None = None) -> dict[str, object]:
+    return ArtifactReadinessService(repos()).rebuild_features(dict(request or {}))
+
+
+@router.post("/pipeline/rebuild/candidates")
+async def rebuild_pipeline_candidates(request: dict[str, object] | None = None) -> dict[str, object]:
+    return ArtifactReadinessService(repos()).rebuild_candidates(dict(request or {}))
+
+
+@router.post("/pipeline/rebuild/labels")
+async def rebuild_pipeline_labels(request: dict[str, object] | None = None) -> dict[str, object]:
+    return ArtifactReadinessService(repos()).rebuild_labels(dict(request or {}))
+
+
+@router.post("/pipeline/rebuild/replay")
+async def rebuild_pipeline_replay(request: dict[str, object] | None = None) -> dict[str, object]:
+    return ArtifactReadinessService(repos()).rebuild_replay(dict(request or {}))
+
+
+@router.post("/pipeline/rebuild/live-data-readiness")
+async def rebuild_live_data_readiness(request: dict[str, object] | None = None) -> dict[str, object]:
+    return ArtifactReadinessService(repos()).run_readiness_sequence(dict(request or {}))
 
 
 @router.post("/research/cycles")
