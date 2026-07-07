@@ -1,6 +1,6 @@
 # Operational Hardening
 
-Status date: 2026-07-02
+Status date: 2026-07-04
 
 ## Scope
 
@@ -38,7 +38,7 @@ Root package scripts and Playwright web-server startup call `corepack pnpm` inte
 Postgres/Timescale targets Alembic revision:
 
 ```text
-0010_phase14_scheduler_worker
+0012_phase16_fmp_freshness
 ```
 
 `make db-inspect` expects the Phase 14 table set, replay sensitivity/comparison indexes, replay-aware evidence/score-audit indexes, calibration/drift/window/review/research-governance indexes, scheduler and scheduler-lease indexes, JSON columns, and `bars` as a Timescale hypertable when the extension is available.
@@ -46,7 +46,7 @@ Postgres/Timescale targets Alembic revision:
 Expected verified result after migration:
 
 ```text
-alembic_version=0010_phase14_scheduler_worker
+alembic_version=0012_phase16_fmp_freshness
 missing_tables=none
 missing_indexes=none
 missing_constraints=none
@@ -188,3 +188,15 @@ Model evidence cells, score audits, and exports must contain no FMP keys, databa
 ## Phase 16 Provider Hardening
 
 Seed ingestion is review-gated and bounded to 10 symbols and five intraday days. Freshness reports are persisted locally and never contain API keys. Scheduler seed/freshness jobs remain explicit operator jobs.
+
+## Phase 21R Evidence Store Hardening
+
+Evidence-mode Postgres now requires an explicit role contract:
+
+- `DATABASE_URL` with `AMD_DB_ROLE=evidence` for runtime evidence;
+- `TEST_DATABASE_URL` with `AMD_DB_ROLE=test` for mutating Postgres regressions;
+- `AMD_ALLOW_TEST_FIXTURES_IN_EVIDENCE=false` for certification.
+
+`make api-smoke-postgres` and `make repository-parity-test` use the isolated test database by default. Evidence-mode repository writes reject fixture-like IDs and references such as `parity-*`, `test-*`, `smoke-*`, `fixture-*`, `parity-model-accepted`, `parity-proposal`, and `parity-review`.
+
+Use `make evidence-db-audit` before certification. If fixture rows are found in evidence mode, preserve the DB, record the audit, and restore or regenerate from a clean source. Do not silently delete evidence rows to make a phase pass.

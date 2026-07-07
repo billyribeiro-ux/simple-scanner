@@ -28,3 +28,14 @@ The audit included persisted summaries for bars, quote snapshots, features, cand
 ## Notes
 
 Daily `1day` bars no longer create replay dirty windows. Candidate market replay is intraday-only for V1; the 40 existing daily replay windows were marked clean with metadata reason `candidate_market_replay_is_intraday_only`, not by pretending a daily replay was executed.
+
+## Phase 19A Audit Addendum - 2026-07-04
+
+Phase 19A could not verify these export files or dirty-window rows from the current runtime. `exports/` contains only `.gitkeep`, and the current SQLite `pipeline_build_windows` table has 0 rows because it was created fresh during the July 4 audit. Treat the Phase 19 dirty-window counts as committed documentation until the original runtime artifacts are recovered or regenerated.
+
+## Phase 19B Audit Addendum - 2026-07-04
+
+Phase 19B also did not recover the July 3 dirty-window exports or runtime rows. No regenerated audit was run because the current runtime has 0 real bars/quotes and Postgres migration remains blocked.
+## Phase 19C Dirty Window Result - 2026-07-04
+
+After synthetic verification rows were cleaned, `pipeline_build_windows` contained zero rows and `make db-query-diagnostics` reported `dirty_windows=none`. This is not an artifact-readiness pass because there are also zero real bars, features, candidates, labels, replay rows, and exports.

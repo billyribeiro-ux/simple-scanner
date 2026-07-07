@@ -23,7 +23,7 @@ def _repo(tmp_path, monkeypatch, *, key: str | None = None) -> RepositoryRegistr
     if key:
         monkeypatch.setenv("FMP_API_KEY", key)
     else:
-        monkeypatch.delenv("FMP_API_KEY", raising=False)
+        monkeypatch.setenv("FMP_API_KEY", "")
     get_settings.cache_clear()
     reset_repository_registry()
     return RepositoryRegistry(settings=get_settings())
@@ -117,6 +117,36 @@ class FakeProvider:
         )
 
 
+class TruncatingIntradayProvider(FakeProvider):
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict[str, object]]] = []
+
+    async def request_endpoint(self, endpoint_key, **kwargs):
+        self.calls.append((endpoint_key, kwargs))
+        if endpoint_key.startswith("intraday_"):
+            day = kwargs["end"].astimezone(UTC).date().isoformat()
+            return _response(
+                endpoint_key,
+                [{"date": f"{day} 09:30:00", "open": 100, "high": 101, "low": 99, "close": 100.5, "volume": 1000}],
+            )
+        return await super().request_endpoint(endpoint_key, **kwargs)
+
+    def _bar_from_row(self, symbol, interval, row):
+        timestamp_et = datetime.fromisoformat(str(row["date"])).replace(tzinfo=ET)
+        return Bar(
+            symbol=symbol,
+            interval=interval,
+            timestamp_utc=timestamp_et.astimezone(UTC),
+            timestamp_et=timestamp_et,
+            open=float(row["open"]),
+            high=float(row["high"]),
+            low=float(row["low"]),
+            close=float(row["close"]),
+            volume=int(row["volume"]),
+            source="fmp",
+        )
+
+
 def test_fmp_client_header_auth_only(monkeypatch) -> None:
     monkeypatch.setenv("FMP_API_KEY", "test-only-key")
     get_settings.cache_clear()
@@ -156,6 +186,24 @@ def test_ingest_intraday_idempotent_and_quality_coverage(tmp_path, monkeypatch) 
     quality = service.coverage_report(symbols=["SPY"], intervals=["1min"], start=start - timedelta(days=1), end=end)
     assert quality["summary"]["source_breakdown"]["fmp"] == 1
     assert quality["latest_bars"][0]["symbol"] == "SPY"
+
+
+def test_intraday_ingestion_chunks_daily_to_recover_provider_window_truncation(tmp_path, monkeypatch) -> None:
+    repo = _repo(tmp_path, monkeypatch, key="test-only-key")
+    provider = TruncatingIntradayProvider()
+    service = FMPLiveDataService(repo, provider=provider)
+    start = datetime(2026, 6, 23, tzinfo=UTC)
+    end = datetime(2026, 6, 24, 23, 59, 59, tzinfo=UTC)
+
+    result = asyncio.run(service.ingest_intraday(["SPY"], ["1min"], start, end))
+    bars = repo.bars.query(symbols=["SPY"], intervals=["1min"], start=start, end=end)
+
+    assert result["status"] == "COMPLETED"
+    assert result["records_fetched"] == 2
+    assert result["records_inserted"] == 2
+    assert len([call for call in provider.calls if call[0] == "intraday_1min"]) == 2
+    assert {bar.timestamp_et.date().isoformat() for bar in bars} == {"2026-06-23", "2026-06-24"}
+    assert "intraday_daily_request_chunking_enabled" in result["warnings"]
 
 
 def test_quote_eod_capability_exports(tmp_path, monkeypatch) -> None:

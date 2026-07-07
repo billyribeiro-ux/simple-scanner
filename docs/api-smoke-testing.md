@@ -1,6 +1,6 @@
 # API Smoke Testing
 
-Status date: 2026-07-02
+Status date: 2026-07-04
 
 ## Command
 
@@ -16,15 +16,25 @@ The default smoke is SQLite:
 cd services/quant-engine && PYTHONPATH=. .venv/bin/python -m pytest tests/test_persisted_api_smoke.py::test_persisted_api_vertical_slice_sqlite
 ```
 
-The Postgres smoke uses the local compose database on host port `15432` unless `DATABASE_URL` is supplied.
+The Postgres smoke uses the isolated test database `adaptive_market_decoder_test` on local compose port `15432` unless `TEST_DATABASE_URL` is supplied.
 
-Phase 14 verification on 2026-07-02 ran `make api-smoke-postgres` successfully against Alembic head `0010_phase14_scheduler_worker`.
+Phase 14 verification on 2026-07-02 ran `make api-smoke-postgres` successfully against Alembic head `0010_phase14_scheduler_worker`. Phase 21R verification on 2026-07-04 ran `make api-smoke-postgres` against isolated test DB Alembic head `0012_phase16_fmp_freshness`.
 
 ## Design
 
-The smoke test uses FastAPI `TestClient`, temporary export/model directories, and a mocked FMP provider. The SQLite path uses a temporary SQLite repository. The Postgres path uses the migrated local compose Postgres/TimescaleDB database and clears test data between runs. It does not require internet, live FMP, or secrets.
+The smoke test uses FastAPI `TestClient`, temporary export/model directories, and a mocked FMP provider. The SQLite path uses a temporary SQLite repository. The Postgres path uses the migrated local compose Postgres/TimescaleDB test database and clears test data between runs. It does not require internet, live FMP, or secrets.
 
 The test sets a non-secret sentinel `FMP_API_KEY` only to exercise scanner gating. It verifies the sentinel is absent from SQLite files, exported CSV/XLSX/JSON files, active model artifacts, and persisted provider metadata.
+
+## Phase 21R Isolation Requirement
+
+`make api-smoke-postgres` must not write fixtures to the evidence database. It now prepares the test DB with `make test-db-smoke`, then runs with:
+
+- `DATABASE_URL=$TEST_DATABASE_URL`
+- `TEST_DATABASE_URL` set to the isolated Postgres test DB
+- `AMD_DB_ROLE=test`
+
+Evidence-mode writes reject fixture-like IDs by default. Run `make evidence-guard-test` to verify the guard and `make evidence-db-audit` to confirm the evidence DB did not gain new fixture rows.
 
 ## Route Coverage
 

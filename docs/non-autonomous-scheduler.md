@@ -126,3 +126,10 @@ Phase 19 added local-only rebuild jobs:
 - `run_replay`: runs candidate market replay for intraday intervals, or marks `1day` replay windows as not applicable.
 
 These jobs do not call FMP, require no API key, store no secrets, activate no model, and route no orders. The final Phase 19 run used the same bounded behavior and left dirty windows at 0.
+
+## Phase 19A Audit Result
+
+On 2026-07-04, `make scheduler-test`, `make scheduler-status`, `make scheduler-worker-once`, and `make scheduler-recover-stale` passed against a fresh SQLite runtime with zero queued jobs. This verifies scheduler code behavior, but not the original July 3 Phase 19 scheduler/runtime evidence. Phase 19 remains `EVIDENCE_PENDING` until runtime artifacts are recovered or regenerated.
+## Phase 19C Scheduler Note - 2026-07-04
+
+Scheduler and research jobs remain non-autonomous. Phase 19C did not add automatic model activation or execution. Strict research dry-run evidence is blocked by data freshness, and scheduler-driven ingestion still requires an operator-provided FMP key plus reviewed capabilities.

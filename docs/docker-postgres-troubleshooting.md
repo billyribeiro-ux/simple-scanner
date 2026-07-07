@@ -96,3 +96,12 @@ make scheduler-test
 ```
 
 SQLite fallback tests do not prove local Postgres health. They only preserve the local repository contract until Docker is reachable.
+## Redis Host Port - Phase 19C
+
+If host port `6379` is already allocated, leave the owning service alone and use this project's configurable Redis host port:
+
+```bash
+REDIS_HOST_PORT=16379 docker compose up -d redis
+```
+
+The compose default is now `16379:6379`, and `make doctor` reports the configured Redis host port.

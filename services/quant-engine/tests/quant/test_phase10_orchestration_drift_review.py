@@ -194,6 +194,59 @@ def test_model_review_report_blocks_on_calibration_drift_without_activation(tmp_
     assert repo.active_models.get_active() is None
 
 
+def test_model_review_blocks_required_bounded_sensitivity_without_activation(tmp_path) -> None:
+    repo = RepositoryRegistry(db_path=tmp_path / "review-sensitivity.sqlite3")
+    repo.model_runs.save(_model())
+    repo.validation_reports.save(
+        {
+            "model_version": "phase10-model",
+            "summary": {"average_r": 0.3},
+            "windows": [],
+            "activation_decision": "accepted",
+            "rejection_reasons": [],
+            "created_at": datetime.now(UTC).isoformat(),
+        },
+        model_version="phase10-model",
+    )
+    sensitivity = repo.replay_sensitivity.save(
+        {
+            "sensitivity_run_id": "sensitivity-bounded",
+            "replay_run_id": "replay-bounded",
+            "created_at": datetime.now(UTC).isoformat(),
+            "config": {"coverage_mode": "TIERED_ESSENTIAL"},
+            "coverage_mode": "TIERED_ESSENTIAL",
+            "completion_status": "BOUNDED_COMPLETE",
+            "configured_grid_complete": True,
+            "full_default_grid_complete": False,
+            "partial_grid_disclosure": True,
+            "planned_scenario_count": 4,
+            "completed_scenario_count": 4,
+            "remaining_scenario_count": 0,
+            "scenario_count": 4,
+            "passed_scenario_count": 4,
+            "failed_scenario_count": 0,
+            "robustness_score": 1.0,
+            "pass_fail": "fail",
+            "coverage_warnings": ["bounded_sensitivity_not_full_default_grid"],
+            "fragility_flags": [],
+            "gate_results": {"configured_grid_complete": True, "full_default_grid_complete": False},
+            "scenarios": [],
+        }
+    )
+    review = ModelReviewReportService(repo).create(
+        "phase10-model",
+        {"sensitivity_run_ids": [sensitivity["sensitivity_run_id"]], "sensitivity_required": True},
+    )
+    assert review["readiness_status"] == "BLOCK"
+    assert "activation_grade_sensitivity_missing" in review["readiness_reasons"]
+    assert "sensitivity_scope_not_full_grid" in review["readiness_reasons"]
+    assert "sensitivity_gate_failed" in review["readiness_reasons"]
+    assert review["summary"]["sensitivity_report_count"] == 1
+    assert review["sensitivity_reports"][0]["partial_grid_disclosure"] is True
+    assert review["sensitivity_reports"][0]["sensitivity_classification"] == "diagnostic"
+    assert repo.active_models.get_active() is None
+
+
 def test_data_quality_report_detects_gaps_invalid_rows_and_dirty_windows(tmp_path) -> None:
     repo = RepositoryRegistry(db_path=tmp_path / "quality.sqlite3")
     start = datetime(2026, 6, 1, 13, 30, tzinfo=UTC)

@@ -1,6 +1,6 @@
 # Persistence Architecture
 
-Status date: 2026-07-02
+Status date: 2026-07-04
 
 ## Summary
 
@@ -12,7 +12,9 @@ This is still a scanner, research, validation, backtest, model metadata, signal,
 
 - Local default: `data/local_repo.sqlite3`, ignored by git along with SQLite WAL sidecars.
 - Configured SQLite: `sqlite:///...` paths, including `AMD_SQLITE_PATH` for local test/runtime overrides.
-- PostgreSQL runtime: sync SQLAlchemy/psycopg repository store against Alembic revision `0010_phase14_scheduler_worker` on local host port `15432`.
+- PostgreSQL runtime: sync SQLAlchemy/psycopg repository store against Alembic revision `0012_phase16_fmp_freshness` on local host port `15432`.
+- Evidence Postgres runtime: `DATABASE_URL` with `AMD_DB_ROLE=evidence`.
+- Isolated Postgres tests: `TEST_DATABASE_URL` with `AMD_DB_ROLE=test`.
 - Export artifacts: `exports/`, ignored except `.gitkeep`.
 - Model artifacts: `model_artifacts/`, ignored except `.gitkeep`.
 - FMP secrets: `FMP_API_KEY` from environment or ignored env files only.
@@ -56,7 +58,7 @@ It exposes concrete repositories for:
 
 The implementation is synchronous and transaction-scoped for both SQLite and PostgreSQL. API routes call the repository registry directly because the local V1 workload is small; async network I/O remains isolated in FMP provider calls.
 
-`RepositoryRegistry.info()` returns a safe backend descriptor used by `/health`, `/config`, and `make doctor`. It reports backend type, runtime mode, sanitized database URL kind, and local SQLite path without printing connection strings.
+`RepositoryRegistry.info()` returns a safe backend descriptor used by `/health`, `/config`, and `make doctor`. It reports backend type, runtime mode, database role, fixture-guard status, sanitized database URL kind, and local SQLite path without printing connection strings.
 
 Backend selection is explicit:
 
@@ -242,3 +244,19 @@ PostgreSQL now verifies Alembic revision `0012_phase16_fmp_freshness`. SQLite bo
 - `data_freshness_reports`.
 
 `quote_snapshots` stores durable quote snapshots from FMP batch quote ingestion without secrets. `data_freshness_reports` stores local readiness reports for bars, quote snapshots, dirty windows, capability review state, warnings, and recommendations.
+## Phase 19C Alembic Repair - 2026-07-04
+
+Revision `0001_initial` is now a static baseline migration and no longer imports `app.db.schema.metadata`. Later migrations retain ownership of replay, model evidence, calibration, research governance, scheduler, FMP provider, quote snapshot, and freshness tables.
+
+The clean Postgres path was verified with `make db-migrate`, `make db-inspect`, `make db-query-diagnostics`, `make api-smoke-postgres`, and `make repository-parity-test`. The current expected Alembic head remains `0012_phase16_fmp_freshness`.
+
+## Phase 21R Evidence/Test Role Update - 2026-07-04
+
+Phase 21R added an explicit database-role contract to prevent mutating regression fixtures from entering the runtime evidence database.
+
+- Evidence mode uses `DATABASE_URL` and `AMD_DB_ROLE=evidence`.
+- Test mode uses `TEST_DATABASE_URL` and `AMD_DB_ROLE=test`.
+- Evidence mode rejects fixture-like writes such as `parity-*`, `test-*`, `smoke-*`, `fixture-*`, `parity-model-accepted`, `parity-proposal`, and `parity-review` unless `AMD_ALLOW_TEST_FIXTURES_IN_EVIDENCE=true`.
+- The override is for emergency local debugging only and is not acceptable for certification evidence.
+
+Current Phase 21R result: isolation is repaired, but the default evidence DB remains contaminated and must not be used as certification evidence until restored or regenerated from a clean source.

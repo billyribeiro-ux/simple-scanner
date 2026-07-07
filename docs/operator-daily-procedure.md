@@ -147,3 +147,10 @@ Current Phase 19 state:
 - Default freshness: `STALE` due wall-clock bar age.
 - Research-scope freshness: `READY`.
 - Strict research dry run: passed with `allow_stale=false`.
+
+## Phase 19A Daily Audit Note
+
+If this checkout is used after 2026-07-04, do not assume the July 3 runtime evidence is present. Phase 19A found a fresh empty SQLite DB, missing Phase 19 export files, a blocked Postgres migration, and a Redis port conflict. Resolve runtime health and recover or regenerate evidence before treating Phase 19 as certified complete.
+## Phase 19C Operator Note - 2026-07-04
+
+Use `make doctor` before any live-data work. The backend venv should report Python `3.14.6`, Redis should report host port `16379` unless explicitly overridden, and Postgres should migrate to `0012_phase16_fmp_freshness`. Phase 19 remains `BLOCKED_NO_DATA` until real bars are restored or FMP seed ingestion runs with an approved key.

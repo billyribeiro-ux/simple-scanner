@@ -262,6 +262,71 @@ def _env_flag(name: str) -> bool:
     return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+TEST_FIXTURE_PREFIXES = ("parity-", "test-", "smoke-", "fixture-")
+TEST_FIXTURE_EXACT = {"parity-model-accepted", "parity-proposal", "parity-review"}
+TEST_FIXTURE_SUBSTRINGS = ("model-accepted test",)
+
+
+def _store_db_role(store: Any) -> str:
+    role = str(getattr(store, "db_role", "") or "").strip().lower()
+    return role or "local"
+
+
+def _allow_test_fixtures_in_evidence(store: Any) -> bool:
+    return bool(getattr(store, "allow_test_fixtures_in_evidence", False)) or _env_flag(
+        "AMD_ALLOW_TEST_FIXTURES_IN_EVIDENCE"
+    )
+
+
+def _fixture_matches(value: Any) -> list[str]:
+    matches: list[str] = []
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in TEST_FIXTURE_EXACT:
+            matches.append(value)
+        elif lowered.startswith(TEST_FIXTURE_PREFIXES):
+            matches.append(value)
+        elif any(fragment in lowered for fragment in TEST_FIXTURE_SUBSTRINGS):
+            matches.append(value)
+        return matches
+    if isinstance(value, dict):
+        for key, item in value.items():
+            matches.extend(_fixture_matches(key))
+            matches.extend(_fixture_matches(item))
+        return matches
+    if isinstance(value, (list, tuple, set)):
+        for item in value:
+            matches.extend(_fixture_matches(item))
+    return matches
+
+
+def _assert_no_test_fixtures_in_evidence(store: Any, payload: Any, context: str) -> None:
+    if _store_db_role(store) != "evidence" or _allow_test_fixtures_in_evidence(store):
+        return
+    matches = sorted(set(_fixture_matches(payload)))
+    if not matches:
+        return
+    raise PersistenceConfigurationError(
+        f"Refusing to write test fixture payload to evidence database in {context}",
+        {
+            "persistence_backend": getattr(store, "backend", "unknown"),
+            "backend": getattr(store, "backend", "unknown"),
+            "runtime_mode": "fixture_guard_blocked",
+            "runtime": "fixture_guard_blocked",
+            "database_configured": True,
+            "database_url_configured": hasattr(store, "database_url"),
+            "database_url_kind": "postgresql" if hasattr(store, "database_url") else "sqlite",
+            "database_reachable": True,
+            "db_role": _store_db_role(store),
+            "fixture_guard": "blocked",
+            "fixture_match_count": len(matches),
+            "fixture_matches": matches[:10],
+            "fallback_enabled": _env_flag("AMD_ALLOW_SQLITE_FALLBACK"),
+            "fallback_reason": None,
+        },
+    )
+
+
 def _sync_postgres_url(database_url: str) -> str:
     if database_url.startswith("postgres://"):
         return "postgresql+psycopg://" + database_url.removeprefix("postgres://")
@@ -327,8 +392,11 @@ class _Result:
 class SQLiteStore:
     """Small durable local store used by the API path when Postgres is not configured."""
 
-    def __init__(self, path: Path | str) -> None:
+    def __init__(self, path: Path | str, db_role: str = "local", allow_test_fixtures_in_evidence: bool = False) -> None:
         self.path = Path(path) if str(path) != ":memory:" else Path(":memory:")
+        self.backend = "sqlite"
+        self.db_role = db_role
+        self.allow_test_fixtures_in_evidence = allow_test_fixtures_in_evidence
         self._memory_connection: sqlite3.Connection | None = None
         self._lock = RLock()
         self.initialize()
@@ -1398,7 +1466,12 @@ class PostgresConnection:
 
 
 class PostgresStore:
-    def __init__(self, database_url: str) -> None:
+    def __init__(
+        self,
+        database_url: str,
+        db_role: str = "evidence",
+        allow_test_fixtures_in_evidence: bool = False,
+    ) -> None:
         if create_engine is None:
             raise PersistenceConfigurationError(
                 "SQLAlchemy is required for PostgreSQL persistence",
@@ -1417,6 +1490,9 @@ class PostgresStore:
             )
         self.database_url = _sync_postgres_url(database_url)
         self.descriptor = _database_descriptor(self.database_url)
+        self.backend = "postgresql"
+        self.db_role = db_role
+        self.allow_test_fixtures_in_evidence = allow_test_fixtures_in_evidence
         self._lock = RLock()
         self.path = Path(":postgresql:")
         self.engine: Engine = create_engine(self.database_url, future=True)
@@ -2126,6 +2202,7 @@ class ModelRunRepository:
 
     def save(self, model: dict[str, Any], artifact_path: str | None = None) -> dict[str, Any]:
         payload = _payload(model)
+        _assert_no_test_fixtures_in_evidence(self.store, payload, "model_runs.save")
         model_version = str(payload["model_version"])
         now = _now_iso()
         created_at = str(payload.get("created_at") or now)
@@ -2364,15 +2441,48 @@ class CandidateScoreAuditRepository:
         self.store = store
 
     def save(self, audit: dict[str, Any]) -> dict[str, Any]:
-        payload = _payload(audit)
-        created_at = str(payload.get("created_at") or _now_iso())
-        score_id = str(payload.get("score_id") or _stable_id("score", payload.get("model_version"), created_at))
-        row_id = str(payload.get("id") or _stable_id("score_audit", score_id))
-        row_payload = payload | {"id": row_id, "score_id": score_id, "created_at": created_at}
+        return self.save_many([audit])[0]
+
+    def save_many(self, audits: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+        rows: list[tuple[Any, ...]] = []
+        payloads: list[dict[str, Any]] = []
+        for audit in audits:
+            payload = _payload(audit)
+            _assert_no_test_fixtures_in_evidence(self.store, payload, "candidate_score_audits.save_many")
+            created_at = str(payload.get("created_at") or _now_iso())
+            score_id = str(payload.get("score_id") or _stable_id("score", payload.get("model_version"), created_at))
+            row_id = str(payload.get("id") or _stable_id("score_audit", score_id))
+            row_payload = payload | {"id": row_id, "score_id": score_id, "created_at": created_at}
+            payloads.append(row_payload)
+            rows.append(
+                (
+                    row_id,
+                    score_id,
+                    str(row_payload["model_version"]),
+                    row_payload.get("candidate_id"),
+                    normalize_symbol(str(row_payload["symbol"])),
+                    str(row_payload.get("interval") or "1min"),
+                    _maybe_datetime(row_payload.get("timestamp_utc")).isoformat() if row_payload.get("timestamp_utc") else _now_iso(),
+                    str(row_payload.get("side") or "NO_TRADE"),
+                    str(row_payload.get("setup_type") or "unknown"),
+                    float(row_payload.get("signal_quality_score") or 0.0),
+                    str(row_payload.get("grade") or "NO_TRADE"),
+                    str(row_payload.get("action") or "SUPPRESS"),
+                    float(row_payload.get("expected_r_estimate") or 0.0),
+                    _json_dumps(row_payload.get("score_components") or {}),
+                    _json_dumps(row_payload.get("suppression_reasons") or []),
+                    _json_dumps(row_payload.get("evidence_cell_keys_used") or []),
+                    _json_dumps(row_payload.get("warnings") or row_payload.get("warning_codes") or []),
+                    _json_dumps(row_payload),
+                    created_at,
+                )
+            )
+        if not rows:
+            return []
         with self.store._lock:
             connection = self.store.connect()
             try:
-                connection.execute(
+                connection.executemany(
                     """
                     INSERT INTO candidate_score_audits(
                         id, score_id, model_version, candidate_id, symbol, interval, timestamp_utc, side,
@@ -2392,33 +2502,13 @@ class CandidateScoreAuditRepository:
                         warnings_json=excluded.warnings_json,
                         payload_json=excluded.payload_json
                     """,
-                    (
-                        row_id,
-                        score_id,
-                        str(row_payload["model_version"]),
-                        row_payload.get("candidate_id"),
-                        normalize_symbol(str(row_payload["symbol"])),
-                        str(row_payload.get("interval") or "1min"),
-                        _maybe_datetime(row_payload.get("timestamp_utc")).isoformat() if row_payload.get("timestamp_utc") else _now_iso(),
-                        str(row_payload.get("side") or "NO_TRADE"),
-                        str(row_payload.get("setup_type") or "unknown"),
-                        float(row_payload.get("signal_quality_score") or 0.0),
-                        str(row_payload.get("grade") or "NO_TRADE"),
-                        str(row_payload.get("action") or "SUPPRESS"),
-                        float(row_payload.get("expected_r_estimate") or 0.0),
-                        _json_dumps(row_payload.get("score_components") or {}),
-                        _json_dumps(row_payload.get("suppression_reasons") or []),
-                        _json_dumps(row_payload.get("evidence_cell_keys_used") or []),
-                        _json_dumps(row_payload.get("warnings") or row_payload.get("warning_codes") or []),
-                        _json_dumps(row_payload),
-                        created_at,
-                    ),
+                    rows,
                 )
                 connection.commit()
             finally:
                 if str(self.store.path) != ":memory:":
                     connection.close()
-        return row_payload
+        return payloads
 
     def list(
         self,
@@ -2614,6 +2704,7 @@ class ModelComparisonRepository:
 
     def save(self, comparison: dict[str, Any]) -> dict[str, Any]:
         payload = _payload(comparison)
+        _assert_no_test_fixtures_in_evidence(self.store, payload, "model_comparisons.save")
         created_at = str(payload.get("created_at") or _now_iso())
         comparison_id = str(payload.get("comparison_id") or _stable_id("model_comparison", payload.get("comparison_type") or "model_comparison", created_at))
         row_payload = payload | {"comparison_id": comparison_id, "created_at": created_at}
@@ -2866,6 +2957,7 @@ class CalibrationDriftRepository:
 
     def save(self, report: dict[str, Any]) -> dict[str, Any]:
         payload = _payload(report)
+        _assert_no_test_fixtures_in_evidence(self.store, payload, "model_calibration_drift.save")
         created_at = str(payload.get("created_at") or _now_iso())
         drift_report_id = str(payload.get("drift_report_id") or _stable_id("drift", payload.get("model_version"), created_at))
         windows = [dict(row) for row in payload.get("window_metrics") or payload.get("windows") or []]
@@ -2999,6 +3091,7 @@ class ModelReviewReportRepository:
 
     def save(self, report: dict[str, Any]) -> dict[str, Any]:
         payload = _payload(report)
+        _assert_no_test_fixtures_in_evidence(self.store, payload, "model_review_reports.save")
         created_at = str(payload.get("created_at") or _now_iso())
         review_report_id = str(payload.get("review_report_id") or _stable_id("model_review", payload.get("model_version"), created_at))
         row_payload = payload | {"review_report_id": review_report_id, "created_at": created_at}
@@ -3080,6 +3173,7 @@ class ResearchCycleRepository:
 
     def save(self, cycle: dict[str, Any]) -> dict[str, Any]:
         payload = _payload(cycle)
+        _assert_no_test_fixtures_in_evidence(self.store, payload, "research_cycles.save")
         now = _now_iso()
         created_at = str(payload.get("created_at") or now)
         updated_at = str(payload.get("updated_at") or now)
@@ -3211,6 +3305,11 @@ class ResearchCycleRepository:
 
     def save_artifact(self, research_cycle_id: str, artifact: dict[str, Any]) -> dict[str, Any]:
         payload = _payload(artifact)
+        _assert_no_test_fixtures_in_evidence(
+            self.store,
+            {"research_cycle_id": research_cycle_id, **payload},
+            "research_cycles.save_artifact",
+        )
         created_at = str(payload.get("created_at") or _now_iso())
         source_id = payload.get("source_id") or payload.get("artifact_id")
         artifact_type = str(payload.get("artifact_type") or "artifact")
@@ -3275,6 +3374,7 @@ class ChampionChallengerComparisonRepository:
 
     def save(self, comparison: dict[str, Any]) -> dict[str, Any]:
         payload = _payload(comparison)
+        _assert_no_test_fixtures_in_evidence(self.store, payload, "champion_challenger_comparisons.save")
         created_at = str(payload.get("created_at") or _now_iso())
         comparison_id = str(payload.get("comparison_id") or _stable_id("champion_challenger", payload.get("champion_model_version"), payload.get("challenger_model_version"), created_at))
         row_payload = payload | {"comparison_id": comparison_id, "created_at": created_at}
@@ -3351,6 +3451,7 @@ class ModelProposalRepository:
 
     def save(self, proposal: dict[str, Any]) -> dict[str, Any]:
         payload = _payload(proposal)
+        _assert_no_test_fixtures_in_evidence(self.store, payload, "model_proposals.save")
         now = _now_iso()
         created_at = str(payload.get("created_at") or now)
         updated_at = str(payload.get("updated_at") or now)
@@ -3463,6 +3564,7 @@ class ModelDecisionLedgerRepository:
 
     def append(self, decision: dict[str, Any]) -> dict[str, Any]:
         payload = _payload(decision)
+        _assert_no_test_fixtures_in_evidence(self.store, payload, "model_decision_ledger.append")
         created_at = str(payload.get("created_at") or _now_iso())
         decision_id = str(payload.get("decision_id") or _stable_id("decision", payload.get("decision_type"), payload.get("proposal_id"), payload.get("research_cycle_id"), created_at))
         row_payload = payload | {"decision_id": decision_id, "created_at": created_at}
@@ -3552,6 +3654,7 @@ class SchedulerJobRepository:
 
     def save(self, job: dict[str, Any]) -> dict[str, Any]:
         payload = _payload(job)
+        _assert_no_test_fixtures_in_evidence(self.store, payload, "scheduler_jobs.save")
         now = _now_iso()
         created_at = str(payload.get("created_at") or now)
         updated_at = str(payload.get("updated_at") or now)
@@ -4888,6 +4991,12 @@ class ReplayRepository:
 
     def save(self, replay_run: Any, trades: Iterable[Any]) -> dict[str, Any]:
         payload = _payload(replay_run)
+        trade_payloads = [_payload(trade) for trade in trades]
+        _assert_no_test_fixtures_in_evidence(
+            self.store,
+            {"replay_run": payload, "trades": trade_payloads},
+            "replays.save",
+        )
         replay_run_id = str(payload["replay_run_id"])
         metrics = payload.get("summary_metrics") or payload.get("metrics") or {}
         config = payload.get("config") or {}
@@ -4900,7 +5009,6 @@ class ReplayRepository:
             "summary_metrics": metrics,
             "created_at": created_at,
         }
-        trade_payloads = [_payload(trade) for trade in trades]
         now = _now_iso()
         with self.store._lock:
             connection = self.store.connect()
@@ -5128,6 +5236,11 @@ class ReplaySensitivityRepository:
     def save(self, sensitivity_run: dict[str, Any]) -> dict[str, Any]:
         payload = _payload(sensitivity_run)
         scenarios = [_payload(scenario) for scenario in payload.get("scenarios") or []]
+        _assert_no_test_fixtures_in_evidence(
+            self.store,
+            {"sensitivity_run": payload, "scenarios": scenarios},
+            "replay_sensitivity.save",
+        )
         sensitivity_run_id = str(payload["sensitivity_run_id"])
         replay_run_id = str(payload["replay_run_id"])
         created_at = str(payload.get("created_at") or _now_iso())
@@ -5183,9 +5296,16 @@ class ReplaySensitivityRepository:
                     )
                     VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(scenario_id) DO UPDATE SET
+                        sensitivity_run_id=excluded.sensitivity_run_id,
+                        replay_run_id=excluded.replay_run_id,
+                        slippage_bps=excluded.slippage_bps,
+                        spread_bps=excluded.spread_bps,
+                        intrabar_path_policy=excluded.intrabar_path_policy,
+                        same_bar_stop_target_policy=excluded.same_bar_stop_target_policy,
                         summary_metrics_json=excluded.summary_metrics_json,
                         gate_results_json=excluded.gate_results_json,
-                        payload_json=excluded.payload_json
+                        payload_json=excluded.payload_json,
+                        created_at=excluded.created_at
                     """,
                     [
                         (
@@ -5257,6 +5377,7 @@ class BacktestComparisonRepository:
 
     def save(self, comparison: dict[str, Any]) -> dict[str, Any]:
         payload = _payload(comparison)
+        _assert_no_test_fixtures_in_evidence(self.store, payload, "backtest_comparisons.save")
         created_at = str(payload.get("created_at") or _now_iso())
         comparison_id = str(
             payload.get("comparison_id")
@@ -5540,6 +5661,17 @@ class ExportRepository:
         created_at = _now_iso()
         export_id = _stable_id("export", export_type, fmt, path, created_at)
         audit_payload = dict(payload or {})
+        _assert_no_test_fixtures_in_evidence(
+            self.store,
+            {
+                "export_type": export_type,
+                "format": fmt,
+                "path": str(path),
+                "source_run_id": source_run_id,
+                "payload": audit_payload,
+            },
+            "exports.record",
+        )
         file_hash = _file_sha256(path)
         workbook_sheets = _xlsx_sheet_names(path)
         audit_payload.update(
@@ -5677,15 +5809,23 @@ def _sqlite_info(
 
 class RepositoryRegistry:
     def __init__(self, db_path: Path | str | None = None, settings: Settings | None = None) -> None:
+        explicit_sqlite_path = db_path is not None and settings is None
         self.settings = settings or get_settings()
-        self.database_url_kind = database_url_kind(self.settings)
+        self.database_url_kind = "unset" if explicit_sqlite_path else database_url_kind(self.settings)
         self.fallback_enabled = _env_flag("AMD_ALLOW_SQLITE_FALLBACK")
+        configured_role = str(getattr(self.settings, "db_role", "") or "").strip().lower()
+        self.db_role = "local" if explicit_sqlite_path else configured_role or ("evidence" if self.database_url_kind == "postgresql" else "local")
+        self.allow_test_fixtures_in_evidence = bool(getattr(self.settings, "allow_test_fixtures_in_evidence", False))
         self.db_path = Path(db_path) if db_path is not None else default_sqlite_path(self.settings)
         self.backend = "sqlite"
         self.runtime: dict[str, Any]
         if self.database_url_kind == "postgresql":
             try:
-                self.store = PostgresStore(self.settings.database_url)
+                self.store = PostgresStore(
+                    self.settings.database_url,
+                    db_role=self.db_role,
+                    allow_test_fixtures_in_evidence=self.allow_test_fixtures_in_evidence,
+                )
                 self.backend = "postgresql"
                 self.runtime = {
                     "persistence_backend": "postgresql",
@@ -5697,6 +5837,9 @@ class RepositoryRegistry:
                     "database_url_configured": True,
                     "database_url_kind": "postgresql",
                     "database_reachable": True,
+                    "db_role": self.db_role,
+                    "test_fixture_guard": "enabled" if self.db_role == "evidence" else "test_mode",
+                    "test_fixtures_allowed_in_evidence": self.allow_test_fixtures_in_evidence,
                     "fallback_enabled": self.fallback_enabled,
                     "fallback_reason": None,
                     **self.store.descriptor,
@@ -5704,7 +5847,11 @@ class RepositoryRegistry:
             except PersistenceConfigurationError as exc:
                 if not self.fallback_enabled:
                     raise
-                self.store = SQLiteStore(self.db_path)
+                self.store = SQLiteStore(
+                    self.db_path,
+                    db_role=self.db_role,
+                    allow_test_fixtures_in_evidence=self.allow_test_fixtures_in_evidence,
+                )
                 self.runtime = _sqlite_info(
                     "sqlite-fallback-from-postgres",
                     "postgresql_initialization_failed_explicit_fallback_enabled",
@@ -5714,16 +5861,30 @@ class RepositoryRegistry:
                     fallback_reason=str(exc.safe_info.get("fallback_reason") or "postgres_initialization_failed"),
                     database_url_kind_value="postgresql",
                 )
+                self.runtime["db_role"] = self.db_role
+                self.runtime["test_fixture_guard"] = "enabled" if self.db_role == "evidence" else "test_mode"
+                self.runtime["test_fixtures_allowed_in_evidence"] = self.allow_test_fixtures_in_evidence
         else:
-            self.store = SQLiteStore(self.db_path)
+            self.store = SQLiteStore(
+                self.db_path,
+                db_role=self.db_role,
+                allow_test_fixtures_in_evidence=self.allow_test_fixtures_in_evidence,
+            )
             self.runtime = _sqlite_info(
                 "sqlite-configured" if self.database_url_kind == "sqlite" else "sqlite-local",
-                "sqlite_database_url_configured" if self.database_url_kind == "sqlite" else "database_url_not_configured",
+                "explicit_sqlite_db_path"
+                if explicit_sqlite_path
+                else "sqlite_database_url_configured"
+                if self.database_url_kind == "sqlite"
+                else "database_url_not_configured",
                 self.db_path,
                 database_configured=self.database_url_kind == "sqlite",
                 fallback_enabled=self.fallback_enabled,
                 database_url_kind_value=self.database_url_kind,
             )
+            self.runtime["db_role"] = self.db_role
+            self.runtime["test_fixture_guard"] = "enabled" if self.db_role == "evidence" else "test_mode"
+            self.runtime["test_fixtures_allowed_in_evidence"] = self.allow_test_fixtures_in_evidence
         self.symbols = SymbolRepository(self.store)
         self.bars = BarRepository(self.store, self.symbols)
         self.features = FeatureRepository(self.store)

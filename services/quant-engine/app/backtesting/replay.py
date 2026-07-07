@@ -303,6 +303,7 @@ class CandidateMarketReplayEngine:
         decisions: list[ReplayDecision] = []
         seen_keys: set[tuple[str, str, str, str, str]] = set()
         open_until_symbol: dict[str, list[datetime]] = {}
+        open_until_portfolio: list[datetime] = []
         open_until_setup: dict[tuple[str, str], datetime] = {}
         cooldown_until: dict[str, datetime] = {}
 
@@ -331,10 +332,10 @@ class CandidateMarketReplayEngine:
                 market_regime,
                 time_bucket,
                 open_until_symbol,
+                open_until_portfolio,
                 open_until_setup,
                 cooldown_until,
                 timestamp,
-                trades,
             )
             if skip_reason is not None:
                 trade = self._skip(run_id, candidate, skip_reason, market_regime, time_bucket)
@@ -364,6 +365,7 @@ class CandidateMarketReplayEngine:
             decisions.append(ReplayDecision(candidate_id, "TAKEN", trade_id=trade.trade_id))
             if trade.exit_timestamp_utc and config.replay_purpose != REPLAY_PURPOSE_COUNTERFACTUAL:
                 open_until_symbol.setdefault(symbol, []).append(trade.exit_timestamp_utc)
+                open_until_portfolio.append(trade.exit_timestamp_utc)
                 open_until_setup[(symbol, setup_type)] = trade.exit_timestamp_utc
                 interval_minutes = self._interval_minutes(interval)
                 cooldown_bars = (
@@ -658,10 +660,10 @@ class CandidateMarketReplayEngine:
         market_regime: str | None,
         time_bucket: str | None,
         open_until_symbol: dict[str, list[datetime]],
+        open_until_portfolio: list[datetime],
         open_until_setup: dict[tuple[str, str], datetime],
         cooldown_until: dict[str, datetime],
         timestamp: datetime,
-        trades: list[SimulatedTrade],
     ) -> ReplaySkipReason | None:
         symbol = str(candidate["symbol"])
         setup_type = str(candidate["setup_type"])
@@ -680,9 +682,9 @@ class CandidateMarketReplayEngine:
         if config.enforce_portfolio_constraints and timestamp <= cooldown_until.get(symbol, datetime.min.replace(tzinfo=UTC)):
             return ReplaySkipReason.COOLDOWN_ACTIVE
         active_symbol = [value for value in open_until_symbol.get(symbol, []) if value > timestamp]
-        active_portfolio = [
-            trade for trade in trades if trade.status == "TAKEN" and trade.exit_timestamp_utc and trade.exit_timestamp_utc > timestamp
-        ]
+        open_until_symbol[symbol] = active_symbol
+        active_portfolio = [value for value in open_until_portfolio if value > timestamp]
+        open_until_portfolio[:] = active_portfolio
         if config.enforce_symbol_overlap and not config.allow_overlapping_trades and len(active_symbol) >= config.max_open_trades_per_symbol:
             return ReplaySkipReason.OVERLAPPING_TRADE
         if config.enforce_portfolio_constraints and len(active_portfolio) >= config.max_open_trades_portfolio:

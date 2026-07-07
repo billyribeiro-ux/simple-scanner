@@ -94,11 +94,121 @@ def test_replay_sensitivity_grid_reports_cases_and_fragility(make_bar) -> None:
     )
 
     assert sensitivity["scenario_count"] == 4
+    assert sensitivity["coverage_mode"] == "FULL_GRID"
+    assert sensitivity["completion_status"] == "BOUNDED_COMPLETE"
+    assert sensitivity["configured_grid_complete"] is True
+    assert sensitivity["full_default_grid_complete"] is False
+    assert sensitivity["partial_grid_disclosure"] is True
+    assert "bounded_sensitivity_not_full_default_grid" in sensitivity["coverage_warnings"]
     assert sensitivity["worst_case"]["scenario_id"]
     assert sensitivity["median_case"]["scenario_id"]
     assert sensitivity["best_case"]["scenario_id"]
     assert 0 <= sensitivity["robustness_score"] <= 1
     assert all("summary_metrics" in scenario for scenario in sensitivity["scenarios"])
+
+
+def test_replay_sensitivity_records_partial_scenario_limits(make_bar) -> None:
+    bars = _bars(make_bar)
+    candidates = [_candidate(bars[1])]
+    features = [_feature(bars[1])]
+    config = ReplayConfig(symbols=("AAPL",), intervals=("1min",), start=bars[0].timestamp_utc, end=bars[-1].timestamp_utc)
+    base = CandidateMarketReplayEngine().replay(bars, features, candidates, config, replay_run_id="replay-test")
+
+    sensitivity = ReplaySensitivityEngine().run(
+        base.replay_run_id,
+        bars,
+        features,
+        candidates,
+        config,
+        SensitivityConfig(max_scenarios=1, minimum_total_trades=1, minimum_robustness_score=0.0),
+    )
+
+    assert sensitivity["completion_status"] == "PARTIAL"
+    assert sensitivity["planned_scenario_count"] == 75
+    assert sensitivity["completed_scenario_count"] == 1
+    assert sensitivity["remaining_scenario_count"] == 74
+    assert sensitivity["partial_reason"] == "max_scenarios_limited"
+    assert sensitivity["configured_grid_complete"] is False
+    assert sensitivity["partial_grid_disclosure"] is True
+    assert sensitivity["gate_results"]["configured_grid_complete"] is False
+    assert sensitivity["pass_fail"] == "fail"  # noqa: S105 - sensitivity status, not a password.
+
+
+def test_chunked_full_grid_sensitivity_resumes_without_duplicate_scenarios(tmp_path, make_bar) -> None:
+    repo = RepositoryRegistry(db_path=tmp_path / "chunked-sensitivity.sqlite3")
+    bars = _bars(make_bar)
+    features = [_feature(bars[1])]
+    candidate = _candidate(bars[1])
+    repo.bars.upsert_many(bars)
+    repo.features.upsert_many(features)
+    repo.candidate_signals.upsert_many([candidate])
+    repo.pipeline_windows.mark_built("features", ["AAPL"], ["1min"], bars[0].timestamp_utc, bars[-1].timestamp_utc, "features.v2.no_leakage")
+    repo.pipeline_windows.mark_built("candidates", ["AAPL"], ["1min"], bars[0].timestamp_utc, bars[-1].timestamp_utc, "candidate_signals.v1")
+
+    service = BacktestService(repo)
+    replay = service.run_replay(
+        {
+            "symbols": ["AAPL"],
+            "intervals": ["1min"],
+            "start": bars[0].timestamp_utc.isoformat(),
+            "end": bars[-1].timestamp_utc.isoformat(),
+            "minimum_reward_risk": 0.5,
+        }
+    )
+    first = service.run_sensitivity(
+        replay["replay_run_id"],
+        {
+            "coverage_mode": "CHUNKED_FULL_GRID",
+            "max_scenarios_per_invocation": 2,
+            "minimum_total_trades": 1,
+            "full_default_grid_required": True,
+        },
+    )
+
+    assert first["completion_status"] == "PARTIAL"
+    assert first["planned_scenario_count"] == 75
+    assert first["completed_scenario_count"] == 2
+    assert first["remaining_scenario_count"] == 73
+    assert first["partial_grid_disclosure"] is True
+    assert first["activation_grade_sensitivity"] is False
+    assert first["sensitivity_classification"] == "diagnostic"
+    assert first["resume_token"]
+    assert first["next_scenario_index"] == 3
+
+    second = service.run_sensitivity(
+        replay["replay_run_id"],
+        {
+            "sensitivity_run_id": first["sensitivity_run_id"],
+            "max_scenarios_per_invocation": 2,
+        },
+    )
+    scenarios = repo.replay_sensitivity.list_scenarios(first["sensitivity_run_id"])
+    scenario_ids = [scenario["scenario_id"] for scenario in scenarios]
+
+    assert second["sensitivity_run_id"] == first["sensitivity_run_id"]
+    assert second["completed_scenario_count"] == 4
+    assert second["remaining_scenario_count"] == 71
+    assert len(scenario_ids) == len(set(scenario_ids)) == 4
+
+    final = service.run_sensitivity(
+        replay["replay_run_id"],
+        {
+            "sensitivity_run_id": first["sensitivity_run_id"],
+            "max_scenarios_per_invocation": 100,
+        },
+    )
+    final_scenarios = repo.replay_sensitivity.list_scenarios(first["sensitivity_run_id"])
+    final_ids = [scenario["scenario_id"] for scenario in final_scenarios]
+
+    assert final["completion_status"] == "COMPLETE"
+    assert final["completed_scenario_count"] == 75
+    assert final["remaining_scenario_count"] == 0
+    assert final["full_default_grid_complete"] is True
+    assert final["activation_grade_sensitivity"] is True
+    assert final["sensitivity_classification"] == "activation_grade"
+    assert final["grid_version"]
+    assert final["grid_hash"]
+    assert len(final_ids) == len(set(final_ids)) == 75
 
 
 def test_replay_workflow_blocks_stale_inputs_and_requires_explicit_validation_selection(tmp_path, make_bar) -> None:

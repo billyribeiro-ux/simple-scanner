@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -25,7 +26,12 @@ ET = ZoneInfo("America/New_York")
 SYNTHETIC_START_ET = datetime(2026, 6, 1, 9, 30, tzinfo=ET)
 TEST_FMP_SENTINEL = "test-only-fmp-key"
 DEFAULT_POSTGRES_AUTH = ":".join(("amd", "amd"))
-DEFAULT_POSTGRES_URL = f"postgresql+psycopg://{DEFAULT_POSTGRES_AUTH}@localhost:15432/adaptive_market_decoder"
+DEFAULT_TEST_POSTGRES_DB = "adaptive_market_decoder_test"
+DEFAULT_POSTGRES_URL = f"postgresql+psycopg://{DEFAULT_POSTGRES_AUTH}@localhost:15432/{DEFAULT_TEST_POSTGRES_DB}"
+
+
+def _default_postgres_url() -> str:
+    return os.environ.get("TEST_DATABASE_URL") or DEFAULT_POSTGRES_URL
 
 
 def _synthetic_bars(symbol: str, interval: str, count: int = 120) -> list[Bar]:
@@ -146,9 +152,12 @@ def _run_persisted_api_vertical_slice(
     monkeypatch.setenv("AMD_SQLITE_PATH", str(db_path))
     if backend == "postgresql":
         monkeypatch.setenv("DATABASE_URL", database_url or DEFAULT_POSTGRES_URL)
+        monkeypatch.setenv("TEST_DATABASE_URL", database_url or DEFAULT_POSTGRES_URL)
+        monkeypatch.setenv("AMD_DB_ROLE", "test")
         monkeypatch.delenv("AMD_ALLOW_SQLITE_FALLBACK", raising=False)
     else:
         monkeypatch.delenv("DATABASE_URL", raising=False)
+        monkeypatch.delenv("AMD_DB_ROLE", raising=False)
         monkeypatch.delenv("AMD_ALLOW_SQLITE_FALLBACK", raising=False)
     monkeypatch.setenv("FMP_API_KEY", TEST_FMP_SENTINEL)
     monkeypatch.setenv("PUBLIC_DEFAULT_SYMBOLS", "AAPL,SPY,QQQ,NVDA")
@@ -186,6 +195,7 @@ def _run_persisted_api_vertical_slice(
             assert health["persistence"]["path"] == str(db_path)
         else:
             assert health["persistence"]["runtime_mode"] == "postgresql"
+            assert health["persistence"]["db_role"] == "test"
 
         config = client.get("/config").json()
         assert config["fmp_api_key_configured"] is True
@@ -1068,7 +1078,7 @@ def test_persisted_api_vertical_slice_sqlite(tmp_path, monkeypatch) -> None:
 
 
 def test_persisted_api_vertical_slice_postgres(tmp_path, monkeypatch) -> None:
-    database_url = DEFAULT_POSTGRES_URL
+    database_url = _default_postgres_url()
     if not _postgres_available(database_url):
         pytest.skip("local Postgres/TimescaleDB is not available for persisted API smoke")
     _run_persisted_api_vertical_slice(

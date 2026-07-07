@@ -727,28 +727,41 @@ class FMPLiveDataService:
         fetched = 0
         inserted = 0
         updated = 0
+        skipped = 0
         errors: list[dict[str, Any]] = []
         provider_request_ids: list[str] = []
         warnings: list[str] = []
+        if any(interval != "1day" for interval in intervals):
+            warnings.append("intraday_daily_request_chunking_enabled")
         for symbol in symbols:
             selected_intervals = ["1day"] if intervals == ["1day"] else intervals
             for interval in selected_intervals:
                 endpoint_key = "historical_eod_full" if interval == "1day" else f"intraday_{interval}"
-                try:
-                    response = await self.provider.request_endpoint(endpoint_key, symbol=symbol, start=start, end=end)
-                    provider_request_ids.append(self._record_provider_response(response))
-                    response_errors = self._response_errors(response)
-                    if response_errors:
-                        errors.extend(response_errors)
-                    bars = self._bars_from_response(response, symbol, interval)
-                    fetched += len(bars)
-                    bar_inserts, bar_updates = self._upsert_bars_with_counts(bars)
-                    inserted += bar_inserts
-                    updated += bar_updates
-                except (FMPClientError, ValueError) as exc:
-                    errors.append({"symbol": symbol, "interval": interval, "error": str(_redact(str(exc)))})
+                for window_start, window_end in self._bar_request_windows(interval, start, end):
+                    try:
+                        response = await self.provider.request_endpoint(
+                            endpoint_key,
+                            symbol=symbol,
+                            start=window_start,
+                            end=window_end,
+                        )
+                        provider_request_ids.append(self._record_provider_response(response))
+                        response_errors = self._response_errors(response)
+                        if response_errors:
+                            errors.extend(response_errors)
+                        raw_bars = self._bars_from_response(response, symbol, interval)
+                        bars = self._filter_bars_to_request_window(raw_bars, interval, window_start, window_end)
+                        skipped += max(0, len(raw_bars) - len(bars))
+                        fetched += len(bars)
+                        bar_inserts, bar_updates = self._upsert_bars_with_counts(bars)
+                        inserted += bar_inserts
+                        updated += bar_updates
+                    except (FMPClientError, ValueError) as exc:
+                        errors.append({"symbol": symbol, "interval": interval, "error": str(_redact(str(exc)))})
         dirty = self.repos.pipeline_windows.list_dirty(symbols=symbols, intervals=None if intervals == ["1day"] else intervals)
         status = "COMPLETED" if not errors else ("PARTIAL" if fetched else "FAILED")
+        if skipped:
+            warnings.append("provider_rows_outside_requested_window_skipped")
         return self._save_run(
             ingestion_type=ingestion_type,
             symbols=symbols,
@@ -758,6 +771,7 @@ class FMPLiveDataService:
             records_fetched=fetched,
             records_inserted=inserted,
             records_updated=updated,
+            records_skipped=skipped,
             provider_request_ids=provider_request_ids,
             dirty_windows=dirty,
             errors=errors,
@@ -801,6 +815,49 @@ class FMPLiveDataService:
         if timestamp.tzinfo is None:
             return timestamp.replace(tzinfo=UTC)
         return timestamp.astimezone(UTC)
+
+    def _bar_request_windows(self, interval: str, start: datetime, end: datetime) -> list[tuple[datetime, datetime]]:
+        if interval == "1day":
+            return [(start, end)]
+        request_start = _parse_datetime(start)
+        request_end = _parse_datetime(end)
+        if request_start is None or request_end is None:
+            return [(start, end)]
+        if request_start.tzinfo is None:
+            request_start = request_start.replace(tzinfo=UTC)
+        if request_end.tzinfo is None:
+            request_end = request_end.replace(tzinfo=UTC)
+        request_start = request_start.astimezone(UTC)
+        request_end = request_end.astimezone(UTC)
+        windows: list[tuple[datetime, datetime]] = []
+        current = request_start.date()
+        final = request_end.date()
+        while current <= final:
+            if current.weekday() < 5:
+                day_start = datetime(current.year, current.month, current.day, tzinfo=UTC)
+                day_end = day_start + timedelta(days=1) - timedelta(seconds=1)
+                windows.append((max(request_start, day_start), min(request_end, day_end)))
+            current = datetime.fromordinal(current.toordinal() + 1).date()
+        return windows or [(request_start, request_end)]
+
+    def _filter_bars_to_request_window(
+        self,
+        bars: list[Bar],
+        interval: str,
+        start: datetime,
+        end: datetime,
+    ) -> list[Bar]:
+        if interval == "1day":
+            return bars
+        start_date = start.astimezone(UTC).date() if start.tzinfo else start.date()
+        end_date = end.astimezone(UTC).date() if end.tzinfo else end.date()
+        filtered = []
+        for bar in bars:
+            timestamp_et = _parse_datetime(bar.timestamp_et) or self._bar_timestamp_utc(bar)
+            bar_date = timestamp_et.date()
+            if start_date <= bar_date <= end_date:
+                filtered.append(bar)
+        return filtered
 
     def _record_provider_response(self, response: FMPResponse) -> str:
         return self.repos.provider_requests.record(

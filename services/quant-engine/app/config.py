@@ -26,6 +26,9 @@ except ModuleNotFoundError:  # pragma: no cover - compatibility path for pure qu
                 "app_name": "PUBLIC_APP_NAME",
                 "fmp_api_key": "FMP_API_KEY",
                 "database_url": "DATABASE_URL",
+                "test_database_url": "TEST_DATABASE_URL",
+                "db_role": "AMD_DB_ROLE",
+                "allow_test_fixtures_in_evidence": "AMD_ALLOW_TEST_FIXTURES_IN_EVIDENCE",
                 "redis_url": "REDIS_URL",
                 "default_symbols": "PUBLIC_DEFAULT_SYMBOLS",
             }
@@ -48,6 +51,9 @@ class Settings(BaseSettings):
     app_name: str = Field(default="Adaptive Market Decoder", alias="PUBLIC_APP_NAME")
     fmp_api_key: str = Field(default="", alias="FMP_API_KEY")
     database_url: str = Field(default="", alias="DATABASE_URL")
+    test_database_url: str = Field(default="", alias="TEST_DATABASE_URL")
+    db_role: str = Field(default="", alias="AMD_DB_ROLE")
+    allow_test_fixtures_in_evidence: bool = Field(default=False, alias="AMD_ALLOW_TEST_FIXTURES_IN_EVIDENCE")
     redis_url: str = Field(default="", alias="REDIS_URL")
     default_symbols: str = Field(default=DEFAULT_SYMBOLS, alias="PUBLIC_DEFAULT_SYMBOLS")
     timezone: str = "America/New_York"

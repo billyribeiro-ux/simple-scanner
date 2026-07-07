@@ -75,3 +75,10 @@ Phase 19 removed the dirty-window portion of the quality/freshness blocker:
 - Research-scope freshness is `READY`.
 
 Use `GET /pipeline/dirty-windows` for an exportable artifact-specific audit before and after rebuilds. Use `docs/live-data-artifact-readiness.md` for the local-only rebuild order.
+
+## Phase 19A Audit Result
+
+On 2026-07-04, data-quality and Phase 19 tests passed, but runtime evidence was not present: current SQLite has 0 bars and 0 dirty-window rows, and Phase 19 exports are absent. Treat the Phase 19 data-quality/freshness repair as documentary evidence until real runtime artifacts are recovered or regenerated.
+## Phase 19C Data Quality Note - 2026-07-04
+
+The repaired Postgres runtime currently has no real bars or quote snapshots after synthetic verification rows were cleaned. Phase 19C data quality should therefore be read as missing-source evidence, not as a valid quality sample. Rebuild quality reports only after real FMP data is restored or ingested.

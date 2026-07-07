@@ -1,0 +1,126 @@
+{
+  "exports": [
+    {
+      "export": {
+        "created_at": "2026-07-05T16:47:45.021834+00:00",
+        "export_id": "export_88526e1ab9232baff94babf45e738d30",
+        "export_type": "phase19_phase21u_1min_coverage_diagnostic",
+        "file_sha256": "a67b632601acc1acd9ae936c4858256e10a45c3da57d3c841eb1c4bab833fb30",
+        "format": "json",
+        "path": "/Users/billyribeiro/Desktop/simple-scanner/simple-scanner/exports/phase19_phase21u_1min_coverage_diagnostic_20260705T164745_427174aa278e.json",
+        "payload": {
+          "created_at": "2026-07-05T16:47:45.021834+00:00",
+          "export_type": "phase19_phase21u_1min_coverage_diagnostic",
+          "file_sha256": "a67b632601acc1acd9ae936c4858256e10a45c3da57d3c841eb1c4bab833fb30",
+          "format": "json",
+          "model_activation_unchanged": true,
+          "no_secrets": true,
+          "phase": "19",
+          "row_count": 144,
+          "source_run_id": null,
+          "workbook_sheets": []
+        },
+        "row_count": 144,
+        "source_run_id": null,
+        "workbook_sheets": []
+      },
+      "export_type": "phase21u_1min_coverage_diagnostic",
+      "path": "/Users/billyribeiro/Desktop/simple-scanner/simple-scanner/exports/phase19_phase21u_1min_coverage_diagnostic_20260705T164745_427174aa278e.json",
+      "rows": 144,
+      "source_path": "work/phase21u_fmp_coverage_diagnostic.json",
+      "status": "ok"
+    },
+    {
+      "export": {
+        "created_at": "2026-07-05T16:47:45.043722+00:00",
+        "export_id": "export_c2087106663992d44675d76c02690eb4",
+        "export_type": "phase19_phase21u_coverage_recovery",
+        "file_sha256": "e85b062cc231df27e0fb57df16d4ec83b0d3c1b22dbf8cffef57d0ab57b17058",
+        "format": "json",
+        "path": "/Users/billyribeiro/Desktop/simple-scanner/simple-scanner/exports/phase19_phase21u_coverage_recovery_20260705T164745_f30851da2f2a.json",
+        "payload": {
+          "created_at": "2026-07-05T16:47:45.043722+00:00",
+          "export_type": "phase19_phase21u_coverage_recovery",
+          "file_sha256": "e85b062cc231df27e0fb57df16d4ec83b0d3c1b22dbf8cffef57d0ab57b17058",
+          "format": "json",
+          "model_activation_unchanged": true,
+          "no_secrets": true,
+          "phase": "19",
+          "row_count": 4,
+          "source_run_id": null,
+          "workbook_sheets": []
+        },
+        "row_count": 4,
+        "source_run_id": null,
+        "workbook_sheets": []
+      },
+      "export_type": "phase21u_coverage_recovery",
+      "path": "/Users/billyribeiro/Desktop/simple-scanner/simple-scanner/exports/phase19_phase21u_coverage_recovery_20260705T164745_f30851da2f2a.json",
+      "rows": 4,
+      "source_path": "work/phase21u_coverage_recovery.json",
+      "status": "ok"
+    },
+    {
+      "export": {
+        "created_at": "2026-07-05T16:47:45.196348+00:00",
+        "export_id": "export_9b455ad51e83e02ebece77b8e86b684c",
+        "export_type": "phase19_phase21u_artifact_readiness",
+        "file_sha256": "70d96643f39416db7569b877b72d6bfe820ab4e8e1873af044b77c1c997b37bf",
+        "format": "json",
+        "path": "/Users/billyribeiro/Desktop/simple-scanner/simple-scanner/exports/phase19_phase21u_artifact_readiness_20260705T164745_f748a354fb1b.json",
+        "payload": {
+          "created_at": "2026-07-05T16:47:45.196348+00:00",
+          "export_type": "phase19_phase21u_artifact_readiness",
+          "file_sha256": "70d96643f39416db7569b877b72d6bfe820ab4e8e1873af044b77c1c997b37bf",
+          "format": "json",
+          "model_activation_unchanged": true,
+          "no_secrets": true,
+          "phase": "19",
+          "row_count": 0,
+          "source_run_id": null,
+          "workbook_sheets": []
+        },
+        "row_count": 0,
+        "source_run_id": null,
+        "workbook_sheets": []
+      },
+      "export_type": "phase21u_artifact_readiness",
+      "path": "/Users/billyribeiro/Desktop/simple-scanner/simple-scanner/exports/phase19_phase21u_artifact_readiness_20260705T164745_f748a354fb1b.json",
+      "rows": 0,
+      "source_path": "work/phase21u_artifact_readiness_sequence.json",
+      "status": "ok"
+    },
+    {
+      "export": {
+        "created_at": "2026-07-05T16:47:45.204683+00:00",
+        "export_id": "export_9bb2344f30c8e09d96f3c750bad5f6b6",
+        "export_type": "phase19_phase21u_governance_review",
+        "file_sha256": "ea97882c87c8d7daab116ce8bbed0a3890df9ccfb2a5bcc68a212d6d63312e3b",
+        "format": "json",
+        "path": "/Users/billyribeiro/Desktop/simple-scanner/simple-scanner/exports/phase19_phase21u_governance_review_20260705T164745_a91b30c334c7.json",
+        "payload": {
+          "created_at": "2026-07-05T16:47:45.204683+00:00",
+          "export_type": "phase19_phase21u_governance_review",
+          "file_sha256": "ea97882c87c8d7daab116ce8bbed0a3890df9ccfb2a5bcc68a212d6d63312e3b",
+          "format": "json",
+          "model_activation_unchanged": true,
+          "no_secrets": true,
+          "phase": "19",
+          "row_count": 0,
+          "source_run_id": null,
+          "workbook_sheets": []
+        },
+        "row_count": 0,
+        "source_run_id": null,
+        "workbook_sheets": []
+      },
+      "export_type": "phase21u_governance_review",
+      "path": "/Users/billyribeiro/Desktop/simple-scanner/simple-scanner/exports/phase19_phase21u_governance_review_20260705T164745_a91b30c334c7.json",
+      "rows": 0,
+      "source_path": "work/phase21u_governance_review.json",
+      "status": "ok"
+    }
+  ],
+  "no_secrets": true,
+  "status": "ok"
+}

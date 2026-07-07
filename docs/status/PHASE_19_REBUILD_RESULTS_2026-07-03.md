@@ -35,3 +35,14 @@ Replay metrics are diagnostic research artifacts only. They are not live-fill pr
 | `exports/phase19_label_rebuild_report_20260703T132536_fb4fa48ac8b0.json` | `f2e6a2ee3ffeb80567eefd547fc00c9dc3cdfa101adce09a96420591b221832a` |
 | `exports/phase19_replay_report_20260703T132544_d8beb5f13450.json` | `2a0eff41ece96b31bcf1f9350d32554698c98edec54450edc374e505daf6fc30` |
 | `exports/phase19_replay_report_20260703T132706_24c375e58c47.json` | `c7537c64ed3586be42e32bbbc5ec14c7354ec0e40c7a84c82ca9fee8418fcb3c` |
+
+## Phase 19A Audit Addendum - 2026-07-04
+
+Phase 19A did not find the listed export files in the checkout. The current SQLite runtime has 0 bars, 0 features, 0 candidate signals, 0 labels, 0 replay runs, 0 simulated trades, and 0 export rows. The rebuild counts above remain documentary evidence until the original runtime DB/export artifacts are recovered or a real-data rebuild is regenerated in a healthy runtime.
+
+## Phase 19B Audit Addendum - 2026-07-04
+
+Phase 19B did not recover the listed rebuild exports and did not regenerate rebuilds. Current SQLite still has 0 bars, 0 features, 0 candidate signals, 0 labels, 0 replay runs, and 0 simulated trades. `FMP_API_KEY` is absent, so live data refresh could not run.
+## Phase 19C Rebuild Status - 2026-07-04
+
+No rebuilds were run after the migration repair because no real bars exist and no approved FMP key/source is configured. Feature, candidate, label, replay, model review, research artifact, and export rows remain zero.

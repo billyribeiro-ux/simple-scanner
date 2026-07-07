@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -20,10 +21,16 @@ from app.utils.time import UTC
 
 ET = ZoneInfo("America/New_York")
 DEFAULT_POSTGRES_AUTH = ":".join(("amd", "amd"))
-DEFAULT_POSTGRES_URL = f"postgresql+psycopg://{DEFAULT_POSTGRES_AUTH}@localhost:15432/adaptive_market_decoder"
+DEFAULT_TEST_POSTGRES_DB = "adaptive_market_decoder_test"
+DEFAULT_POSTGRES_URL = f"postgresql+psycopg://{DEFAULT_POSTGRES_AUTH}@localhost:15432/{DEFAULT_TEST_POSTGRES_DB}"
 
 
-def _postgres_available(database_url: str = DEFAULT_POSTGRES_URL) -> bool:
+def _default_postgres_url() -> str:
+    return os.environ.get("TEST_DATABASE_URL") or DEFAULT_POSTGRES_URL
+
+
+def _postgres_available(database_url: str | None = None) -> bool:
+    database_url = database_url or _default_postgres_url()
     try:
         engine = create_engine(_sync_postgres_url(database_url), future=True)
         with engine.connect() as connection:
@@ -136,25 +143,33 @@ def _signal(symbol: str = "AAPL") -> Signal:
     )
 
 
-def _settings_for_current_env(monkeypatch, tmp_path, database_url: str | None = None):
+def _settings_for_current_env(monkeypatch, tmp_path, database_url: str | None = None, db_role: str | None = None):
     reset_repository_registry()
     get_settings.cache_clear()
     monkeypatch.setenv("AMD_SQLITE_PATH", str(tmp_path / "parity.sqlite3"))
     monkeypatch.delenv("AMD_ALLOW_SQLITE_FALLBACK", raising=False)
+    if db_role:
+        monkeypatch.setenv("AMD_DB_ROLE", db_role)
+    elif database_url:
+        monkeypatch.setenv("AMD_DB_ROLE", "test")
+    else:
+        monkeypatch.delenv("AMD_DB_ROLE", raising=False)
     if database_url:
         monkeypatch.setenv("DATABASE_URL", database_url)
+        monkeypatch.setenv("TEST_DATABASE_URL", database_url)
     else:
         monkeypatch.delenv("DATABASE_URL", raising=False)
     return get_settings()
 
 
 def _repo_for_backend(monkeypatch, tmp_path, backend: str) -> RepositoryRegistry:
-    database_url = DEFAULT_POSTGRES_URL if backend == "postgresql" else None
-    if backend == "postgresql" and not _postgres_available(database_url or DEFAULT_POSTGRES_URL):
+    database_url = _default_postgres_url() if backend == "postgresql" else None
+    if backend == "postgresql" and not _postgres_available(database_url):
         pytest.skip("local Postgres/TimescaleDB is not available for repository parity")
-    settings = _settings_for_current_env(monkeypatch, tmp_path, database_url)
+    settings = _settings_for_current_env(monkeypatch, tmp_path, database_url, db_role="test" if backend == "postgresql" else None)
     repo = RepositoryRegistry(settings=settings)
     if backend == "postgresql":
+        assert repo.info()["db_role"] == "test"
         _clear_postgres_tables(repo)
     return repo
 
@@ -744,7 +759,8 @@ def test_repository_core_contract_parity(tmp_path, monkeypatch, backend: str) ->
     assert capability["endpoint_key"] == "batch_quote"
     assert ingestion_run["ingestion_type"] == "intraday_bars"
 
-    reopened = RepositoryRegistry(settings=get_settings())
+    reopened = RepositoryRegistry(settings=repo.settings)
+    assert reopened.info()["persistence_backend"] == backend
     assert len(reopened.bars.list_all()) == 96
     assert len(reopened.features.list_all()) == 96
     assert len(reopened.candidate_signals.list_all()) == 4
@@ -801,7 +817,7 @@ def test_backend_selection_contract(tmp_path, monkeypatch) -> None:
     sqlite_configured = RepositoryRegistry(settings=settings)
     assert sqlite_configured.info()["runtime_mode"] == "sqlite-configured"
 
-    bad_postgres = f"postgresql+psycopg://{DEFAULT_POSTGRES_AUTH}@127.0.0.1:1/adaptive_market_decoder"
+    bad_postgres = f"postgresql+psycopg://{DEFAULT_POSTGRES_AUTH}@127.0.0.1:1/{DEFAULT_TEST_POSTGRES_DB}"
     settings = _settings_for_current_env(monkeypatch, tmp_path, bad_postgres)
     with pytest.raises(PersistenceConfigurationError):
         RepositoryRegistry(settings=settings)
@@ -813,3 +829,76 @@ def test_backend_selection_contract(tmp_path, monkeypatch) -> None:
     assert info["persistence_backend"] == "sqlite"
     assert info["runtime_mode"] == "sqlite-fallback-from-postgres"
     assert info["fallback_enabled"] is True
+
+
+def test_explicit_sqlite_path_ignores_ambient_database_url(tmp_path, monkeypatch) -> None:
+    reset_repository_registry()
+    get_settings.cache_clear()
+    monkeypatch.setenv(
+        "DATABASE_URL",
+        f"postgresql+psycopg://{DEFAULT_POSTGRES_AUTH}@127.0.0.1:1/should_not_connect",
+    )
+    monkeypatch.setenv("AMD_DB_ROLE", "evidence")
+    monkeypatch.delenv("AMD_SQLITE_PATH", raising=False)
+    monkeypatch.delenv("AMD_ALLOW_SQLITE_FALLBACK", raising=False)
+
+    sqlite_path = tmp_path / "explicit.sqlite3"
+    repo = RepositoryRegistry(db_path=sqlite_path)
+    info = repo.info()
+
+    assert info["persistence_backend"] == "sqlite"
+    assert info["runtime_mode"] == "sqlite-local"
+    assert info["reason"] == "explicit_sqlite_db_path"
+    assert info["database_url_kind"] == "unset"
+    assert info["db_role"] == "local"
+    assert info["path"] == str(sqlite_path)
+    assert repo.model_proposals.save(
+        {
+            "proposal_id": "parity-proposal",
+            "proposal_type": "challenger_model",
+            "status": "PROPOSED",
+            "challenger_model_version": "parity-model-accepted",
+            "recommended_action": "APPROVE_CHALLENGER_FOR_ACTIVATION",
+            "readiness_status": "PASS",
+        }
+    )["proposal_id"] == "parity-proposal"
+
+
+def test_evidence_role_rejects_fixture_like_governance_payloads(tmp_path, monkeypatch) -> None:
+    settings = _settings_for_current_env(monkeypatch, tmp_path, db_role="evidence")
+    repo = RepositoryRegistry(settings=settings)
+    assert repo.info()["db_role"] == "evidence"
+
+    with pytest.raises(PersistenceConfigurationError) as exc_info:
+        repo.model_proposals.save(
+            {
+                "proposal_id": "parity-proposal",
+                "proposal_type": "challenger_model",
+                "status": "PROPOSED",
+                "challenger_model_version": "parity-model-accepted",
+                "recommended_action": "APPROVE_CHALLENGER_FOR_ACTIVATION",
+                "readiness_status": "PASS",
+            }
+        )
+
+    assert exc_info.value.safe_info["fixture_guard"] == "blocked"
+    assert "parity-proposal" in exc_info.value.safe_info["fixture_matches"]
+
+
+def test_test_role_allows_fixture_like_governance_payloads(tmp_path, monkeypatch) -> None:
+    settings = _settings_for_current_env(monkeypatch, tmp_path, db_role="test")
+    repo = RepositoryRegistry(settings=settings)
+    assert repo.info()["db_role"] == "test"
+
+    proposal = repo.model_proposals.save(
+        {
+            "proposal_id": "parity-proposal",
+            "proposal_type": "challenger_model",
+            "status": "PROPOSED",
+            "challenger_model_version": "parity-model-accepted",
+            "recommended_action": "APPROVE_CHALLENGER_FOR_ACTIVATION",
+            "readiness_status": "PASS",
+        }
+    )
+
+    assert proposal["proposal_id"] == "parity-proposal"

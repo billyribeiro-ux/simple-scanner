@@ -1,13 +1,15 @@
 PYTHON ?= python3
-PYTHON314 ?= python3.14
+PYTHON314_CANDIDATE := $(shell if [ -x /opt/homebrew/opt/python@3.14/bin/python3.14 ]; then echo /opt/homebrew/opt/python@3.14/bin/python3.14; elif command -v python3.14 >/dev/null 2>&1; then command -v python3.14; else echo python3.14; fi)
+PYTHON314 ?= $(PYTHON314_CANDIDATE)
 SERVICE_DIR := services/quant-engine
 LOCAL_POSTGRES_USER ?= amd
 LOCAL_POSTGRES_PASSWORD ?= amd
 LOCAL_POSTGRES_HOST ?= localhost
 LOCAL_POSTGRES_PORT ?= 15432
 LOCAL_POSTGRES_DB ?= adaptive_market_decoder
+LOCAL_POSTGRES_TEST_DB ?= adaptive_market_decoder_test
 
-.PHONY: help doctor frontend-doctor setup setup-backend require-backend-venv quant-test backend-test backend-lint backend-typecheck api-smoke api-smoke-sqlite api-smoke-postgres repository-parity-test replay-test replay-sensitivity-test replay-window-test model-review-test research-cycle-test research-status-test scheduler-test scheduler-status scheduler-worker-once scheduler-recover-stale export-test fmp-entitlement-test fmp-ingestion-test fmp-seed-test data-quality-test data-freshness-test fmp-smoke fmp-live-smoke dev api-dev web-dev db-up db-down db-migrate db-inspect db-diagnostics db-query-diagnostics db-reset-dev ingest features labels train validate backtest scanner export test lint typecheck
+.PHONY: help doctor frontend-doctor setup setup-backend require-backend-venv quant-test backend-test backend-lint backend-typecheck api-smoke api-smoke-sqlite api-smoke-postgres repository-parity-test replay-test replay-sensitivity-test replay-window-test model-review-test research-cycle-test research-status-test scheduler-test scheduler-status scheduler-worker-once scheduler-recover-stale export-test fmp-entitlement-test fmp-ingestion-test fmp-seed-test data-quality-test data-freshness-test fmp-smoke fmp-live-smoke dev api-dev web-dev db-up db-down db-migrate db-inspect db-diagnostics db-query-diagnostics db-reset-dev evidence-db-audit test-db-smoke evidence-guard-test ingest features labels train validate backtest scanner export test lint typecheck
 
 help:
 	@printf "Adaptive Market Decoder commands\n\n"
@@ -34,8 +36,11 @@ help:
 	@printf "  make backend-typecheck   Run backend mypy checks\n"
 	@printf "  make api-smoke           Run default SQLite persisted FastAPI smoke test\n"
 	@printf "  make api-smoke-sqlite    Run explicit SQLite persisted FastAPI smoke test\n"
-	@printf "  make api-smoke-postgres  Run Postgres persisted FastAPI smoke test against local compose DB\n"
-	@printf "  make repository-parity-test Run SQLite/Postgres repository parity tests\n"
+	@printf "  make api-smoke-postgres  Run Postgres persisted FastAPI smoke test against isolated test DB\n"
+	@printf "  make repository-parity-test Run SQLite/Postgres repository parity tests against isolated test DB\n"
+	@printf "  make test-db-smoke       Create/migrate the isolated Postgres test DB\n"
+	@printf "  make evidence-db-audit   Audit the configured evidence database for fixture rows\n"
+	@printf "  make evidence-guard-test Run fixture guardrail regression tests\n"
 	@printf "  make replay-test        Run candidate-to-trade replay simulator tests\n"
 	@printf "  make replay-sensitivity-test Run replay audit and sensitivity tests\n"
 	@printf "  make replay-window-test Run multi-window replay orchestration tests\n"
@@ -74,7 +79,7 @@ setup-backend:
 		echo "See README.md and docs/HANDOFF.md for the no-Docker pure quant test path."; \
 		exit 1; \
 	fi
-	$(PYTHON314) -m venv $(SERVICE_DIR)/.venv
+	$(PYTHON314) -m venv --clear $(SERVICE_DIR)/.venv
 	$(SERVICE_DIR)/.venv/bin/python -m pip install --upgrade pip
 	$(SERVICE_DIR)/.venv/bin/python -m pip install -e "$(SERVICE_DIR)[dev,ml]"
 
@@ -107,23 +112,48 @@ api-smoke: api-smoke-sqlite
 api-smoke-sqlite: require-backend-venv
 	cd $(SERVICE_DIR) && PYTHONPATH=. .venv/bin/python -m pytest tests/test_persisted_api_smoke.py::test_persisted_api_vertical_slice_sqlite
 
-api-smoke-postgres: require-backend-venv
+test-db-smoke: require-backend-venv
 	@DEFAULT_DATABASE_SCHEME="postgresql+psycopg"; \
 		DEFAULT_DATABASE_AUTH="$(LOCAL_POSTGRES_USER):$(LOCAL_POSTGRES_PASSWORD)"; \
 		DEFAULT_DATABASE_HOST="$(LOCAL_POSTGRES_HOST):$(LOCAL_POSTGRES_PORT)"; \
-		LOCAL_POSTGRES_DSN="$${DEFAULT_DATABASE_SCHEME}://$${DEFAULT_DATABASE_AUTH}@$${DEFAULT_DATABASE_HOST}/$(LOCAL_POSTGRES_DB)"; \
-		DATABASE_URL="$${DATABASE_URL:-$${LOCAL_POSTGRES_DSN}}" \
+		LOCAL_TEST_POSTGRES_DSN="$${DEFAULT_DATABASE_SCHEME}://$${DEFAULT_DATABASE_AUTH}@$${DEFAULT_DATABASE_HOST}/$(LOCAL_POSTGRES_TEST_DB)"; \
+		TEST_DATABASE_URL="$${TEST_DATABASE_URL:-$${LOCAL_TEST_POSTGRES_DSN}}"; \
+		export TEST_DATABASE_URL; \
+		LOCAL_POSTGRES_USER="$(LOCAL_POSTGRES_USER)" \
+		LOCAL_POSTGRES_PASSWORD="$(LOCAL_POSTGRES_PASSWORD)" \
+		LOCAL_POSTGRES_HOST="$(LOCAL_POSTGRES_HOST)" \
+		LOCAL_POSTGRES_PORT="$(LOCAL_POSTGRES_PORT)" \
+		LOCAL_POSTGRES_TEST_DB="$(LOCAL_POSTGRES_TEST_DB)" \
+		PYTHONPATH=$(SERVICE_DIR) \
+		$(SERVICE_DIR)/.venv/bin/python scripts/ensure_test_database.py; \
+		cd $(SERVICE_DIR) && DATABASE_URL="$${TEST_DATABASE_URL:-$${LOCAL_TEST_POSTGRES_DSN}}" AMD_DB_ROLE=test .venv/bin/alembic upgrade head
+
+api-smoke-postgres: require-backend-venv test-db-smoke
+	@DEFAULT_DATABASE_SCHEME="postgresql+psycopg"; \
+		DEFAULT_DATABASE_AUTH="$(LOCAL_POSTGRES_USER):$(LOCAL_POSTGRES_PASSWORD)"; \
+		DEFAULT_DATABASE_HOST="$(LOCAL_POSTGRES_HOST):$(LOCAL_POSTGRES_PORT)"; \
+		LOCAL_TEST_POSTGRES_DSN="$${DEFAULT_DATABASE_SCHEME}://$${DEFAULT_DATABASE_AUTH}@$${DEFAULT_DATABASE_HOST}/$(LOCAL_POSTGRES_TEST_DB)"; \
+		TEST_DATABASE_URL="$${TEST_DATABASE_URL:-$${LOCAL_TEST_POSTGRES_DSN}}"; \
+		export TEST_DATABASE_URL; \
+		DATABASE_URL="$${TEST_DATABASE_URL}" \
+		AMD_DB_ROLE=test \
 		PYTHONPATH=$(SERVICE_DIR) \
 		$(SERVICE_DIR)/.venv/bin/python -m pytest $(SERVICE_DIR)/tests/test_persisted_api_smoke.py::test_persisted_api_vertical_slice_postgres
 
-repository-parity-test: require-backend-venv
+repository-parity-test: require-backend-venv test-db-smoke
 	@DEFAULT_DATABASE_SCHEME="postgresql+psycopg"; \
 		DEFAULT_DATABASE_AUTH="$(LOCAL_POSTGRES_USER):$(LOCAL_POSTGRES_PASSWORD)"; \
 		DEFAULT_DATABASE_HOST="$(LOCAL_POSTGRES_HOST):$(LOCAL_POSTGRES_PORT)"; \
-		LOCAL_POSTGRES_DSN="$${DEFAULT_DATABASE_SCHEME}://$${DEFAULT_DATABASE_AUTH}@$${DEFAULT_DATABASE_HOST}/$(LOCAL_POSTGRES_DB)"; \
-		DATABASE_URL="$${DATABASE_URL:-$${LOCAL_POSTGRES_DSN}}" \
+		LOCAL_TEST_POSTGRES_DSN="$${DEFAULT_DATABASE_SCHEME}://$${DEFAULT_DATABASE_AUTH}@$${DEFAULT_DATABASE_HOST}/$(LOCAL_POSTGRES_TEST_DB)"; \
+		TEST_DATABASE_URL="$${TEST_DATABASE_URL:-$${LOCAL_TEST_POSTGRES_DSN}}"; \
+		export TEST_DATABASE_URL; \
+		DATABASE_URL="$${TEST_DATABASE_URL}" \
+		AMD_DB_ROLE=test \
 		PYTHONPATH=$(SERVICE_DIR) \
 		$(SERVICE_DIR)/.venv/bin/python -m pytest $(SERVICE_DIR)/tests/test_repository_parity.py
+
+evidence-guard-test: require-backend-venv
+	cd $(SERVICE_DIR) && PYTHONPATH=. .venv/bin/python -m pytest tests/test_repository_parity.py -k "evidence_role_rejects_fixture or test_role_allows_fixture"
 
 replay-test: require-backend-venv
 	cd $(SERVICE_DIR) && PYTHONPATH=. .venv/bin/python -m pytest tests/quant/test_replay_engine.py
@@ -204,6 +234,9 @@ db-diagnostics: require-backend-venv
 	PYTHONPATH=$(SERVICE_DIR) $(SERVICE_DIR)/.venv/bin/python scripts/db_query_diagnostics.py
 
 db-query-diagnostics: db-diagnostics
+
+evidence-db-audit: require-backend-venv
+	PYTHONPATH=$(SERVICE_DIR) $(SERVICE_DIR)/.venv/bin/python scripts/evidence_db_audit.py
 
 db-reset-dev:
 	@printf "\nDEV ONLY: this deletes local Postgres/Redis containers and named volumes for this compose project.\n"

@@ -17,6 +17,8 @@ from app.utils.time import UTC
 
 ET = ZoneInfo("America/New_York")
 REVIEWED = "REVIEWED_ACCESSIBLE"
+SEED_START = datetime(2026, 7, 1, 13, 0, tzinfo=UTC)
+SEED_END = datetime(2026, 7, 1, 21, 0, tzinfo=UTC)
 
 
 def _repo(tmp_path: Path, monkeypatch, *, key: str | None = None) -> RepositoryRegistry:
@@ -25,7 +27,7 @@ def _repo(tmp_path: Path, monkeypatch, *, key: str | None = None) -> RepositoryR
     if key:
         monkeypatch.setenv("FMP_API_KEY", key)
     else:
-        monkeypatch.delenv("FMP_API_KEY", raising=False)
+        monkeypatch.setenv("FMP_API_KEY", "")
     get_settings.cache_clear()
     reset_repository_registry()
     return RepositoryRegistry(settings=get_settings())
@@ -192,9 +194,13 @@ def test_seed_dry_run_needs_no_key_and_live_seed_requires_review(tmp_path, monke
 
     repo = _repo(tmp_path, monkeypatch, key="test-only-key")
     service = FMPLiveDataService(repo, provider=Phase16FakeProvider(), settings=get_settings())
-    unreviewed = asyncio.run(service.seed_ingestion(symbols=["SPY"], intervals=["1day", "1min"]))
+    unreviewed = asyncio.run(
+        service.seed_ingestion(symbols=["SPY"], intervals=["1day", "1min"], start=SEED_START, end=SEED_END)
+    )
     _review_required(repo, service)
-    seeded = asyncio.run(service.seed_ingestion(symbols=["SPY"], intervals=["1day", "1min"]))
+    seeded = asyncio.run(
+        service.seed_ingestion(symbols=["SPY"], intervals=["1day", "1min"], start=SEED_START, end=SEED_END)
+    )
     assert unreviewed["status"] == "BLOCKED"
     assert seeded["status"] == "COMPLETED"
     assert seeded["records_fetched"] >= 3
@@ -215,7 +221,7 @@ def test_data_freshness_ready_stale_and_missing(tmp_path, monkeypatch) -> None:
     repo = _repo(tmp_path, monkeypatch, key="test-only-key")
     service = FMPLiveDataService(repo, provider=Phase16FakeProvider(), settings=get_settings())
     _review_required(repo, service)
-    asyncio.run(service.seed_ingestion(symbols=["SPY"], intervals=["1day", "1min"]))
+    asyncio.run(service.seed_ingestion(symbols=["SPY"], intervals=["1day", "1min"], start=SEED_START, end=SEED_END))
     for dirty in repo.pipeline_windows.list_dirty(symbols=["SPY"], intervals=["1day", "1min"]):
         start = datetime.fromisoformat(str(dirty["start"]).replace("Z", "+00:00")) if dirty.get("start") else None
         end = datetime.fromisoformat(str(dirty["end"]).replace("Z", "+00:00")) if dirty.get("end") else None

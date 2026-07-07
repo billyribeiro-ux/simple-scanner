@@ -294,6 +294,10 @@ def test_replay_aware_validation_gate_required_for_activation(tmp_path, make_bar
     )
     assert report["validation_mode"] == REPLAY_AWARE_VALIDATION_MODE
     assert report["activation_decision"] == "accepted"
+    profile = report["performance_profile"]
+    assert profile["scaling_strategy"] == "prefix_evidence_cube_cache_by_eligible_training_row_count"
+    assert profile["evidence_cube_build_count"] < profile["scored_candidate_count"]
+    assert profile["no_future_leakage_enforced"] is True
     activated = ModelActivationService(repo).activate(
         model["model_version"],
         validation_mode=REPLAY_AWARE_VALIDATION_MODE,

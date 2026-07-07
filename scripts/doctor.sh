@@ -23,6 +23,14 @@ expected_node="24.18.0"
 expected_python="3.14.6"
 service_dir="services/quant-engine"
 venv_bin="$service_dir/.venv/bin"
+redis_host_port="${REDIS_HOST_PORT:-16379}"
+python314_bin="${PYTHON314:-python3.14}"
+if [ -x /opt/homebrew/opt/python@3.14/bin/python3.14 ]; then
+  homebrew_python314_version="$(/opt/homebrew/opt/python@3.14/bin/python3.14 --version 2>&1 | awk '{print $2}')"
+  if [ "$homebrew_python314_version" = "$expected_python" ]; then
+    python314_bin="/opt/homebrew/opt/python@3.14/bin/python3.14"
+  fi
+fi
 
 if [ -f ".node-version" ] && [ "$(cat .node-version)" = "$expected_node" ]; then
   ok ".node-version targets $expected_node"
@@ -59,12 +67,12 @@ else
   missing "corepack; install/enable Corepack before pnpm commands"
 fi
 
-if command -v python3.14 >/dev/null 2>&1; then
-  python_version="$(python3.14 --version 2>&1 | awk '{print $2}')"
+if command -v "$python314_bin" >/dev/null 2>&1; then
+  python_version="$("$python314_bin" --version 2>&1 | awk '{print $2}')"
   if [ "$python_version" = "$expected_python" ]; then
-    ok "python3.14 $python_version"
+    ok "python3.14 $python_version ($python314_bin)"
   else
-    warn "python3.14 $python_version found; project target is $expected_python"
+    warn "python3.14 $python_version found at $python314_bin; project target is $expected_python"
   fi
 else
   missing "python3.14; install Python $expected_python with pyenv, asdf, uv python install, or a manual python.org build"
@@ -122,6 +130,11 @@ if docker info >/dev/null 2>&1; then
   ok "docker daemon reachable"
   if docker compose ps >/dev/null 2>&1; then
     ok "docker compose available"
+    if [ "$redis_host_port" = "6379" ]; then
+      warn "Redis host port is configured as 6379; set REDIS_HOST_PORT=16379 when another local Redis owns 6379"
+    else
+      ok "Redis host port configured as $redis_host_port"
+    fi
     docker compose ps --format "table {{.Name}}\t{{.State}}\t{{.Status}}" 2>/dev/null || true
   else
     warn "docker compose did not report service status"

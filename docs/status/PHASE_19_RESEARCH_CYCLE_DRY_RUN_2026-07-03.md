@@ -38,3 +38,14 @@ The default scope remains `STALE` because bars are historical relative to the Ju
 - SHA-256: `e82c08ab55a194058d78c767a4a487c12429c1bdbdf35d2ebf6e1a4f9b7d3696`
 
 The dry run did not activate a model and did not create trading authority.
+
+## Phase 19A Audit Addendum - 2026-07-04
+
+Phase 19A could not verify the research-cycle row or export from the current runtime. The current SQLite `research_cycles`, `data_freshness_reports`, and `exports` tables have 0 rows, and the listed export file is absent. The strict dry-run pass above remains documentary evidence pending recovery or regeneration of runtime evidence.
+
+## Phase 19B Audit Addendum - 2026-07-04
+
+Phase 19B did not recover the dry-run export or `research_cycle_b3e371c34dccba95c8eb29ff3e657bca` as a runtime row. No new strict dry run was attempted because real bars/artifacts are absent and the runtime is blocked on Postgres migration.
+## Phase 19C Strict Dry Run - 2026-07-04
+
+Research cycle `research_cycle_95fbdba8b52c6b95437f08908e7aa807` was created for a strict dry-run with `allow_stale=false`. The dry-run returned `blocked=true` and `block_reason=data_freshness_blocked`.

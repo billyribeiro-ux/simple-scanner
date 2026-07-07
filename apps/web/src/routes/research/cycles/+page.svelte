@@ -32,6 +32,7 @@
   let cycleDate = $state('2026-07-01');
   let cycleType = $state('daily');
   let symbols = $state('AMZN,AAPL,TSLA,SPY,QQQ,IWM,NVDA,GOOGL,BABA,SHOP');
+  let symbolsInput = $state<HTMLInputElement | null>(null);
   let start = $state('2026-06-01T13:30');
   let end = $state('2026-06-30T20:00');
   let interval1 = $state(true);
@@ -65,11 +66,12 @@
 
   async function createCycle() {
     message = 'Creating research cycle...';
+    const requestedSymbols = symbolsInput?.value ?? symbols;
     try {
       const result = await createResearchCycle({
         cycle_date: cycleDate || undefined,
         cycle_type: cycleType,
-        symbols: normalizeSymbolsInput(symbols),
+        symbols: normalizeSymbolsInput(requestedSymbols),
         intervals: selectedIntervals(),
         start: localDateTime(start),
         end: localDateTime(end),
@@ -163,7 +165,9 @@
     <div class="form-grid">
       <label class="field">Cycle date <input type="date" bind:value={cycleDate} /></label>
       <label class="field">Cycle type <input bind:value={cycleType} /></label>
-      <label class="field wide">Symbols <input bind:value={symbols} /></label>
+      <label class="field wide"
+        >Symbols <input bind:this={symbolsInput} bind:value={symbols} /></label
+      >
       <label class="field">Start <input type="datetime-local" bind:value={start} /></label>
       <label class="field">End <input type="datetime-local" bind:value={end} /></label>
       <label class="field"
@@ -229,7 +233,7 @@
           </tr>
         </thead>
         <tbody>
-          {#each cycles as cycle}
+          {#each cycles as cycle (cycle.research_cycle_id)}
             <tr>
               <td>
                 <a class="link mono" href={`/research/cycles/${cycle.research_cycle_id}`}>

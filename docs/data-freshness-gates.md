@@ -88,3 +88,10 @@ On 2026-07-03, the persisted Phase 18 bars were used to rebuild derived artifact
 - Research warnings: none
 
 The remaining default `STALE` status is bar-age staleness relative to July 3, 2026. It is no longer caused by dirty feature, candidate, label, or replay artifacts. Strict research dry-run passed with `allow_stale=false`, so no diagnostic `allow_stale=true` run was needed.
+
+## Phase 19A Audit Result
+
+On 2026-07-04, the committed Phase 19 freshness claims could not be independently verified from runtime rows because the current SQLite DB is fresh and empty and the Phase 19 exports are absent. Phase 19 certification remains `EVIDENCE_PENDING` until the original freshness reports are recovered or regenerated from real persisted bars.
+## Phase 19C Gate Result - 2026-07-04
+
+The strict Phase 19C freshness check is `BLOCKED`, not stale-bypassed. With no real bars, no quote snapshots, and no `FMP_API_KEY`, the persisted reports show 20 missing required items for SPY, QQQ, AAPL, and NVDA across `1min`, `5min`, `15min`, and `1day`. Research dry-runs must continue to use `allow_stale=false` until real data is restored or ingested.

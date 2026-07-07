@@ -225,3 +225,9 @@ Run `make fmp-smoke` or `make fmp-live-smoke` after setting `FMP_API_KEY` in the
 ## Phase 16 Runtime Notes
 
 Target runtime remains Node `24.18.0`, pnpm `11.9.0`, and Python `3.14.6`. Live entitlement and live seed require `FMP_API_KEY`. Seed dry-run and freshness checks can run without it.
+## Phase 19C Runtime Notes - 2026-07-04
+
+- Backend target Python remains `3.14.6`; Homebrew `python@3.14` provides `/opt/homebrew/opt/python@3.14/bin/python3.14` on this workstation.
+- `make setup-backend` now recreates the generated venv with `python -m venv --clear` so interpreter changes are applied to `services/quant-engine/.venv`.
+- Redis compose host port is configurable with `REDIS_HOST_PORT`; the default is `16379` to avoid local services already using `6379`.
+- `make doctor` reports the selected Python 3.14 interpreter and configured Redis host port.

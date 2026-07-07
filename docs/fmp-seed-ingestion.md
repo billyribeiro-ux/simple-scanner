@@ -100,3 +100,10 @@ After Phase 18 ingestion, Phase 19 rebuilt local artifacts from persisted bars o
 - `1day` replay windows: marked not applicable because candidate market replay is intraday-only in V1.
 
 Final dirty-window audit is 0. Future `1day` bar ingestion no longer marks replay windows dirty.
+
+## Phase 19A Audit Result
+
+On 2026-07-04, the committed Phase 18/19 seed and rebuild counts were present in docs, but the current checkout did not include the ignored runtime DB/export artifacts that would prove those counts. The fresh SQLite runtime has 0 bars and 0 quote snapshots. Recover or regenerate real-data artifacts before certifying Phase 19 complete.
+## Phase 19C Seed Status - 2026-07-04
+
+Bounded seed ingestion was not run in live mode because `FMP_API_KEY` is not configured. The safe Postgres FMP smoke recorded all required capability endpoints as `SKIPPED_NO_KEY`. After an operator configures an approved key, rerun bounded seed ingestion for SPY, QQQ, AAPL, and NVDA over `1min`, `5min`, `15min`, and `1day`; do not backfill with synthetic bars.

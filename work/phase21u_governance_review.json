@@ -1,0 +1,143 @@
+{
+  "active_model_count": 0,
+  "calibration_audit_id": "calibration_70021b4dc0bb829a2fbb92e9d1d386a9",
+  "calibration_rejection_reasons": [
+    "too_many_calibration_warnings"
+  ],
+  "calibration_warnings": [
+    "high_score_depends_on_one_setup",
+    "score_concentrated_in_one_bucket",
+    "severe_regime_instability"
+  ],
+  "comparison_gate_results": {
+    "all_passed": false,
+    "calibration_audit_id": "calibration_70021b4dc0bb829a2fbb92e9d1d386a9",
+    "calibration_pass": false,
+    "challenger_present": true,
+    "data_quality_pass": true,
+    "drift_pass": true,
+    "drift_report_id": "calibration_drift_2245a2352dfa80965c2b9d6632c35034",
+    "model_review_pass": false,
+    "model_review_report_id": "model_review_aa93b11b30fd13b6c26068301532713c",
+    "stale_window_pass": true,
+    "validation_pass": false,
+    "validation_report_id": "report_65d036bc0fb422f6de0697fbd4c5111d"
+  },
+  "comparison_id": "champion_challenger_696b05328780cd2e81cdd26781a76e76",
+  "comparison_readiness_status": "BLOCK",
+  "comparison_recommended_action": "REJECT_CHALLENGER",
+  "counterfactual_replay_run_id": "replay_20260705163058_407c8d485cf924b45879e1b6",
+  "data_quality_summary": {
+    "bar_count": 19760,
+    "dirty_pipeline_window_count": 0,
+    "duplicate_timestamp_count": 0,
+    "ingestion_run_count": 25,
+    "invalid_price_or_volume_count": 0,
+    "latest_bar_group_count": 12,
+    "missing_bar_window_count": 108,
+    "provider_capability_warning_count": 0,
+    "provider_error_count": 405,
+    "source_breakdown": {
+      "fmp": 19760
+    }
+  },
+  "dirty_window_count": 0,
+  "drift_report_id": "calibration_drift_2245a2352dfa80965c2b9d6632c35034",
+  "drift_severity": "WATCH",
+  "model_activation_unchanged": true,
+  "model_active": false,
+  "model_version": "amd-replay-aware-20260702-164145",
+  "no_broker_execution": true,
+  "no_secrets": true,
+  "phase": "21U",
+  "portfolio_replay_run_id": "replay_20260705163042_db0b0b2619a320ee077112eb",
+  "proposal_id": "proposal_3692b4fd744f69d0c349aa9d4b58dda9",
+  "proposal_readiness_status": "BLOCK",
+  "proposal_recommended_action": "REJECT_CHALLENGER",
+  "proposal_status": "REJECTED",
+  "review_readiness_reasons": [
+    "calibration_drift_watch",
+    "too_many_calibration_warnings",
+    "validation_rejected"
+  ],
+  "review_readiness_status": "BLOCK",
+  "review_report_id": "model_review_aa93b11b30fd13b6c26068301532713c",
+  "runtime_seconds": 9.16981,
+  "score_audit_count": 23732,
+  "sensitivity_status": "skipped_full_grid_runtime_bottleneck",
+  "status": "ok",
+  "time_split_validation": {
+    "train_end": "2026-06-26T20:00:00+00:00",
+    "validation_start": "2026-06-29T13:30:00+00:00"
+  },
+  "validation_decision": "rejected",
+  "validation_outcome_source": "mixed_allowed",
+  "validation_performance_profile": {
+    "embargo_minutes": 0,
+    "evidence_cube_build_count": 1,
+    "evidence_cube_build_seconds": 0.205076,
+    "evidence_cube_cache_hit_count": 4336,
+    "minimum_cell_sample_size": 5,
+    "no_future_leakage_enforced": true,
+    "outcome_build_seconds": 0.210686,
+    "outcome_row_count": 21016,
+    "scaling_strategy": "prefix_evidence_cube_cache_by_eligible_training_row_count",
+    "scored_candidate_count": 4337,
+    "scoring_seconds": 0.197947,
+    "test_candidate_count": 0,
+    "total_validation_seconds": 2.32549,
+    "training_candidate_count": 6171,
+    "validation_candidate_count": 4337
+  },
+  "validation_rejection_reasons": [
+    "minimum_selected_candidate_sample_not_met"
+  ],
+  "validation_report_id": "report_65d036bc0fb422f6de0697fbd4c5111d",
+  "validation_summary": {
+    "average_mae_r": -1.2817678837059385,
+    "average_mfe_r": 1.7627022805297206,
+    "average_r": 0.500000000000016,
+    "average_time_in_trade_minutes": 16.8,
+    "counterfactual_observed_count": 0,
+    "embargo_minutes": 0,
+    "evidence_quality_grade": "NEGATIVE",
+    "expectancy_r": 0.500000000000016,
+    "fragility_flags": [],
+    "label_vs_replay_divergence_flags": [],
+    "loss_rate": 0.4,
+    "lower_bound_r": -0.04772255750515586,
+    "max_drawdown_r": -2.0,
+    "median_mae_r": -0.2072678331090446,
+    "median_mfe_r": 1.7900403768505964,
+    "median_r": 1.5,
+    "observed_outcome_count": 5,
+    "outcome_sources": {
+      "portfolio": 5
+    },
+    "portfolio_observed_count": 5,
+    "profit_factor": 2.25000000000004,
+    "replay_purposes": {
+      "portfolio_execution": 5
+    },
+    "same_bar_ambiguity_rate": 0.2,
+    "sample_size": 5,
+    "scored_candidate_count": 4337,
+    "selected_candidate_count": 5,
+    "sensitivity_robustness_score": 1.0,
+    "skip_breakdown": {},
+    "skipped_count": 0,
+    "stale_window_warnings": [],
+    "stop_hit_rate": 0.4,
+    "suppressed_candidate_count": 4332,
+    "suppression_skip_count": 0,
+    "taken_count": 5,
+    "target_1_hit_rate": 0.8,
+    "target_2_hit_rate": 0.8,
+    "target_3_hit_rate": 0.2,
+    "test_candidate_count": 0,
+    "total_r": 2.50000000000008,
+    "training_candidate_count": 6171,
+    "validation_candidate_count": 4337,
+    "win_rate": 0.6
+  }
+}

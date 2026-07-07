@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import builtins
 import json
+import time
+from bisect import bisect_left
 from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta
 from statistics import mean, median
@@ -70,6 +72,23 @@ def _model_report_payload(report: Any, model_version: str | None = None) -> dict
     if model_version:
         payload["model_version"] = model_version
     return payload
+
+
+def _activation_grade_sensitivity(sensitivity: dict[str, Any] | None) -> bool:
+    if sensitivity is None:
+        return False
+    explicit = sensitivity.get("activation_grade_sensitivity")
+    if explicit is not None:
+        return bool(explicit)
+    return (
+        sensitivity.get("completion_status") == "COMPLETE"
+        and sensitivity.get("full_default_grid_complete") is True
+        and not sensitivity.get("partial_grid_disclosure")
+    )
+
+
+def _sensitivity_classification(sensitivity: dict[str, Any] | None) -> str:
+    return "activation_grade" if _activation_grade_sensitivity(sensitivity) else "diagnostic"
 
 
 class DataIngestionService:
@@ -343,6 +362,16 @@ class ValidationWorkflowService:
                     robustness = float(sensitivity.get("robustness_score") or 0.0)
                     if robustness < minimum_robustness_score:
                         rejection_reasons.append("sensitivity_robustness_below_threshold")
+                    if not _activation_grade_sensitivity(sensitivity):
+                        rejection_reasons.append("activation_grade_sensitivity_missing")
+                    if (
+                        sensitivity.get("completion_status") != "COMPLETE"
+                        or sensitivity.get("partial_grid_disclosure")
+                        or sensitivity.get("full_default_grid_complete") is not True
+                    ):
+                        rejection_reasons.append("sensitivity_scope_not_full_grid")
+                    if sensitivity.get("configured_grid_complete") is False:
+                        rejection_reasons.append("sensitivity_grid_incomplete")
                     if sensitivity.get("pass_fail") != "pass":
                         rejection_reasons.append("sensitivity_gate_failed")
             activation_decision = "rejected" if rejection_reasons else str(decision["activation_decision"])
@@ -490,6 +519,22 @@ class ValidationWorkflowService:
             "replay_run_id": sensitivity.get("replay_run_id"),
             "robustness_score": sensitivity.get("robustness_score"),
             "pass_fail": sensitivity.get("pass_fail"),
+            "coverage_mode": sensitivity.get("coverage_mode"),
+            "completion_status": sensitivity.get("completion_status"),
+            "grid_version": sensitivity.get("grid_version"),
+            "grid_hash": sensitivity.get("grid_hash"),
+            "activation_grade_sensitivity": _activation_grade_sensitivity(sensitivity),
+            "sensitivity_classification": _sensitivity_classification(sensitivity),
+            "configured_grid_complete": sensitivity.get("configured_grid_complete"),
+            "full_default_grid_complete": sensitivity.get("full_default_grid_complete"),
+            "partial_grid_disclosure": sensitivity.get("partial_grid_disclosure"),
+            "planned_scenario_count": sensitivity.get("planned_scenario_count"),
+            "completed_scenario_count": sensitivity.get("completed_scenario_count"),
+            "remaining_scenario_count": sensitivity.get("remaining_scenario_count"),
+            "failed_required_scenario_count": sensitivity.get("failed_required_scenario_count"),
+            "resume_token": sensitivity.get("resume_token"),
+            "next_scenario_index": sensitivity.get("next_scenario_index"),
+            "coverage_warnings": sensitivity.get("coverage_warnings") or [],
             "fragility_flags": sensitivity.get("fragility_flags") or [],
             "gate_results": sensitivity.get("gate_results") or {},
         }
@@ -521,6 +566,7 @@ class ValidationWorkflowService:
         calibration_audit_required: bool,
         calibration_audit_id: str | None,
     ) -> dict[str, Any]:
+        validation_started = time.perf_counter()
         if not model_version:
             return self._save_replay_aware_report(
                 None,
@@ -581,7 +627,17 @@ class ValidationWorkflowService:
                 for replay_id, runs in sensitivities_by_run.items()
                 if runs and float(runs[0].get("robustness_score") or 0.0) < minimum_robustness_score
             ]
-            if missing or weak:
+            incomplete = [
+                replay_id
+                for replay_id, runs in sensitivities_by_run.items()
+                if runs and not _activation_grade_sensitivity(runs[0])
+            ]
+            failed = [
+                replay_id
+                for replay_id, runs in sensitivities_by_run.items()
+                if runs and runs[0].get("pass_fail") != "pass"
+            ]
+            if missing or weak or incomplete or failed:
                 return self._save_replay_aware_report(
                     model_version,
                     {
@@ -589,9 +645,14 @@ class ValidationWorkflowService:
                         "rejection_reasons": [
                             *(["sensitivity_required"] if missing else []),
                             *(["sensitivity_robustness_below_threshold"] if weak else []),
+                            *(["activation_grade_sensitivity_missing"] if incomplete else []),
+                            *(["sensitivity_scope_not_full_grid"] if incomplete else []),
+                            *(["sensitivity_gate_failed"] if failed else []),
                         ],
                         "missing_sensitivity_replay_run_ids": missing,
                         "weak_sensitivity_replay_run_ids": weak,
+                        "incomplete_sensitivity_replay_run_ids": incomplete,
+                        "failed_sensitivity_replay_run_ids": failed,
                     },
                 )
         trades_by_run = {replay_id: self.repos.replays.list_trades(replay_id, limit=100_000) for replay_id in replay_ids}
@@ -606,6 +667,8 @@ class ValidationWorkflowService:
         features = self.repos.features.query(symbols=model.get("symbols"), intervals=model.get("intervals"), start=start, end=end)
         candidates = self.repos.candidate_signals.query(symbols=model.get("symbols"), intervals=model.get("intervals"), start=start, end=end)
         comparisons_by_run = {replay_id: self.repos.backtest_comparisons.list_for_replay(replay_id) for replay_id in replay_ids}
+        outcome_build_started = time.perf_counter()
+        validation_outcome_source = "mixed_allowed" if explicit_validation_ids else str(model.get("outcome_source") or "counterfactual_preferred")
         rows = CandidateOutcomeDatasetBuilder().build(
             replay_runs=replay_runs,
             trades_by_run=trades_by_run,
@@ -616,8 +679,9 @@ class ValidationWorkflowService:
             training_start=start,
             training_end=end,
             allow_stale=allow_stale_replay_validation,
-            outcome_source=str(model.get("outcome_source") or "counterfactual_preferred"),
+            outcome_source=validation_outcome_source,
         )
+        outcome_build_seconds = time.perf_counter() - outcome_build_started
         if len(rows) < 3:
             return self._save_replay_aware_report(
                 model_version,
@@ -671,19 +735,37 @@ class ValidationWorkflowService:
         suppressed_rows: list[dict[str, Any]] = []
         score_rows: list[dict[str, Any]] = []
         scored_validation_rows = [*validation_rows, *test_rows]
+        minimum_cell_sample_size = int((model.get("scoring_config") or {}).get("minimum_cell_sample_size") or 5)
+        parsed_training_pool = sorted(
+            [
+                (
+                    datetime.fromisoformat(str(row["signal_timestamp_utc"]).replace("Z", "+00:00")),
+                    row,
+                )
+                for row in training_pool
+            ],
+            key=lambda item: item[0],
+        )
+        training_times = [timestamp for timestamp, _row in parsed_training_pool]
+        cube_cache: dict[int, EvidenceCube] = {}
+        cube_build_seconds = 0.0
+        scoring_seconds = 0.0
         for row in scored_validation_rows:
             row_time = datetime.fromisoformat(str(row["signal_timestamp_utc"]).replace("Z", "+00:00"))
-            train_rows = [
-                prior
-                for prior in training_pool
-                if datetime.fromisoformat(str(prior["signal_timestamp_utc"]).replace("Z", "+00:00")) < row_time - timedelta(minutes=embargo_minutes)
-            ]
-            cube = EvidenceCubeBuilder().build(
-                train_rows,
-                minimum_cell_sample_size=int((model.get("scoring_config") or {}).get("minimum_cell_sample_size") or 5),
-            )
+            eligible_training_count = bisect_left(training_times, row_time - timedelta(minutes=embargo_minutes))
+            cube = cube_cache.get(eligible_training_count)
+            if cube is None:
+                cube_started = time.perf_counter()
+                cube = EvidenceCubeBuilder().build(
+                    [prior for _timestamp, prior in parsed_training_pool[:eligible_training_count]],
+                    minimum_cell_sample_size=minimum_cell_sample_size,
+                )
+                cube_build_seconds += time.perf_counter() - cube_started
+                cube_cache[eligible_training_count] = cube
+            scoring_started = time.perf_counter()
             score = ReplayAwareMetaScorer(cube, dict(model.get("scoring_config") or {})).score(row, row.get("feature_snapshot") or {}, model_version=model_version)
-            score_rows.append(score | {"used_training_rows": len(train_rows)})
+            scoring_seconds += time.perf_counter() - scoring_started
+            score_rows.append(score | {"used_training_rows": eligible_training_count})
             if score["action"] == "TAKE" and row.get("observed_outcome"):
                 selected_rows.append(row)
             else:
@@ -701,9 +783,25 @@ class ValidationWorkflowService:
             maximum_setup_profit_share=float(criteria.get("maximum_setup_profit_share") or 0.80),
         ))
         rejection_reasons = sorted(set(rejection_reasons))
+        window_id = "replay-aware-wf-" + stable_hash(
+            {
+                "model_version": model_version,
+                "training_replay_run_ids": explicit_training_ids,
+                "validation_replay_run_ids": explicit_validation_ids,
+                "test_replay_run_ids": explicit_test_ids,
+                "train_start": train_start.isoformat() if train_start else None,
+                "train_end": train_end.isoformat() if train_end else None,
+                "validation_start": validation_start.isoformat() if validation_start else None,
+                "validation_end": validation_end.isoformat() if validation_end else None,
+                "test_start": test_start.isoformat() if test_start else None,
+                "test_end": test_end.isoformat() if test_end else None,
+                "embargo_minutes": embargo_minutes,
+            }
+        )[:16]
         payload = {
             "model_version": model_version,
             "validation_mode": REPLAY_AWARE_VALIDATION_MODE,
+            "validation_outcome_source": validation_outcome_source,
             "replay_run_ids": replay_ids,
             "training_replay_run_ids": explicit_training_ids or replay_ids[:split_index],
             "validation_replay_run_ids": explicit_validation_ids or replay_ids,
@@ -718,9 +816,26 @@ class ValidationWorkflowService:
                 "test_candidate_count": len(test_rows),
                 "embargo_minutes": embargo_minutes,
             },
+            "performance_profile": {
+                "outcome_build_seconds": round(outcome_build_seconds, 6),
+                "evidence_cube_build_seconds": round(cube_build_seconds, 6),
+                "scoring_seconds": round(scoring_seconds, 6),
+                "total_validation_seconds": round(time.perf_counter() - validation_started, 6),
+                "outcome_row_count": len(rows),
+                "training_candidate_count": len(training_pool),
+                "validation_candidate_count": len(validation_rows),
+                "test_candidate_count": len(test_rows),
+                "scored_candidate_count": len(score_rows),
+                "evidence_cube_build_count": len(cube_cache),
+                "evidence_cube_cache_hit_count": max(0, len(score_rows) - len(cube_cache)),
+                "minimum_cell_sample_size": minimum_cell_sample_size,
+                "scaling_strategy": "prefix_evidence_cube_cache_by_eligible_training_row_count",
+                "no_future_leakage_enforced": True,
+                "embargo_minutes": embargo_minutes,
+            },
             "windows": [
                 {
-                    "window_id": "replay-aware-wf-001",
+                    "window_id": window_id,
                     "split": {
                         "train_start": train_start.isoformat() if train_start else (training_pool[0]["signal_timestamp_utc"] if training_pool else None),
                         "train_end": train_end.isoformat() if train_end else (training_pool[-1]["signal_timestamp_utc"] if training_pool else None),
@@ -1458,8 +1573,8 @@ class ReplayAwareScoringService:
             )
             score = scorer.score(candidate, feature, model_version=model_version)
             scores.append(score)
-            if persist_audit:
-                self.repos.candidate_score_audits.save(score_audit_from_score(score))
+        if persist_audit:
+            self.repos.candidate_score_audits.save_many(score_audit_from_score(score) for score in scores)
         return {"status": "ok", "model_version": model_version, "scores": scores}
 
     def score_audits(
@@ -1773,18 +1888,31 @@ class BacktestService:
         return None
 
     def run_sensitivity(self, replay_run_id: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        payload = payload or {}
         replay = self.repos.replays.get(replay_run_id)
         if replay is None:
             return {"status": "not_found", "replay_run_id": replay_run_id}
         config = ReplayConfig.from_payload(dict(replay.get("config") or {}))
         bars, features, candidates = self._replay_sources(config)
+        requested_sensitivity_run_id = str(payload.get("sensitivity_run_id") or payload.get("resume_sensitivity_run_id") or "")
+        previous_run = self.repos.replay_sensitivity.get(requested_sensitivity_run_id) if requested_sensitivity_run_id else None
+        sensitivity_config_payload = dict((previous_run or {}).get("config") or {})
+        sensitivity_config_payload.update(payload)
+        sensitivity_config = SensitivityConfig.from_payload(sensitivity_config_payload)
+        planned_sensitivity_run_id = self.sensitivity_engine.sensitivity_run_id(replay_run_id, config, sensitivity_config)
+        sensitivity_run_id = requested_sensitivity_run_id or planned_sensitivity_run_id
+        previous_run = previous_run or self.repos.replay_sensitivity.get(sensitivity_run_id)
+        existing_scenarios = self.repos.replay_sensitivity.list_scenarios(sensitivity_run_id) if previous_run else []
         sensitivity = self.sensitivity_engine.run(
             replay_run_id,
             bars,
             features,
             candidates,
             config,
-            SensitivityConfig.from_payload(payload),
+            sensitivity_config,
+            sensitivity_run_id=sensitivity_run_id,
+            existing_scenarios=existing_scenarios,
+            previous_run=previous_run,
         )
         sensitivity["source_config_hash"] = replay.get("config_hash")
         sensitivity["source_input_fingerprint"] = replay.get("input_fingerprint")
@@ -2529,12 +2657,14 @@ class ModelReviewReportService:
         validation_reports = self._validation_reports(model_version, payload)
         calibrations = self._calibrations(model_version, payload)
         drift_reports = self._drift_reports(model_version, payload)
+        sensitivity_reports = self._sensitivities(payload)
         window_set = self.repos.replay_windows.get_set(str(payload.get("window_set_id"))) if payload.get("window_set_id") else None
         readiness_status, readiness_reasons, unresolved_warnings = self._readiness(
             model,
             validation_reports,
             calibrations,
             drift_reports,
+            sensitivity_reports,
             window_set,
             payload,
         )
@@ -2555,6 +2685,7 @@ class ModelReviewReportService:
             "validation_reports": validation_reports,
             "calibration_audits": calibrations,
             "drift_reports": drift_reports,
+            "sensitivity_reports": [self._sensitivity_review_summary(row) for row in sensitivity_reports],
             "window_set_summary": window_set.get("summary") if window_set else None,
             "readiness_status": readiness_status,
             "readiness_reasons": readiness_reasons,
@@ -2563,6 +2694,7 @@ class ModelReviewReportService:
                 "validation_report_count": len(validation_reports),
                 "calibration_audit_count": len(calibrations),
                 "drift_report_count": len(drift_reports),
+                "sensitivity_report_count": len(sensitivity_reports),
                 "readiness_status": readiness_status,
                 "model_activation_unchanged": True,
                 "diagnostic_only": True,
@@ -2605,12 +2737,43 @@ class ModelReviewReportService:
             return [row for row in reports if str(row.get("drift_report_id")) in ids]
         return reports[:1]
 
+    def _sensitivities(self, payload: dict[str, Any]) -> builtins.list[dict[str, Any]]:
+        ids = [str(value) for value in payload.get("sensitivity_run_ids") or []]
+        return [run for sensitivity_id in ids if (run := self.repos.replay_sensitivity.get(sensitivity_id)) is not None]
+
+    def _sensitivity_review_summary(self, sensitivity: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "sensitivity_run_id": sensitivity.get("sensitivity_run_id"),
+            "replay_run_id": sensitivity.get("replay_run_id"),
+            "coverage_mode": sensitivity.get("coverage_mode"),
+            "completion_status": sensitivity.get("completion_status"),
+            "grid_version": sensitivity.get("grid_version"),
+            "grid_hash": sensitivity.get("grid_hash"),
+            "activation_grade_sensitivity": _activation_grade_sensitivity(sensitivity),
+            "sensitivity_classification": _sensitivity_classification(sensitivity),
+            "configured_grid_complete": sensitivity.get("configured_grid_complete"),
+            "full_default_grid_complete": sensitivity.get("full_default_grid_complete"),
+            "partial_grid_disclosure": sensitivity.get("partial_grid_disclosure"),
+            "planned_scenario_count": sensitivity.get("planned_scenario_count"),
+            "completed_scenario_count": sensitivity.get("completed_scenario_count"),
+            "remaining_scenario_count": sensitivity.get("remaining_scenario_count"),
+            "failed_required_scenario_count": sensitivity.get("failed_required_scenario_count"),
+            "resume_token": sensitivity.get("resume_token"),
+            "next_scenario_index": sensitivity.get("next_scenario_index"),
+            "robustness_score": sensitivity.get("robustness_score"),
+            "pass_fail": sensitivity.get("pass_fail"),
+            "fragility_flags": sensitivity.get("fragility_flags") or [],
+            "coverage_warnings": sensitivity.get("coverage_warnings") or [],
+            "gate_results": sensitivity.get("gate_results") or {},
+        }
+
     def _readiness(
         self,
         model: dict[str, Any],
         validation_reports: builtins.list[dict[str, Any]],
         calibrations: builtins.list[dict[str, Any]],
         drift_reports: builtins.list[dict[str, Any]],
+        sensitivity_reports: builtins.list[dict[str, Any]],
         window_set: dict[str, Any] | None,
         payload: dict[str, Any],
     ) -> tuple[str, builtins.list[str], builtins.list[str]]:
@@ -2643,6 +2806,34 @@ class ModelReviewReportService:
             elif severity == "WATCH":
                 reasons.append("calibration_drift_watch")
                 status = self._max_status(status, "WATCH")
+        supplied_sensitivity_ids = {str(value) for value in payload.get("sensitivity_run_ids") or [] if value}
+        found_sensitivity_ids = {str(row.get("sensitivity_run_id")) for row in sensitivity_reports if row.get("sensitivity_run_id")}
+        missing_sensitivity_ids = sorted(supplied_sensitivity_ids - found_sensitivity_ids)
+        if payload.get("sensitivity_required") and not supplied_sensitivity_ids:
+            reasons.append("missing_sensitivity_report")
+            status = "BLOCK"
+        if missing_sensitivity_ids:
+            reasons.append("sensitivity_run_not_found")
+            status = "BLOCK" if payload.get("sensitivity_required") else self._max_status(status, "REVIEW")
+        for sensitivity in sensitivity_reports:
+            unresolved_warnings.extend(str(item) for item in sensitivity.get("coverage_warnings") or [])
+            unresolved_warnings.extend(str(item) for item in sensitivity.get("fragility_flags") or [])
+            if not _activation_grade_sensitivity(sensitivity):
+                reasons.append("activation_grade_sensitivity_missing")
+                status = "BLOCK" if payload.get("sensitivity_required") else self._max_status(status, "REVIEW")
+            if (
+                sensitivity.get("completion_status") != "COMPLETE"
+                or sensitivity.get("partial_grid_disclosure")
+                or sensitivity.get("full_default_grid_complete") is not True
+            ):
+                reasons.append("sensitivity_scope_not_full_grid")
+                status = "BLOCK" if payload.get("sensitivity_required") else self._max_status(status, "REVIEW")
+            if sensitivity.get("configured_grid_complete") is False:
+                reasons.append("sensitivity_grid_incomplete")
+                status = "BLOCK" if payload.get("sensitivity_required") else self._max_status(status, "REVIEW")
+            if sensitivity.get("pass_fail") != "pass":
+                reasons.append("sensitivity_gate_failed")
+                status = "BLOCK" if payload.get("sensitivity_required") else self._max_status(status, "REVIEW")
         if window_set and (window_set.get("summary") or {}).get("failed_window_count"):
             reasons.append("replay_window_failures_present")
             status = self._max_status(status, "REVIEW")

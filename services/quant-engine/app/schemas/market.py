@@ -406,6 +406,7 @@ class ModelReviewRequest(BaseModel):
     comparison_ids: list[str] | None = None
     window_set_id: str | None = None
     calibration_required: bool = False
+    sensitivity_required: bool = False
 
 
 class ResearchCycleRequest(BaseModel):
