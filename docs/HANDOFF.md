@@ -2,6 +2,75 @@
 
 Report status date: 2026-07-06
 
+## Phase 28 Trend Continuation Short Diagnostic
+
+Phase 28 completed the pre-registered `trend continuation short` diagnostic with status `PHASE_28_STATUS = ACCEPTED_REJECTED_BY_SENSITIVITY`. It remained research-only: no model was activated, no proposal was approved, no validation/calibration/sensitivity gate was loosened, no threshold or filter was selected from OOS outcomes, no future labels or future outcomes were used for filters, no realized same-bar ambiguity was used as a live filter, no broker/order/WebSocket production path was used, and no profitability claim is made.
+
+The pre-registered filter spec was `phase28_trend_continuation_short_diagnostic.v1`, hash `9bcac6111f0c6e079b20c6160386d4ad2f78c4c9755cbbad788992350903162b`, source ID `phase28_tcs_13dcd7f09159fc3c`. The primary cohort was `trend continuation short`, side `SHORT`, all symbols in the clean evidence DB, intervals `1min`, `5min`, and `15min` evaluated separately, RTH, minimum RR `1.0`, with no primary symbol, regime, time-bucket, score, or ambiguity exclusions.
+
+The chronological split and leakage checks passed for every interval. OOS candidates were 87 for `1min`, 89 for `5min`, and 189 for `15min`; the `1min` and `5min` OOS samples remained below 100 candidates and had broad-parent reliance proxies above 50%, while `15min` had 189 OOS candidates and a lower 22.22% broad-parent proxy.
+
+Primary results:
+
+| Interval | Portfolio avg R | Portfolio PF | Portfolio robustness | Counterfactual avg R | Counterfactual PF | Counterfactual robustness | Decision |
+|---|---:|---:|---:|---:|---:|---:|---|
+| `1min` | `0.161701` | `1.308001` | `0.00` | `0.111022` | `1.203147` | `0.00` | `REJECTED_BY_SENSITIVITY` |
+| `5min` | `0.168638` | `1.350594` | `0.44` | `0.170699` | `1.350681` | `0.00` | `REJECTED_BY_SENSITIVITY` |
+| `15min` | `-0.058462` | `0.888915` | `0.00` | `-0.064282` | `0.873549` | `0.00` | `REJECTED_BY_SENSITIVITY` |
+
+Every interval failed portfolio or counterfactual full-grid sensitivity. The `1min` and `5min` positive zero-cost baselines were fragile under sensitivity; `15min` was negative before sensitivity. Exploratory symbol/regime/time-bucket/same-bar diagnostics are recorded as diagnostic-only and must not be promoted into live filters from this phase.
+
+Phase 28 generated 9 exports:
+
+- `export_f00b2408e06695c97dcbff7ba0bc366d` - filter spec.
+- `export_9dd83209406e88bc97e9d4df1aa339f9` - data sufficiency.
+- `export_867286944863d5e13a282bb0a7544275` - split/leakage.
+- `export_6b761552056a1173e890e10a5ab74ebe` - primary results.
+- `export_3d55ecc7ca0e1b813cf6347a28cb6b86` - exploratory results.
+- `export_5ff966cce536fdec7af9f26bec515508` - comparison.
+- `export_8a5679bc9bf94442d090179abb7e7ad6` - decision.
+- `export_f98c0a35f5bce38b2869a2b80ff686ce` - 450 sensitivity scenario rows.
+- `export_35de7fe0f9b479e5df2ef64eb25c3bb3` - export manifest.
+
+Final post-test evidence audit remained `CLEAN`, fixture rows `0`, active models `0`, dirty windows `none`, total rows `212002`, exports `340`, replay runs `72`, sensitivity runs `68`, and sensitivity scenarios `4248`. The required first-read file `docs/status/PHASE_21U_COMPLETION_2026-07-05.md` remains missing from the checkout and is still treated as an upstream documentation gap.
+
+Phase 28 reports:
+
+- `docs/status/PHASE_28_PLAN_2026-07-06.md`
+- `docs/status/PHASE_28_FILTER_SPEC_2026-07-06.md`
+- `docs/status/PHASE_28_DATA_SUFFICIENCY_2026-07-06.md`
+- `docs/status/PHASE_28_SPLIT_AND_LEAKAGE_2026-07-06.md`
+- `docs/status/PHASE_28_PRIMARY_RESULTS_2026-07-06.md`
+- `docs/status/PHASE_28_EXPLORATORY_RESULTS_2026-07-06.md`
+- `docs/status/PHASE_28_COMPARISON_2026-07-06.md`
+- `docs/status/PHASE_28_DECISION_2026-07-06.md`
+- `docs/status/PHASE_28_COMPLETION_2026-07-06.md`
+
+Exact next recommended work: do not activate the current trend-continuation-short formulation. Either select another signal family through a pre-registered research plan or design a materially new trend-continuation-short hypothesis with a new spec hash and training-only rationale.
+
+## Phase 27 Ten-AM Discard And Signal-Family Post-Mortem
+
+Phase 27 completed the formal discard/post-mortem for the current 15min `ten_am_reversal_zone` specialist with status `PHASE_27_STATUS = ACCEPTED_TEN_AM_DISCARDED_NEXT_FAMILY_SELECTED`. It remained research-only: no model was activated, no proposal was approved, no validation/calibration/sensitivity gate was loosened, no threshold was selected from OOS outcomes, no stale gate was bypassed, no broker/order/WebSocket production path was used, and no profitability claim is made.
+
+The current Ten-AM specialist is discarded. Phase 26 killed it by solving the selected-count objection and still failing: Policy A selected 145 OOS actionable candidates, portfolio avg R was `-0.053513`, counterfactual avg R was `-0.057926`, and both portfolio and counterfactual full-grid robustness were `0.00`. All Phase 26 policies A-H failed full-grid sensitivity. Exact specialist evidence remains weak, but only as a secondary cause: 79 exact specialist cells, 7 with 5+ outcomes, 0 with 10+ outcomes, and 113 of 145 OOS candidates broad-parent-reliant.
+
+The signal-family post-mortem preserves the weak-family findings from Phase 22: `NVDA` and `SPY` were the heaviest symbol contributors, longs were worse than shorts, `power_hour` and `afternoon_continuation` were weak, `chop` had the largest total regime loss, and `trend_long` was weak by average R. Current Ten-AM may only be revisited through a materially redesigned, pre-registered hypothesis with a new spec hash.
+
+The next research lead is `trend continuation short`, and only as a diagnostic candidate family. It was the only setup family with positive source replay attribution in Phase 22: 715 observed trades, total `3.960479R`, avg `0.005539R`, PF `1.009968`, win rate `41.40%`, same-bar rate `5.73%`. It is not activation-ready, because no full-grid robust subset was found and the observed edge is tiny.
+
+Phase 27 reports:
+
+- `docs/status/PHASE_27_PLAN_2026-07-06.md`
+- `docs/status/PHASE_27_TEN_AM_HISTORY_2026-07-06.md`
+- `docs/status/PHASE_27_FAILURE_ATTRIBUTION_2026-07-06.md`
+- `docs/status/PHASE_27_SIGNAL_FAMILY_POST_MORTEM_2026-07-06.md`
+- `docs/status/PHASE_27_RESEARCH_RULES_2026-07-06.md`
+- `docs/status/PHASE_27_NEXT_SIGNAL_FAMILY_SELECTION_2026-07-06.md`
+- `docs/status/PHASE_27_TEN_AM_DISCARD_RECORD_2026-07-06.md`
+- `docs/status/PHASE_27_COMPLETION_2026-07-06.md`
+
+Exact next recommended phase: `PHASE 28 - Pre-Registered Trend Continuation Short Diagnostic`. Keep it research-only unless a future explicit activation phase passes chronological OOS validation, calibration, model review, proposal lifecycle, and full-grid sensitivity.
+
 ## Phase 26 Broader Ten-AM Evidence-Density Result
 
 Phase 26 completed the pre-registered broader 15min `ten_am_reversal_zone` evidence-density experiment with status `PHASE_26_STATUS = ACCEPTED_DISCARD_TEN_AM`. It remained research-only: no model was activated, no proposal was approved, no threshold was selected from OOS outcomes, no stale gate was bypassed, no broker/order/WebSocket production path was used, and no profitability claim is made.

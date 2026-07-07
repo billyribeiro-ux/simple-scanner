@@ -1,0 +1,1789 @@
+{
+  "artifacts": {
+    "comparison": {
+      "phase22_score_take_watch": {
+        "interpretation": "positive_observed_replay_without_full_grid_grade_action_proof",
+        "take_avg_r": 0.93602,
+        "watch_avg_r": 0.402456
+      },
+      "phase22_trend_continuation_short_source": {
+        "avg_r": 0.005539,
+        "interpretation": "positive_source_replay_only_not_full_grid_proof",
+        "observed_trades": 715,
+        "profit_factor": 1.009968,
+        "same_bar_rate": 0.0573,
+        "total_r": 3.960479,
+        "win_rate": 0.414
+      },
+      "phase26_ten_am_all_actionable": {
+        "counterfactual_avg_r": -0.057926,
+        "counterfactual_robustness": 0.0,
+        "decision": "DISCARD_TEN_AM_HYPOTHESIS",
+        "oos_selected": 145,
+        "portfolio_avg_r": -0.053513,
+        "portfolio_robustness": 0.0
+      },
+      "phase28_primary_summary": {
+        "15min": {
+          "calibration_status": "diagnostic_rejected",
+          "calibration_warnings": [
+            "sensitivity_robustness_below_threshold"
+          ],
+          "counterfactual": {
+            "avg_r": -0.06428234200132746,
+            "max_drawdown_r": -37.49971191832263,
+            "median_r": -0.5749032341193032,
+            "profit_factor": 0.87354920601049,
+            "replay_run_id": "replay_20260707145605_46e5409418002ad0f72380eb",
+            "same_bar_count": 11,
+            "same_bar_rate": 0.05913978494623656,
+            "simulation_type": "model_training_counterfactual",
+            "total_candidates": 189,
+            "total_r": -11.956515612246907,
+            "total_trades": 186,
+            "warnings": [
+              "Counterfactual replay is candidate-quality evidence only; metrics are not executable portfolio P/L."
+            ],
+            "win_rate": 0.43010752688172044
+          },
+          "counterfactual_sensitivity": {
+            "completed_scenario_count": 75,
+            "completion_status": "COMPLETE",
+            "coverage_mode": "FULL_GRID",
+            "coverage_warnings": [],
+            "failed_scenario_count": 75,
+            "fragility_flags": [
+              "expectancy_turns_non_positive_under_small_costs",
+              "profit_factor_not_robust_under_small_costs",
+              "robustness_score_below_threshold",
+              "same_bar_path_assumption_affects_results"
+            ],
+            "full_default_grid_complete": true,
+            "pass_fail": "fail",
+            "passed_scenario_count": 0,
+            "planned_scenario_count": 75,
+            "replay_run_id": "replay_20260707145605_46e5409418002ad0f72380eb",
+            "robustness_score": 0.0,
+            "sensitivity_run_id": "sensitivity_0bd27236348751249b0c4ffee3f6a112",
+            "worst_scenario_avg_r": -0.5222096759249634,
+            "worst_scenario_profit_factor": 0.2550629359036986
+          },
+          "decision": "REJECTED_BY_SENSITIVITY",
+          "embargo_candidates": 3,
+          "oos_candidates": 189,
+          "portfolio": {
+            "avg_r": -0.058461850268815875,
+            "max_drawdown_r": -14.257854286612805,
+            "median_r": -0.6761054421768646,
+            "profit_factor": 0.8889149812176736,
+            "replay_run_id": "replay_20260707145604_8ad43606db5101a7530cecfb",
+            "same_bar_count": 6,
+            "same_bar_rate": 0.07692307692307693,
+            "simulation_type": "candidate_market_replay",
+            "total_candidates": 189,
+            "total_r": -4.5600243209676385,
+            "total_trades": 78,
+            "warnings": [],
+            "win_rate": 0.41025641025641024
+          },
+          "portfolio_sensitivity": {
+            "completed_scenario_count": 75,
+            "completion_status": "COMPLETE",
+            "coverage_mode": "FULL_GRID",
+            "coverage_warnings": [],
+            "failed_scenario_count": 75,
+            "fragility_flags": [
+              "expectancy_turns_non_positive_under_small_costs",
+              "profit_factor_not_robust_under_small_costs",
+              "robustness_score_below_threshold",
+              "same_bar_path_assumption_affects_results"
+            ],
+            "full_default_grid_complete": true,
+            "pass_fail": "fail",
+            "passed_scenario_count": 0,
+            "planned_scenario_count": 75,
+            "replay_run_id": "replay_20260707145604_8ad43606db5101a7530cecfb",
+            "robustness_score": 0.0,
+            "sensitivity_run_id": "sensitivity_1a75b509b4a4a06a42741a605025fcd8",
+            "worst_scenario_avg_r": -0.5047892261311956,
+            "worst_scenario_profit_factor": 0.28099240006002774
+          },
+          "status": "RECORDED",
+          "training_candidates": 286,
+          "validation_reasons": [
+            "counterfactual_oos_expectancy_not_positive",
+            "portfolio_oos_expectancy_not_positive",
+            "full_grid_sensitivity_failed"
+          ],
+          "validation_status": "rejected"
+        },
+        "1min": {
+          "calibration_status": "diagnostic_rejected",
+          "calibration_warnings": [
+            "sensitivity_robustness_below_threshold"
+          ],
+          "counterfactual": {
+            "avg_r": 0.11102215014672508,
+            "max_drawdown_r": -23.000000000000014,
+            "median_r": -1.0,
+            "profit_factor": 1.2031469130344332,
+            "replay_run_id": "replay_20260707145553_0fa4e8271f193d8d470873ff",
+            "same_bar_count": 2,
+            "same_bar_rate": 0.023255813953488372,
+            "simulation_type": "model_training_counterfactual",
+            "total_candidates": 87,
+            "total_r": 9.547904912618357,
+            "total_trades": 86,
+            "warnings": [
+              "Counterfactual replay is candidate-quality evidence only; metrics are not executable portfolio P/L."
+            ],
+            "win_rate": 0.45348837209302323
+          },
+          "counterfactual_sensitivity": {
+            "completed_scenario_count": 75,
+            "completion_status": "COMPLETE",
+            "coverage_mode": "FULL_GRID",
+            "coverage_warnings": [],
+            "failed_scenario_count": 75,
+            "fragility_flags": [
+              "expectancy_turns_non_positive_under_small_costs",
+              "profit_factor_not_robust_under_small_costs",
+              "robustness_score_below_threshold",
+              "same_bar_path_assumption_affects_results"
+            ],
+            "full_default_grid_complete": true,
+            "pass_fail": "fail",
+            "passed_scenario_count": 0,
+            "planned_scenario_count": 75,
+            "replay_run_id": "replay_20260707145553_0fa4e8271f193d8d470873ff",
+            "robustness_score": 0.0,
+            "sensitivity_run_id": "sensitivity_0674c2bfee34ec075e5091d1707745c0",
+            "worst_scenario_avg_r": -0.6220930232558137,
+            "worst_scenario_profit_factor": 0.2671232876712331
+          },
+          "decision": "REJECTED_BY_SENSITIVITY",
+          "embargo_candidates": 1,
+          "oos_candidates": 87,
+          "portfolio": {
+            "avg_r": 0.1617005813953456,
+            "max_drawdown_r": -11.999999999999936,
+            "median_r": -1.0,
+            "profit_factor": 1.308001107419706,
+            "replay_run_id": "replay_20260707145551_63c139924925d9a1fecea3d6",
+            "same_bar_count": 1,
+            "same_bar_rate": 0.025,
+            "simulation_type": "candidate_market_replay",
+            "total_candidates": 87,
+            "total_r": 6.468023255813824,
+            "total_trades": 40,
+            "warnings": [],
+            "win_rate": 0.475
+          },
+          "portfolio_sensitivity": {
+            "completed_scenario_count": 75,
+            "completion_status": "COMPLETE",
+            "coverage_mode": "FULL_GRID",
+            "coverage_warnings": [],
+            "failed_scenario_count": 75,
+            "fragility_flags": [
+              "expectancy_turns_non_positive_under_small_costs",
+              "profit_factor_not_robust_under_small_costs",
+              "robustness_score_below_threshold",
+              "same_bar_path_assumption_affects_results"
+            ],
+            "full_default_grid_complete": true,
+            "pass_fail": "fail",
+            "passed_scenario_count": 0,
+            "planned_scenario_count": 75,
+            "replay_run_id": "replay_20260707145551_63c139924925d9a1fecea3d6",
+            "robustness_score": 0.0,
+            "sensitivity_run_id": "sensitivity_e59e3d13e2d7d74025ff19c62762c5cc",
+            "worst_scenario_avg_r": -0.6739130434782611,
+            "worst_scenario_profit_factor": 0.2249999999999997
+          },
+          "status": "RECORDED",
+          "training_candidates": 130,
+          "validation_reasons": [
+            "full_grid_sensitivity_failed"
+          ],
+          "validation_status": "rejected"
+        },
+        "5min": {
+          "calibration_status": "diagnostic_rejected",
+          "calibration_warnings": [
+            "sensitivity_robustness_below_threshold"
+          ],
+          "counterfactual": {
+            "avg_r": 0.1706988377549823,
+            "max_drawdown_r": -19.18368828286591,
+            "median_r": -0.16273516245091735,
+            "profit_factor": 1.350680554442258,
+            "replay_run_id": "replay_20260707145601_6b867698c9216f4fd8d69bf8",
+            "same_bar_count": 5,
+            "same_bar_rate": 0.056818181818181816,
+            "simulation_type": "model_training_counterfactual",
+            "total_candidates": 89,
+            "total_r": 15.021497722438442,
+            "total_trades": 88,
+            "warnings": [
+              "Counterfactual replay is candidate-quality evidence only; metrics are not executable portfolio P/L."
+            ],
+            "win_rate": 0.48863636363636365
+          },
+          "counterfactual_sensitivity": {
+            "completed_scenario_count": 75,
+            "completion_status": "COMPLETE",
+            "coverage_mode": "FULL_GRID",
+            "coverage_warnings": [],
+            "failed_scenario_count": 75,
+            "fragility_flags": [
+              "robustness_score_below_threshold",
+              "same_bar_path_assumption_affects_results"
+            ],
+            "full_default_grid_complete": true,
+            "pass_fail": "fail",
+            "passed_scenario_count": 0,
+            "planned_scenario_count": 75,
+            "replay_run_id": "replay_20260707145601_6b867698c9216f4fd8d69bf8",
+            "robustness_score": 0.0,
+            "sensitivity_run_id": "sensitivity_798b713f5fcc90ebb1d3fd393d2743ed",
+            "worst_scenario_avg_r": -0.36392122128520427,
+            "worst_scenario_profit_factor": 0.49302464554306746
+          },
+          "decision": "REJECTED_BY_SENSITIVITY",
+          "embargo_candidates": 6,
+          "oos_candidates": 89,
+          "portfolio": {
+            "avg_r": 0.16863843589009522,
+            "max_drawdown_r": -7.647208860057956,
+            "median_r": -0.30786026200871913,
+            "profit_factor": 1.3505939475497863,
+            "replay_run_id": "replay_20260707145601_34fda880748c6ac0060e8ff9",
+            "same_bar_count": 4,
+            "same_bar_rate": 0.11428571428571428,
+            "simulation_type": "candidate_market_replay",
+            "total_candidates": 89,
+            "total_r": 5.902345256153333,
+            "total_trades": 35,
+            "warnings": [],
+            "win_rate": 0.45714285714285713
+          },
+          "portfolio_sensitivity": {
+            "completed_scenario_count": 75,
+            "completion_status": "COMPLETE",
+            "coverage_mode": "FULL_GRID",
+            "coverage_warnings": [],
+            "failed_scenario_count": 42,
+            "fragility_flags": [
+              "robustness_score_below_threshold",
+              "same_bar_path_assumption_affects_results"
+            ],
+            "full_default_grid_complete": true,
+            "pass_fail": "fail",
+            "passed_scenario_count": 33,
+            "planned_scenario_count": 75,
+            "replay_run_id": "replay_20260707145601_34fda880748c6ac0060e8ff9",
+            "robustness_score": 0.44,
+            "sensitivity_run_id": "sensitivity_64e22ec30dd805200870837402e23e04",
+            "worst_scenario_avg_r": -0.3801482825789267,
+            "worst_scenario_profit_factor": 0.4640762714618381
+          },
+          "status": "RECORDED",
+          "training_candidates": 141,
+          "validation_reasons": [
+            "full_grid_sensitivity_failed"
+          ],
+          "validation_status": "rejected"
+        }
+      },
+      "source_id": "phase28_tcs_13dcd7f09159fc3c",
+      "spec_hash": "9bcac6111f0c6e079b20c6160386d4ad2f78c4c9755cbbad788992350903162b"
+    },
+    "data_sufficiency": {
+      "intervals": {
+        "15min": {
+          "bars": 3432,
+          "candidates": 478,
+          "candidates_by_day": {
+            "2026-05-15": 7,
+            "2026-05-18": 27,
+            "2026-05-19": 4,
+            "2026-05-20": 4,
+            "2026-05-21": 7,
+            "2026-05-22": 9,
+            "2026-05-26": 14,
+            "2026-05-27": 5,
+            "2026-05-28": 3,
+            "2026-05-29": 13,
+            "2026-06-01": 6,
+            "2026-06-02": 12,
+            "2026-06-03": 15,
+            "2026-06-04": 2,
+            "2026-06-05": 51,
+            "2026-06-08": 16,
+            "2026-06-09": 37,
+            "2026-06-10": 34,
+            "2026-06-11": 8,
+            "2026-06-12": 7,
+            "2026-06-15": 3,
+            "2026-06-16": 7,
+            "2026-06-17": 34,
+            "2026-06-18": 5,
+            "2026-06-22": 22,
+            "2026-06-23": 28,
+            "2026-06-24": 29,
+            "2026-06-25": 15,
+            "2026-06-26": 9,
+            "2026-06-29": 12,
+            "2026-06-30": 1,
+            "2026-07-01": 2,
+            "2026-07-02": 30
+          },
+          "candidates_by_regime": {
+            "chop": 5,
+            "mean_reversion": 84,
+            "trend_long": 54,
+            "trend_short": 335
+          },
+          "candidates_by_symbol": {
+            "AAPL": 141,
+            "NVDA": 174,
+            "QQQ": 105,
+            "SPY": 58
+          },
+          "candidates_by_time_bucket": {
+            "afternoon_continuation": 95,
+            "lunch_window": 187,
+            "off_hours": 111,
+            "power_hour": 85
+          },
+          "days_needed": [
+            {
+              "additional_days_needed": 0,
+              "estimated_total_days": 2,
+              "target_oos_selected": 30
+            },
+            {
+              "additional_days_needed": 0,
+              "estimated_total_days": 4,
+              "target_oos_selected": 50
+            },
+            {
+              "additional_days_needed": 0,
+              "estimated_total_days": 7,
+              "target_oos_selected": 100
+            }
+          ],
+          "embargo_candidates": 3,
+          "oos_broad_parent_reliance_rate_proxy": 0.2222222222222222,
+          "oos_broad_parent_reliant_candidates_proxy": 42,
+          "oos_candidates": 189,
+          "oos_days": 12,
+          "oos_exact_cell_keys": 34,
+          "oos_exact_cell_match_keys": 31,
+          "training_candidates": 286,
+          "training_exact_cells": 43,
+          "training_exact_cells_10plus": 10,
+          "training_exact_cells_5plus": 21
+        },
+        "1min": {
+          "bars": 15600,
+          "candidates": 218,
+          "candidates_by_day": {
+            "2026-06-18": 10,
+            "2026-06-22": 18,
+            "2026-06-23": 12,
+            "2026-06-24": 12,
+            "2026-06-25": 73,
+            "2026-06-26": 17,
+            "2026-06-29": 29,
+            "2026-06-30": 11,
+            "2026-07-01": 9,
+            "2026-07-02": 27
+          },
+          "candidates_by_regime": {
+            "chop": 36,
+            "mean_reversion": 15,
+            "opening_drive": 75,
+            "trend_short": 92
+          },
+          "candidates_by_symbol": {
+            "AAPL": 70,
+            "NVDA": 103,
+            "QQQ": 43,
+            "SPY": 2
+          },
+          "candidates_by_time_bucket": {
+            "afternoon_continuation": 7,
+            "lunch_window": 8,
+            "off_hours": 48,
+            "opening_drive": 89,
+            "power_hour": 36,
+            "ten_am_reversal_zone": 30
+          },
+          "days_needed": [
+            {
+              "additional_days_needed": 0,
+              "estimated_total_days": 2,
+              "target_oos_selected": 30
+            },
+            {
+              "additional_days_needed": 0,
+              "estimated_total_days": 3,
+              "target_oos_selected": 50
+            },
+            {
+              "additional_days_needed": 1,
+              "estimated_total_days": 6,
+              "target_oos_selected": 100
+            }
+          ],
+          "embargo_candidates": 1,
+          "oos_broad_parent_reliance_rate_proxy": 0.632183908045977,
+          "oos_broad_parent_reliant_candidates_proxy": 55,
+          "oos_candidates": 87,
+          "oos_days": 5,
+          "oos_exact_cell_keys": 19,
+          "oos_exact_cell_match_keys": 11,
+          "training_candidates": 130,
+          "training_exact_cells": 26,
+          "training_exact_cells_10plus": 5,
+          "training_exact_cells_5plus": 5
+        },
+        "5min": {
+          "bars": 3120,
+          "candidates": 236,
+          "candidates_by_day": {
+            "2026-06-18": 7,
+            "2026-06-22": 31,
+            "2026-06-23": 26,
+            "2026-06-24": 34,
+            "2026-06-25": 49,
+            "2026-06-26": 14,
+            "2026-06-29": 28,
+            "2026-06-30": 9,
+            "2026-07-01": 5,
+            "2026-07-02": 33
+          },
+          "candidates_by_regime": {
+            "chop": 9,
+            "mean_reversion": 54,
+            "opening_drive": 7,
+            "trend_long": 19,
+            "trend_short": 147
+          },
+          "candidates_by_symbol": {
+            "AAPL": 74,
+            "NVDA": 89,
+            "QQQ": 59,
+            "SPY": 14
+          },
+          "candidates_by_time_bucket": {
+            "afternoon_continuation": 26,
+            "lunch_window": 58,
+            "off_hours": 72,
+            "opening_drive": 9,
+            "power_hour": 33,
+            "ten_am_reversal_zone": 38
+          },
+          "days_needed": [
+            {
+              "additional_days_needed": 0,
+              "estimated_total_days": 2,
+              "target_oos_selected": 30
+            },
+            {
+              "additional_days_needed": 0,
+              "estimated_total_days": 3,
+              "target_oos_selected": 50
+            },
+            {
+              "additional_days_needed": 1,
+              "estimated_total_days": 6,
+              "target_oos_selected": 100
+            }
+          ],
+          "embargo_candidates": 6,
+          "oos_broad_parent_reliance_rate_proxy": 0.5617977528089888,
+          "oos_broad_parent_reliant_candidates_proxy": 50,
+          "oos_candidates": 89,
+          "oos_days": 5,
+          "oos_exact_cell_keys": 29,
+          "oos_exact_cell_match_keys": 19,
+          "training_candidates": 141,
+          "training_exact_cells": 41,
+          "training_exact_cells_10plus": 2,
+          "training_exact_cells_5plus": 11
+        }
+      },
+      "source_id": "phase28_tcs_13dcd7f09159fc3c",
+      "spec_hash": "9bcac6111f0c6e079b20c6160386d4ad2f78c4c9755cbbad788992350903162b"
+    },
+    "decision": {
+      "active_models_unchanged": true,
+      "final_decision": "REJECTED_BY_SENSITIVITY",
+      "final_reason": "Every interval failed portfolio or counterfactual full-grid sensitivity.",
+      "interval_decisions": {
+        "15min": "REJECTED_BY_SENSITIVITY",
+        "1min": "REJECTED_BY_SENSITIVITY",
+        "5min": "REJECTED_BY_SENSITIVITY"
+      },
+      "no_activation": true,
+      "no_proposal_approval": true,
+      "phase28_status": "ACCEPTED_REJECTED_BY_SENSITIVITY",
+      "source_id": "phase28_tcs_13dcd7f09159fc3c",
+      "spec_hash": "9bcac6111f0c6e079b20c6160386d4ad2f78c4c9755cbbad788992350903162b"
+    },
+    "exploratory_results": {
+      "branches": [
+        {
+          "diagnostic_only": true,
+          "dimension": "symbol",
+          "groups": {
+            "AAPL": {
+              "avg_r": -0.021528337494359562,
+              "max_drawdown_r": -6.0,
+              "median_r": -1.0,
+              "profit_factor": 0.9623254093848708,
+              "same_bar_count": 0,
+              "same_bar_rate": 0.0,
+              "total_r": -0.4520950873815508,
+              "trades": 21,
+              "win_rate": 0.42857142857142855
+            },
+            "NVDA": {
+              "avg_r": 0.19791666666666766,
+              "max_drawdown_r": -15.499999999999936,
+              "median_r": -1.0,
+              "profit_factor": 1.380000000000002,
+              "same_bar_count": 2,
+              "same_bar_rate": 0.041666666666666664,
+              "total_r": 9.500000000000048,
+              "trades": 48,
+              "win_rate": 0.4791666666666667
+            },
+            "QQQ": {
+              "avg_r": 0.0294117647058741,
+              "max_drawdown_r": -7.0,
+              "median_r": -1.0,
+              "profit_factor": 1.049999999999986,
+              "same_bar_count": 0,
+              "same_bar_rate": 0.0,
+              "total_r": 0.49999999999985967,
+              "trades": 17,
+              "win_rate": 0.4117647058823529
+            }
+          },
+          "interval": "1min"
+        },
+        {
+          "diagnostic_only": true,
+          "dimension": "market_regime",
+          "groups": {
+            "chop": {
+              "avg_r": 0.5978682170542411,
+              "max_drawdown_r": -3.0,
+              "median_r": 1.4999999999999385,
+              "profit_factor": 2.793604651162723,
+              "same_bar_count": 0,
+              "same_bar_rate": 0.0,
+              "total_r": 8.968023255813616,
+              "trades": 15,
+              "win_rate": 0.6666666666666666
+            },
+            "mean_reversion": {
+              "avg_r": -1.0,
+              "max_drawdown_r": -6.0,
+              "median_r": -1.0,
+              "profit_factor": 0.0,
+              "same_bar_count": 1,
+              "same_bar_rate": 0.16666666666666666,
+              "total_r": -6.0,
+              "trades": 6,
+              "win_rate": 0.0
+            },
+            "opening_drive": {
+              "avg_r": 0.3750000000000045,
+              "max_drawdown_r": -5.0,
+              "median_r": 1.5,
+              "profit_factor": 1.8333333333333433,
+              "same_bar_count": 0,
+              "same_bar_rate": 0.0,
+              "total_r": 7.50000000000009,
+              "trades": 20,
+              "win_rate": 0.55
+            },
+            "trend_short": {
+              "avg_r": -0.02044707429322998,
+              "max_drawdown_r": -17.0,
+              "median_r": -1.0,
+              "profit_factor": 0.9659215428446167,
+              "same_bar_count": 1,
+              "same_bar_rate": 0.022222222222222223,
+              "total_r": -0.9201183431953491,
+              "trades": 45,
+              "win_rate": 0.4
+            }
+          },
+          "interval": "1min"
+        },
+        {
+          "diagnostic_only": true,
+          "dimension": "time_bucket",
+          "groups": {
+            "afternoon_continuation": {
+              "avg_r": -1.0,
+              "max_drawdown_r": -1.0,
+              "median_r": -1.0,
+              "profit_factor": 0.0,
+              "same_bar_count": 0,
+              "same_bar_rate": 0.0,
+              "total_r": -1.0,
+              "trades": 1,
+              "win_rate": 0.0
+            },
+            "lunch_window": {
+              "avg_r": 1.4999999999999214,
+              "max_drawdown_r": 0.0,
+              "median_r": 1.4999999999999214,
+              "profit_factor": null,
+              "same_bar_count": 0,
+              "same_bar_rate": 0.0,
+              "total_r": 1.4999999999999214,
+              "trades": 1,
+              "win_rate": 1.0
+            },
+            "off_hours": {
+              "avg_r": -0.215308482060068,
+              "max_drawdown_r": -7.5,
+              "median_r": -1.0,
+              "profit_factor": 0.6698603275078957,
+              "same_bar_count": 0,
+              "same_bar_rate": 0.0,
+              "total_r": -4.952095087381564,
+              "trades": 23,
+              "win_rate": 0.34782608695652173
+            },
+            "opening_drive": {
+              "avg_r": 0.4130434782608698,
+              "max_drawdown_r": -6.0,
+              "median_r": 1.4999999999999585,
+              "profit_factor": 1.9500000000000006,
+              "same_bar_count": 0,
+              "same_bar_rate": 0.0,
+              "total_r": 9.500000000000005,
+              "trades": 23,
+              "win_rate": 0.5652173913043478
+            },
+            "power_hour": {
+              "avg_r": 0.34615384615384603,
+              "max_drawdown_r": -3.0,
+              "median_r": 1.4999999999999454,
+              "profit_factor": 1.7499999999999998,
+              "same_bar_count": 1,
+              "same_bar_rate": 0.07692307692307693,
+              "total_r": 4.499999999999998,
+              "trades": 13,
+              "win_rate": 0.5384615384615384
+            },
+            "ten_am_reversal_zone": {
+              "avg_r": -1.687538997430238e-16,
+              "max_drawdown_r": -11.5,
+              "median_r": -1.0,
+              "profit_factor": 0.9999999999999998,
+              "same_bar_count": 1,
+              "same_bar_rate": 0.04,
+              "total_r": -4.218847493575595e-15,
+              "trades": 25,
+              "win_rate": 0.4
+            }
+          },
+          "interval": "1min"
+        },
+        {
+          "diagnostic_only": true,
+          "dimension": "realized_same_bar_ambiguity",
+          "groups": {
+            "same_bar_false": {
+              "avg_r": 0.13747505848355188,
+              "max_drawdown_r": -22.000000000000014,
+              "median_r": -1.0,
+              "profit_factor": 1.2566201091692968,
+              "same_bar_count": 0,
+              "same_bar_rate": 0.0,
+              "total_r": 11.547904912618357,
+              "trades": 84,
+              "win_rate": 0.4642857142857143
+            },
+            "same_bar_true": {
+              "avg_r": -1.0,
+              "max_drawdown_r": -2.0,
+              "median_r": -1.0,
+              "profit_factor": 0.0,
+              "same_bar_count": 2,
+              "same_bar_rate": 1.0,
+              "total_r": -2.0,
+              "trades": 2,
+              "win_rate": 0.0
+            }
+          },
+          "interval": "1min",
+          "not_a_live_filter": true
+        },
+        {
+          "diagnostic_only": true,
+          "dimension": "symbol",
+          "groups": {
+            "AAPL": {
+              "avg_r": -0.17532022047303847,
+              "max_drawdown_r": -6.032365070879916,
+              "median_r": -1.0,
+              "profit_factor": 0.7181713409945081,
+              "same_bar_count": 0,
+              "same_bar_rate": 0.0,
+              "total_r": -4.032365070879885,
+              "trades": 23,
+              "win_rate": 0.34782608695652173
+            },
+            "NVDA": {
+              "avg_r": 0.12556262512222124,
+              "max_drawdown_r": -7.414151747655591,
+              "median_r": -0.263706992230874,
+              "profit_factor": 1.2575308005016774,
+              "same_bar_count": 4,
+              "same_bar_rate": 0.10526315789473684,
+              "total_r": 4.771379754644407,
+              "trades": 38,
+              "win_rate": 0.47368421052631576
+            },
+            "QQQ": {
+              "avg_r": 0.5774992625510434,
+              "max_drawdown_r": -5.0,
+              "median_r": 1.49999999999997,
+              "profit_factor": 2.6603103798342502,
+              "same_bar_count": 1,
+              "same_bar_rate": 0.043478260869565216,
+              "total_r": 13.282483038674,
+              "trades": 23,
+              "win_rate": 0.6521739130434783
+            },
+            "SPY": {
+              "avg_r": 0.24999999999997952,
+              "max_drawdown_r": -2.0,
+              "median_r": 0.24999999999997868,
+              "profit_factor": 1.4999999999999591,
+              "same_bar_count": 0,
+              "same_bar_rate": 0.0,
+              "total_r": 0.9999999999999181,
+              "trades": 4,
+              "win_rate": 0.5
+            }
+          },
+          "interval": "5min"
+        },
+        {
+          "diagnostic_only": true,
+          "dimension": "market_regime",
+          "groups": {
+            "chop": {
+              "avg_r": 0.24999999999997868,
+              "max_drawdown_r": -1.0,
+              "median_r": 0.24999999999997868,
+              "profit_factor": 1.4999999999999574,
+              "same_bar_count": 1,
+              "same_bar_rate": 0.5,
+              "total_r": 0.49999999999995737,
+              "trades": 2,
+              "win_rate": 0.5
+            },
+            "mean_reversion": {
+              "avg_r": -0.03664459691477221,
+              "max_drawdown_r": -8.032365070879859,
+              "median_r": -1.0,
+              "profit_factor": 0.9319467593886311,
+              "same_bar_count": 1,
+              "same_bar_rate": 0.047619047619047616,
+              "total_r": -0.7695365352102164,
+              "trades": 21,
+              "win_rate": 0.42857142857142855
+            },
+            "opening_drive": {
+              "avg_r": 0.6666666666666666,
+              "max_drawdown_r": -1.0,
+              "median_r": 1.5,
+              "profit_factor": 3.0,
+              "same_bar_count": 0,
+              "same_bar_rate": 0.0,
+              "total_r": 2.0,
+              "trades": 3,
+              "win_rate": 0.6666666666666666
+            },
+            "trend_long": {
+              "avg_r": 0.4433551198257012,
+              "max_drawdown_r": -3.5098039215686327,
+              "median_r": 1.4999999999999607,
+              "profit_factor": 2.136871508379869,
+              "same_bar_count": 0,
+              "same_bar_rate": 0.0,
+              "total_r": 3.990196078431311,
+              "trades": 9,
+              "win_rate": 0.5555555555555556
+            },
+            "trend_short": {
+              "avg_r": 0.17548751281542246,
+              "max_drawdown_r": -15.904347826087006,
+              "median_r": -0.01761006289311557,
+              "profit_factor": 1.3574824188975931,
+              "same_bar_count": 3,
+              "same_bar_rate": 0.05660377358490566,
+              "total_r": 9.30083817921739,
+              "trades": 53,
+              "win_rate": 0.49056603773584906
+            }
+          },
+          "interval": "5min"
+        },
+        {
+          "diagnostic_only": true,
+          "dimension": "time_bucket",
+          "groups": {
+            "afternoon_continuation": {
+              "avg_r": -0.5000000000000118,
+              "max_drawdown_r": -2.5000000000000586,
+              "median_r": -1.0,
+              "profit_factor": 0.3749999999999854,
+              "same_bar_count": 0,
+              "same_bar_rate": 0.0,
+              "total_r": -2.5000000000000586,
+              "trades": 5,
+              "win_rate": 0.2
+            },
+            "lunch_window": {
+              "avg_r": -0.06558213242212675,
+              "max_drawdown_r": -8.925196850393645,
+              "median_r": -1.0,
+              "profit_factor": 0.8891649921670698,
+              "same_bar_count": 0,
+              "same_bar_rate": 0.0,
+              "total_r": -1.4428069132867885,
+              "trades": 22,
+              "win_rate": 0.36363636363636365
+            },
+            "off_hours": {
+              "avg_r": 0.5891710862350227,
+              "max_drawdown_r": -3.0,
+              "median_r": 1.1165760869565222,
+              "profit_factor": 2.914806030263824,
+              "same_bar_count": 1,
+              "same_bar_rate": 0.038461538461538464,
+              "total_r": 15.31844824211059,
+              "trades": 26,
+              "win_rate": 0.6923076923076923
+            },
+            "opening_drive": {
+              "avg_r": 0.8749999999999973,
+              "max_drawdown_r": -1.0,
+              "median_r": 1.4999999999999947,
+              "profit_factor": 4.499999999999989,
+              "same_bar_count": 0,
+              "same_bar_rate": 0.0,
+              "total_r": 3.4999999999999893,
+              "trades": 4,
+              "win_rate": 0.75
+            },
+            "power_hour": {
+              "avg_r": -0.5296464330412998,
+              "max_drawdown_r": -4.237171464330398,
+              "median_r": -1.0,
+              "profit_factor": 0.2938047559449337,
+              "same_bar_count": 4,
+              "same_bar_rate": 0.5,
+              "total_r": -4.237171464330398,
+              "trades": 8,
+              "win_rate": 0.25
+            },
+            "ten_am_reversal_zone": {
+              "avg_r": 0.19056642860630896,
+              "max_drawdown_r": -10.616972142054845,
+              "median_r": -0.30786026200871913,
+              "profit_factor": 1.4051732225704625,
+              "same_bar_count": 0,
+              "same_bar_rate": 0.0,
+              "total_r": 4.383027857945106,
+              "trades": 23,
+              "win_rate": 0.4782608695652174
+            }
+          },
+          "interval": "5min"
+        },
+        {
+          "diagnostic_only": true,
+          "dimension": "realized_same_bar_ambiguity",
+          "groups": {
+            "same_bar_false": {
+              "avg_r": 0.24122286412576432,
+              "max_drawdown_r": -17.946516818535507,
+              "median_r": 0.26282853566960224,
+              "profit_factor": 1.5291754353890055,
+              "same_bar_count": 0,
+              "same_bar_rate": 0.0,
+              "total_r": 20.02149772243844,
+              "trades": 83,
+              "win_rate": 0.5180722891566265
+            },
+            "same_bar_true": {
+              "avg_r": -1.0,
+              "max_drawdown_r": -5.0,
+              "median_r": -1.0,
+              "profit_factor": 0.0,
+              "same_bar_count": 5,
+              "same_bar_rate": 1.0,
+              "total_r": -5.0,
+              "trades": 5,
+              "win_rate": 0.0
+            }
+          },
+          "interval": "5min",
+          "not_a_live_filter": true
+        },
+        {
+          "diagnostic_only": true,
+          "dimension": "symbol",
+          "groups": {
+            "AAPL": {
+              "avg_r": -0.212558173169942,
+              "max_drawdown_r": -13.403089204039137,
+              "median_r": -0.897757361541687,
+              "profit_factor": 0.6407489724617087,
+              "same_bar_count": 5,
+              "same_bar_rate": 0.08333333333333333,
+              "total_r": -12.75349039019652,
+              "trades": 60,
+              "win_rate": 0.3333333333333333
+            },
+            "NVDA": {
+              "avg_r": -0.0978793583241842,
+              "max_drawdown_r": -15.349454410952493,
+              "median_r": -0.4517277511395594,
+              "profit_factor": 0.8012250720478618,
+              "same_bar_count": 3,
+              "same_bar_rate": 0.05,
+              "total_r": -5.872761499451053,
+              "trades": 60,
+              "win_rate": 0.45
+            },
+            "QQQ": {
+              "avg_r": 0.14239287602143402,
+              "max_drawdown_r": -9.0,
+              "median_r": 0.426569136223666,
+              "profit_factor": 1.3297645531536708,
+              "same_bar_count": 3,
+              "same_bar_rate": 0.07142857142857142,
+              "total_r": 5.980500792900229,
+              "trades": 42,
+              "win_rate": 0.5476190476190477
+            },
+            "SPY": {
+              "avg_r": 0.028718145187518154,
+              "max_drawdown_r": -6.002909576301247,
+              "median_r": -0.26601562621447494,
+              "profit_factor": 1.0605973443356647,
+              "same_bar_count": 0,
+              "same_bar_rate": 0.0,
+              "total_r": 0.6892354845004357,
+              "trades": 24,
+              "win_rate": 0.4166666666666667
+            }
+          },
+          "interval": "15min"
+        },
+        {
+          "diagnostic_only": true,
+          "dimension": "market_regime",
+          "groups": {
+            "chop": {
+              "avg_r": 0.34513597249668304,
+              "max_drawdown_r": -0.2854207373567452,
+              "median_r": 0.25577409279458285,
+              "profit_factor": 5.836873111504862,
+              "same_bar_count": 0,
+              "same_bar_rate": 0.0,
+              "total_r": 1.3805438899867322,
+              "trades": 4,
+              "win_rate": 0.5
+            },
+            "mean_reversion": {
+              "avg_r": -0.0263773845097515,
+              "max_drawdown_r": -9.029496402877683,
+              "median_r": -0.5294964028777035,
+              "profit_factor": 0.9461462890239951,
+              "same_bar_count": 4,
+              "same_bar_rate": 0.10256410256410256,
+              "total_r": -1.0287179958803085,
+              "trades": 39,
+              "win_rate": 0.4358974358974359
+            },
+            "trend_long": {
+              "avg_r": -0.29437222293562026,
+              "max_drawdown_r": -5.578078078078086,
+              "median_r": -1.0,
+              "profit_factor": 0.5338571813549682,
+              "same_bar_count": 0,
+              "same_bar_rate": 0.0,
+              "total_r": -3.532466675227443,
+              "trades": 12,
+              "win_rate": 0.3333333333333333
+            },
+            "trend_short": {
+              "avg_r": -0.0669914109246251,
+              "max_drawdown_r": -32.15310650985813,
+              "median_r": -0.6938775510203963,
+              "profit_factor": 0.8701584481031661,
+              "same_bar_count": 7,
+              "same_bar_rate": 0.05343511450381679,
+              "total_r": -8.775874831125888,
+              "trades": 131,
+              "win_rate": 0.4351145038167939
+            }
+          },
+          "interval": "15min"
+        },
+        {
+          "diagnostic_only": true,
+          "dimension": "time_bucket",
+          "groups": {
+            "afternoon_continuation": {
+              "avg_r": -0.19334397485866733,
+              "max_drawdown_r": -13.000000000000032,
+              "median_r": -1.0,
+              "profit_factor": 0.6818473034541015,
+              "same_bar_count": 0,
+              "same_bar_rate": 0.0,
+              "total_r": -8.507134893781362,
+              "trades": 44,
+              "win_rate": 0.3409090909090909
+            },
+            "lunch_window": {
+              "avg_r": 0.0875605822880239,
+              "max_drawdown_r": -14.30005775558902,
+              "median_r": 0.1484544997352693,
+              "profit_factor": 1.1961070062403465,
+              "same_bar_count": 1,
+              "same_bar_rate": 0.014285714285714285,
+              "total_r": 6.1292407601616725,
+              "trades": 70,
+              "win_rate": 0.5142857142857142
+            },
+            "off_hours": {
+              "avg_r": -0.11149787345996623,
+              "max_drawdown_r": -11.831665829921388,
+              "median_r": -0.1974468053180001,
+              "profit_factor": 0.7568182521182149,
+              "same_bar_count": 1,
+              "same_bar_rate": 0.02631578947368421,
+              "total_r": -4.236919191478717,
+              "trades": 38,
+              "win_rate": 0.4473684210526316
+            },
+            "power_hour": {
+              "avg_r": -0.15710889079848533,
+              "max_drawdown_r": -10.045273419183374,
+              "median_r": -0.8587444194722513,
+              "profit_factor": 0.7208866277166112,
+              "same_bar_count": 9,
+              "same_bar_rate": 0.2647058823529412,
+              "total_r": -5.341702287148501,
+              "trades": 34,
+              "win_rate": 0.35294117647058826
+            }
+          },
+          "interval": "15min"
+        },
+        {
+          "diagnostic_only": true,
+          "dimension": "realized_same_bar_ambiguity",
+          "groups": {
+            "same_bar_false": {
+              "avg_r": -0.0054658034985537556,
+              "max_drawdown_r": -29.58286541257395,
+              "median_r": -0.27127659574467666,
+              "profit_factor": 0.988552221144189,
+              "same_bar_count": 0,
+              "same_bar_rate": 0.0,
+              "total_r": -0.9565156122469073,
+              "trades": 175,
+              "win_rate": 0.45714285714285713
+            },
+            "same_bar_true": {
+              "avg_r": -1.0,
+              "max_drawdown_r": -11.0,
+              "median_r": -1.0,
+              "profit_factor": 0.0,
+              "same_bar_count": 11,
+              "same_bar_rate": 1.0,
+              "total_r": -11.0,
+              "trades": 11,
+              "win_rate": 0.0
+            }
+          },
+          "interval": "15min",
+          "not_a_live_filter": true
+        }
+      ],
+      "source_id": "phase28_tcs_13dcd7f09159fc3c",
+      "spec_hash": "9bcac6111f0c6e079b20c6160386d4ad2f78c4c9755cbbad788992350903162b"
+    },
+    "filter_spec": {
+      "leakage_controls": [
+        "no_oos_outcomes",
+        "no_future_labels",
+        "no_future_outcomes",
+        "no_realized_same_bar_live_filter"
+      ],
+      "primary_cohort": {
+        "additional_filters": [],
+        "interval_evaluation": "separate_no_blending",
+        "intervals": [
+          "1min",
+          "5min",
+          "15min"
+        ],
+        "setup_family": "trend continuation",
+        "setup_type": "trend continuation short",
+        "side": "SHORT",
+        "symbols": "all_symbols_in_clean_evidence_db"
+      },
+      "source_id": "phase28_tcs_13dcd7f09159fc3c",
+      "spec_hash": "9bcac6111f0c6e079b20c6160386d4ad2f78c4c9755cbbad788992350903162b",
+      "spec_version": "phase28_trend_continuation_short_diagnostic.v1",
+      "split_rule": {
+        "15min": {
+          "candidate_count": 478,
+          "candidate_end": "2026-07-02T17:45:00+00:00",
+          "candidate_start": "2026-05-15T18:15:00+00:00",
+          "embargo_candidate_count": 3,
+          "embargo_end": "2026-06-16T16:00:00+00:00",
+          "leakage_checks": {
+            "filters_use_signal_time_only": true,
+            "future_labels_used_for_filters": false,
+            "future_outcomes_used_for_filters": false,
+            "oos_outcomes_used_for_filters": false,
+            "realized_same_bar_used_as_live_filter": false
+          },
+          "method": "per_interval_chronological_candidate_split",
+          "oos_candidate_count": 189,
+          "oos_end": "2026-07-02T17:45:00+00:00",
+          "oos_start": "2026-06-16T19:45:00+00:00",
+          "training_candidate_count": 286,
+          "training_end": "2026-06-16T15:00:00+00:00"
+        },
+        "1min": {
+          "candidate_count": 218,
+          "candidate_end": "2026-07-02T15:29:00+00:00",
+          "candidate_start": "2026-06-18T13:35:00+00:00",
+          "embargo_candidate_count": 1,
+          "embargo_end": "2026-06-26T16:53:00+00:00",
+          "leakage_checks": {
+            "filters_use_signal_time_only": true,
+            "future_labels_used_for_filters": false,
+            "future_outcomes_used_for_filters": false,
+            "oos_outcomes_used_for_filters": false,
+            "realized_same_bar_used_as_live_filter": false
+          },
+          "method": "per_interval_chronological_candidate_split",
+          "oos_candidate_count": 87,
+          "oos_end": "2026-07-02T15:29:00+00:00",
+          "oos_start": "2026-06-26T19:22:00+00:00",
+          "training_candidate_count": 130,
+          "training_end": "2026-06-26T15:53:00+00:00"
+        },
+        "5min": {
+          "candidate_count": 236,
+          "candidate_end": "2026-07-02T19:20:00+00:00",
+          "candidate_start": "2026-06-18T15:05:00+00:00",
+          "embargo_candidate_count": 6,
+          "embargo_end": "2026-06-25T20:15:00+00:00",
+          "leakage_checks": {
+            "filters_use_signal_time_only": true,
+            "future_labels_used_for_filters": false,
+            "future_outcomes_used_for_filters": false,
+            "oos_outcomes_used_for_filters": false,
+            "realized_same_bar_used_as_live_filter": false
+          },
+          "method": "per_interval_chronological_candidate_split",
+          "oos_candidate_count": 89,
+          "oos_end": "2026-07-02T19:20:00+00:00",
+          "oos_start": "2026-06-26T13:55:00+00:00",
+          "training_candidate_count": 141,
+          "training_end": "2026-06-25T19:15:00+00:00"
+        }
+      }
+    },
+    "primary_results": {
+      "intervals": {
+        "15min": {
+          "calibration_status": "diagnostic_rejected",
+          "calibration_warnings": [
+            "sensitivity_robustness_below_threshold"
+          ],
+          "counterfactual": {
+            "avg_r": -0.06428234200132746,
+            "max_drawdown_r": -37.49971191832263,
+            "median_r": -0.5749032341193032,
+            "profit_factor": 0.87354920601049,
+            "replay_run_id": "replay_20260707145605_46e5409418002ad0f72380eb",
+            "same_bar_count": 11,
+            "same_bar_rate": 0.05913978494623656,
+            "simulation_type": "model_training_counterfactual",
+            "total_candidates": 189,
+            "total_r": -11.956515612246907,
+            "total_trades": 186,
+            "warnings": [
+              "Counterfactual replay is candidate-quality evidence only; metrics are not executable portfolio P/L."
+            ],
+            "win_rate": 0.43010752688172044
+          },
+          "counterfactual_sensitivity": {
+            "completed_scenario_count": 75,
+            "completion_status": "COMPLETE",
+            "coverage_mode": "FULL_GRID",
+            "coverage_warnings": [],
+            "failed_scenario_count": 75,
+            "fragility_flags": [
+              "expectancy_turns_non_positive_under_small_costs",
+              "profit_factor_not_robust_under_small_costs",
+              "robustness_score_below_threshold",
+              "same_bar_path_assumption_affects_results"
+            ],
+            "full_default_grid_complete": true,
+            "pass_fail": "fail",
+            "passed_scenario_count": 0,
+            "planned_scenario_count": 75,
+            "replay_run_id": "replay_20260707145605_46e5409418002ad0f72380eb",
+            "robustness_score": 0.0,
+            "sensitivity_run_id": "sensitivity_0bd27236348751249b0c4ffee3f6a112",
+            "worst_scenario_avg_r": -0.5222096759249634,
+            "worst_scenario_profit_factor": 0.2550629359036986
+          },
+          "decision": "REJECTED_BY_SENSITIVITY",
+          "embargo_candidates": 3,
+          "oos_candidates": 189,
+          "portfolio": {
+            "avg_r": -0.058461850268815875,
+            "max_drawdown_r": -14.257854286612805,
+            "median_r": -0.6761054421768646,
+            "profit_factor": 0.8889149812176736,
+            "replay_run_id": "replay_20260707145604_8ad43606db5101a7530cecfb",
+            "same_bar_count": 6,
+            "same_bar_rate": 0.07692307692307693,
+            "simulation_type": "candidate_market_replay",
+            "total_candidates": 189,
+            "total_r": -4.5600243209676385,
+            "total_trades": 78,
+            "warnings": [],
+            "win_rate": 0.41025641025641024
+          },
+          "portfolio_sensitivity": {
+            "completed_scenario_count": 75,
+            "completion_status": "COMPLETE",
+            "coverage_mode": "FULL_GRID",
+            "coverage_warnings": [],
+            "failed_scenario_count": 75,
+            "fragility_flags": [
+              "expectancy_turns_non_positive_under_small_costs",
+              "profit_factor_not_robust_under_small_costs",
+              "robustness_score_below_threshold",
+              "same_bar_path_assumption_affects_results"
+            ],
+            "full_default_grid_complete": true,
+            "pass_fail": "fail",
+            "passed_scenario_count": 0,
+            "planned_scenario_count": 75,
+            "replay_run_id": "replay_20260707145604_8ad43606db5101a7530cecfb",
+            "robustness_score": 0.0,
+            "sensitivity_run_id": "sensitivity_1a75b509b4a4a06a42741a605025fcd8",
+            "worst_scenario_avg_r": -0.5047892261311956,
+            "worst_scenario_profit_factor": 0.28099240006002774
+          },
+          "status": "RECORDED",
+          "training_candidates": 286,
+          "validation_reasons": [
+            "counterfactual_oos_expectancy_not_positive",
+            "portfolio_oos_expectancy_not_positive",
+            "full_grid_sensitivity_failed"
+          ],
+          "validation_status": "rejected"
+        },
+        "1min": {
+          "calibration_status": "diagnostic_rejected",
+          "calibration_warnings": [
+            "sensitivity_robustness_below_threshold"
+          ],
+          "counterfactual": {
+            "avg_r": 0.11102215014672508,
+            "max_drawdown_r": -23.000000000000014,
+            "median_r": -1.0,
+            "profit_factor": 1.2031469130344332,
+            "replay_run_id": "replay_20260707145553_0fa4e8271f193d8d470873ff",
+            "same_bar_count": 2,
+            "same_bar_rate": 0.023255813953488372,
+            "simulation_type": "model_training_counterfactual",
+            "total_candidates": 87,
+            "total_r": 9.547904912618357,
+            "total_trades": 86,
+            "warnings": [
+              "Counterfactual replay is candidate-quality evidence only; metrics are not executable portfolio P/L."
+            ],
+            "win_rate": 0.45348837209302323
+          },
+          "counterfactual_sensitivity": {
+            "completed_scenario_count": 75,
+            "completion_status": "COMPLETE",
+            "coverage_mode": "FULL_GRID",
+            "coverage_warnings": [],
+            "failed_scenario_count": 75,
+            "fragility_flags": [
+              "expectancy_turns_non_positive_under_small_costs",
+              "profit_factor_not_robust_under_small_costs",
+              "robustness_score_below_threshold",
+              "same_bar_path_assumption_affects_results"
+            ],
+            "full_default_grid_complete": true,
+            "pass_fail": "fail",
+            "passed_scenario_count": 0,
+            "planned_scenario_count": 75,
+            "replay_run_id": "replay_20260707145553_0fa4e8271f193d8d470873ff",
+            "robustness_score": 0.0,
+            "sensitivity_run_id": "sensitivity_0674c2bfee34ec075e5091d1707745c0",
+            "worst_scenario_avg_r": -0.6220930232558137,
+            "worst_scenario_profit_factor": 0.2671232876712331
+          },
+          "decision": "REJECTED_BY_SENSITIVITY",
+          "embargo_candidates": 1,
+          "oos_candidates": 87,
+          "portfolio": {
+            "avg_r": 0.1617005813953456,
+            "max_drawdown_r": -11.999999999999936,
+            "median_r": -1.0,
+            "profit_factor": 1.308001107419706,
+            "replay_run_id": "replay_20260707145551_63c139924925d9a1fecea3d6",
+            "same_bar_count": 1,
+            "same_bar_rate": 0.025,
+            "simulation_type": "candidate_market_replay",
+            "total_candidates": 87,
+            "total_r": 6.468023255813824,
+            "total_trades": 40,
+            "warnings": [],
+            "win_rate": 0.475
+          },
+          "portfolio_sensitivity": {
+            "completed_scenario_count": 75,
+            "completion_status": "COMPLETE",
+            "coverage_mode": "FULL_GRID",
+            "coverage_warnings": [],
+            "failed_scenario_count": 75,
+            "fragility_flags": [
+              "expectancy_turns_non_positive_under_small_costs",
+              "profit_factor_not_robust_under_small_costs",
+              "robustness_score_below_threshold",
+              "same_bar_path_assumption_affects_results"
+            ],
+            "full_default_grid_complete": true,
+            "pass_fail": "fail",
+            "passed_scenario_count": 0,
+            "planned_scenario_count": 75,
+            "replay_run_id": "replay_20260707145551_63c139924925d9a1fecea3d6",
+            "robustness_score": 0.0,
+            "sensitivity_run_id": "sensitivity_e59e3d13e2d7d74025ff19c62762c5cc",
+            "worst_scenario_avg_r": -0.6739130434782611,
+            "worst_scenario_profit_factor": 0.2249999999999997
+          },
+          "status": "RECORDED",
+          "training_candidates": 130,
+          "validation_reasons": [
+            "full_grid_sensitivity_failed"
+          ],
+          "validation_status": "rejected"
+        },
+        "5min": {
+          "calibration_status": "diagnostic_rejected",
+          "calibration_warnings": [
+            "sensitivity_robustness_below_threshold"
+          ],
+          "counterfactual": {
+            "avg_r": 0.1706988377549823,
+            "max_drawdown_r": -19.18368828286591,
+            "median_r": -0.16273516245091735,
+            "profit_factor": 1.350680554442258,
+            "replay_run_id": "replay_20260707145601_6b867698c9216f4fd8d69bf8",
+            "same_bar_count": 5,
+            "same_bar_rate": 0.056818181818181816,
+            "simulation_type": "model_training_counterfactual",
+            "total_candidates": 89,
+            "total_r": 15.021497722438442,
+            "total_trades": 88,
+            "warnings": [
+              "Counterfactual replay is candidate-quality evidence only; metrics are not executable portfolio P/L."
+            ],
+            "win_rate": 0.48863636363636365
+          },
+          "counterfactual_sensitivity": {
+            "completed_scenario_count": 75,
+            "completion_status": "COMPLETE",
+            "coverage_mode": "FULL_GRID",
+            "coverage_warnings": [],
+            "failed_scenario_count": 75,
+            "fragility_flags": [
+              "robustness_score_below_threshold",
+              "same_bar_path_assumption_affects_results"
+            ],
+            "full_default_grid_complete": true,
+            "pass_fail": "fail",
+            "passed_scenario_count": 0,
+            "planned_scenario_count": 75,
+            "replay_run_id": "replay_20260707145601_6b867698c9216f4fd8d69bf8",
+            "robustness_score": 0.0,
+            "sensitivity_run_id": "sensitivity_798b713f5fcc90ebb1d3fd393d2743ed",
+            "worst_scenario_avg_r": -0.36392122128520427,
+            "worst_scenario_profit_factor": 0.49302464554306746
+          },
+          "decision": "REJECTED_BY_SENSITIVITY",
+          "embargo_candidates": 6,
+          "oos_candidates": 89,
+          "portfolio": {
+            "avg_r": 0.16863843589009522,
+            "max_drawdown_r": -7.647208860057956,
+            "median_r": -0.30786026200871913,
+            "profit_factor": 1.3505939475497863,
+            "replay_run_id": "replay_20260707145601_34fda880748c6ac0060e8ff9",
+            "same_bar_count": 4,
+            "same_bar_rate": 0.11428571428571428,
+            "simulation_type": "candidate_market_replay",
+            "total_candidates": 89,
+            "total_r": 5.902345256153333,
+            "total_trades": 35,
+            "warnings": [],
+            "win_rate": 0.45714285714285713
+          },
+          "portfolio_sensitivity": {
+            "completed_scenario_count": 75,
+            "completion_status": "COMPLETE",
+            "coverage_mode": "FULL_GRID",
+            "coverage_warnings": [],
+            "failed_scenario_count": 42,
+            "fragility_flags": [
+              "robustness_score_below_threshold",
+              "same_bar_path_assumption_affects_results"
+            ],
+            "full_default_grid_complete": true,
+            "pass_fail": "fail",
+            "passed_scenario_count": 33,
+            "planned_scenario_count": 75,
+            "replay_run_id": "replay_20260707145601_34fda880748c6ac0060e8ff9",
+            "robustness_score": 0.44,
+            "sensitivity_run_id": "sensitivity_64e22ec30dd805200870837402e23e04",
+            "worst_scenario_avg_r": -0.3801482825789267,
+            "worst_scenario_profit_factor": 0.4640762714618381
+          },
+          "status": "RECORDED",
+          "training_candidates": 141,
+          "validation_reasons": [
+            "full_grid_sensitivity_failed"
+          ],
+          "validation_status": "rejected"
+        }
+      },
+      "source_id": "phase28_tcs_13dcd7f09159fc3c",
+      "spec_hash": "9bcac6111f0c6e079b20c6160386d4ad2f78c4c9755cbbad788992350903162b"
+    },
+    "split_leakage": {
+      "intervals": {
+        "15min": {
+          "candidate_count": 478,
+          "candidate_end": "2026-07-02T17:45:00+00:00",
+          "candidate_start": "2026-05-15T18:15:00+00:00",
+          "embargo_candidate_count": 3,
+          "embargo_end": "2026-06-16T16:00:00+00:00",
+          "leakage_checks": {
+            "filters_use_signal_time_only": true,
+            "future_labels_used_for_filters": false,
+            "future_outcomes_used_for_filters": false,
+            "oos_outcomes_used_for_filters": false,
+            "realized_same_bar_used_as_live_filter": false
+          },
+          "method": "per_interval_chronological_candidate_split",
+          "oos_candidate_count": 189,
+          "oos_end": "2026-07-02T17:45:00+00:00",
+          "oos_start": "2026-06-16T19:45:00+00:00",
+          "training_candidate_count": 286,
+          "training_end": "2026-06-16T15:00:00+00:00"
+        },
+        "1min": {
+          "candidate_count": 218,
+          "candidate_end": "2026-07-02T15:29:00+00:00",
+          "candidate_start": "2026-06-18T13:35:00+00:00",
+          "embargo_candidate_count": 1,
+          "embargo_end": "2026-06-26T16:53:00+00:00",
+          "leakage_checks": {
+            "filters_use_signal_time_only": true,
+            "future_labels_used_for_filters": false,
+            "future_outcomes_used_for_filters": false,
+            "oos_outcomes_used_for_filters": false,
+            "realized_same_bar_used_as_live_filter": false
+          },
+          "method": "per_interval_chronological_candidate_split",
+          "oos_candidate_count": 87,
+          "oos_end": "2026-07-02T15:29:00+00:00",
+          "oos_start": "2026-06-26T19:22:00+00:00",
+          "training_candidate_count": 130,
+          "training_end": "2026-06-26T15:53:00+00:00"
+        },
+        "5min": {
+          "candidate_count": 236,
+          "candidate_end": "2026-07-02T19:20:00+00:00",
+          "candidate_start": "2026-06-18T15:05:00+00:00",
+          "embargo_candidate_count": 6,
+          "embargo_end": "2026-06-25T20:15:00+00:00",
+          "leakage_checks": {
+            "filters_use_signal_time_only": true,
+            "future_labels_used_for_filters": false,
+            "future_outcomes_used_for_filters": false,
+            "oos_outcomes_used_for_filters": false,
+            "realized_same_bar_used_as_live_filter": false
+          },
+          "method": "per_interval_chronological_candidate_split",
+          "oos_candidate_count": 89,
+          "oos_end": "2026-07-02T19:20:00+00:00",
+          "oos_start": "2026-06-26T13:55:00+00:00",
+          "training_candidate_count": 141,
+          "training_end": "2026-06-25T19:15:00+00:00"
+        }
+      },
+      "leakage_checks": [
+        {
+          "interval": "1min",
+          "status": "PASS"
+        },
+        {
+          "interval": "5min",
+          "status": "PASS"
+        },
+        {
+          "interval": "15min",
+          "status": "PASS"
+        }
+      ],
+      "source_id": "phase28_tcs_13dcd7f09159fc3c",
+      "spec_hash": "9bcac6111f0c6e079b20c6160386d4ad2f78c4c9755cbbad788992350903162b"
+    }
+  },
+  "exports": [
+    {
+      "created_at": "2026-07-07T14:56:09.771718+00:00",
+      "export_id": "export_f00b2408e06695c97dcbff7ba0bc366d",
+      "export_type": "phase28_filter_spec",
+      "file_sha256": "fb3c1e52f03c2e6123f6ec4a6e71fd36ea74456e7c824de56568e60b9b4ebc55",
+      "format": "json",
+      "path": "exports/phase28_filter_spec_20260706.json",
+      "payload": {
+        "artifact": "filter_spec",
+        "created_at": "2026-07-07T14:56:09.771718+00:00",
+        "export_type": "phase28_filter_spec",
+        "file_sha256": "fb3c1e52f03c2e6123f6ec4a6e71fd36ea74456e7c824de56568e60b9b4ebc55",
+        "format": "json",
+        "phase": 28,
+        "row_count": 1,
+        "source_run_id": "phase28_tcs_13dcd7f09159fc3c",
+        "spec_hash": "9bcac6111f0c6e079b20c6160386d4ad2f78c4c9755cbbad788992350903162b",
+        "workbook_sheets": []
+      },
+      "row_count": 1,
+      "source_run_id": "phase28_tcs_13dcd7f09159fc3c",
+      "workbook_sheets": []
+    },
+    {
+      "created_at": "2026-07-07T14:56:09.774989+00:00",
+      "export_id": "export_9dd83209406e88bc97e9d4df1aa339f9",
+      "export_type": "phase28_data_sufficiency",
+      "file_sha256": "c4c7b8433d66beb280b9a9d2b931614a9ed0821259152fb19d00853f98b455e7",
+      "format": "json",
+      "path": "exports/phase28_data_sufficiency_20260706.json",
+      "payload": {
+        "artifact": "data_sufficiency",
+        "created_at": "2026-07-07T14:56:09.774989+00:00",
+        "export_type": "phase28_data_sufficiency",
+        "file_sha256": "c4c7b8433d66beb280b9a9d2b931614a9ed0821259152fb19d00853f98b455e7",
+        "format": "json",
+        "phase": 28,
+        "row_count": 3,
+        "source_run_id": "phase28_tcs_13dcd7f09159fc3c",
+        "spec_hash": "9bcac6111f0c6e079b20c6160386d4ad2f78c4c9755cbbad788992350903162b",
+        "workbook_sheets": []
+      },
+      "row_count": 3,
+      "source_run_id": "phase28_tcs_13dcd7f09159fc3c",
+      "workbook_sheets": []
+    },
+    {
+      "created_at": "2026-07-07T14:56:09.777148+00:00",
+      "export_id": "export_867286944863d5e13a282bb0a7544275",
+      "export_type": "phase28_split_leakage",
+      "file_sha256": "263c906c7e31254c304508f41cdd6dc2d840714306f784858f4652319c5963b9",
+      "format": "json",
+      "path": "exports/phase28_split_leakage_20260706.json",
+      "payload": {
+        "artifact": "split_leakage",
+        "created_at": "2026-07-07T14:56:09.777148+00:00",
+        "export_type": "phase28_split_leakage",
+        "file_sha256": "263c906c7e31254c304508f41cdd6dc2d840714306f784858f4652319c5963b9",
+        "format": "json",
+        "phase": 28,
+        "row_count": 3,
+        "source_run_id": "phase28_tcs_13dcd7f09159fc3c",
+        "spec_hash": "9bcac6111f0c6e079b20c6160386d4ad2f78c4c9755cbbad788992350903162b",
+        "workbook_sheets": []
+      },
+      "row_count": 3,
+      "source_run_id": "phase28_tcs_13dcd7f09159fc3c",
+      "workbook_sheets": []
+    },
+    {
+      "created_at": "2026-07-07T14:56:09.779019+00:00",
+      "export_id": "export_6b761552056a1173e890e10a5ab74ebe",
+      "export_type": "phase28_primary_results",
+      "file_sha256": "6b600885f3d9923c749cfac690aedf3fa646812e1533bb97a26b47c357e7b3e4",
+      "format": "json",
+      "path": "exports/phase28_primary_results_20260706.json",
+      "payload": {
+        "artifact": "primary_results",
+        "created_at": "2026-07-07T14:56:09.779019+00:00",
+        "export_type": "phase28_primary_results",
+        "file_sha256": "6b600885f3d9923c749cfac690aedf3fa646812e1533bb97a26b47c357e7b3e4",
+        "format": "json",
+        "phase": 28,
+        "row_count": 3,
+        "source_run_id": "phase28_tcs_13dcd7f09159fc3c",
+        "spec_hash": "9bcac6111f0c6e079b20c6160386d4ad2f78c4c9755cbbad788992350903162b",
+        "workbook_sheets": []
+      },
+      "row_count": 3,
+      "source_run_id": "phase28_tcs_13dcd7f09159fc3c",
+      "workbook_sheets": []
+    },
+    {
+      "created_at": "2026-07-07T14:56:09.781157+00:00",
+      "export_id": "export_3d55ecc7ca0e1b813cf6347a28cb6b86",
+      "export_type": "phase28_exploratory_results",
+      "file_sha256": "070a24208b991fa1d3934384624ee722d0f6fde36b7339ed8dab86301c0611fc",
+      "format": "json",
+      "path": "exports/phase28_exploratory_results_20260706.json",
+      "payload": {
+        "artifact": "exploratory_results",
+        "created_at": "2026-07-07T14:56:09.781157+00:00",
+        "export_type": "phase28_exploratory_results",
+        "file_sha256": "070a24208b991fa1d3934384624ee722d0f6fde36b7339ed8dab86301c0611fc",
+        "format": "json",
+        "phase": 28,
+        "row_count": 12,
+        "source_run_id": "phase28_tcs_13dcd7f09159fc3c",
+        "spec_hash": "9bcac6111f0c6e079b20c6160386d4ad2f78c4c9755cbbad788992350903162b",
+        "workbook_sheets": []
+      },
+      "row_count": 12,
+      "source_run_id": "phase28_tcs_13dcd7f09159fc3c",
+      "workbook_sheets": []
+    },
+    {
+      "created_at": "2026-07-07T14:56:09.783232+00:00",
+      "export_id": "export_5ff966cce536fdec7af9f26bec515508",
+      "export_type": "phase28_comparison",
+      "file_sha256": "03122e1610f9de1db8ffee7efd9f75de479ec82e78e251fcc0fa8dcc41ce706c",
+      "format": "json",
+      "path": "exports/phase28_comparison_20260706.json",
+      "payload": {
+        "artifact": "comparison",
+        "created_at": "2026-07-07T14:56:09.783232+00:00",
+        "export_type": "phase28_comparison",
+        "file_sha256": "03122e1610f9de1db8ffee7efd9f75de479ec82e78e251fcc0fa8dcc41ce706c",
+        "format": "json",
+        "phase": 28,
+        "row_count": 3,
+        "source_run_id": "phase28_tcs_13dcd7f09159fc3c",
+        "spec_hash": "9bcac6111f0c6e079b20c6160386d4ad2f78c4c9755cbbad788992350903162b",
+        "workbook_sheets": []
+      },
+      "row_count": 3,
+      "source_run_id": "phase28_tcs_13dcd7f09159fc3c",
+      "workbook_sheets": []
+    },
+    {
+      "created_at": "2026-07-07T14:56:09.785335+00:00",
+      "export_id": "export_8a5679bc9bf94442d090179abb7e7ad6",
+      "export_type": "phase28_decision",
+      "file_sha256": "7a8f93963d8fe544db84c22e670591b539396768eb33af9478d91fb2ae90d785",
+      "format": "json",
+      "path": "exports/phase28_decision_20260706.json",
+      "payload": {
+        "artifact": "decision",
+        "created_at": "2026-07-07T14:56:09.785335+00:00",
+        "export_type": "phase28_decision",
+        "file_sha256": "7a8f93963d8fe544db84c22e670591b539396768eb33af9478d91fb2ae90d785",
+        "format": "json",
+        "phase": 28,
+        "row_count": 3,
+        "source_run_id": "phase28_tcs_13dcd7f09159fc3c",
+        "spec_hash": "9bcac6111f0c6e079b20c6160386d4ad2f78c4c9755cbbad788992350903162b",
+        "workbook_sheets": []
+      },
+      "row_count": 3,
+      "source_run_id": "phase28_tcs_13dcd7f09159fc3c",
+      "workbook_sheets": []
+    },
+    {
+      "created_at": "2026-07-07T14:56:09.789560+00:00",
+      "export_id": "export_f98c0a35f5bce38b2869a2b80ff686ce",
+      "export_type": "phase28_sensitivity_scenarios",
+      "file_sha256": "21921a7e1197354ea322da748a7ac95bf0fe2165f31df85f05f301c308aeec13",
+      "format": "csv",
+      "path": "exports/phase28_sensitivity_scenarios_20260706.csv",
+      "payload": {
+        "artifact": "sensitivity_scenarios",
+        "created_at": "2026-07-07T14:56:09.789560+00:00",
+        "export_type": "phase28_sensitivity_scenarios",
+        "file_sha256": "21921a7e1197354ea322da748a7ac95bf0fe2165f31df85f05f301c308aeec13",
+        "format": "csv",
+        "phase": 28,
+        "row_count": 450,
+        "source_run_id": "phase28_tcs_13dcd7f09159fc3c",
+        "spec_hash": "9bcac6111f0c6e079b20c6160386d4ad2f78c4c9755cbbad788992350903162b",
+        "workbook_sheets": []
+      },
+      "row_count": 450,
+      "source_run_id": "phase28_tcs_13dcd7f09159fc3c",
+      "workbook_sheets": []
+    },
+    {
+      "created_at": "2026-07-07T14:56:09.791924+00:00",
+      "export_id": "export_35de7fe0f9b479e5df2ef64eb25c3bb3",
+      "export_type": "phase28_export_manifest",
+      "file_sha256": "95c8708b7e4646a6a0a344e333bbe14d72ecb1ad76d001a0199653992eead8fa",
+      "format": "json",
+      "path": "exports/phase28_export_manifest_20260706.json",
+      "payload": {
+        "artifact": "export_manifest",
+        "created_at": "2026-07-07T14:56:09.791924+00:00",
+        "export_type": "phase28_export_manifest",
+        "file_sha256": "95c8708b7e4646a6a0a344e333bbe14d72ecb1ad76d001a0199653992eead8fa",
+        "format": "json",
+        "phase": 28,
+        "row_count": 8,
+        "source_run_id": "phase28_tcs_13dcd7f09159fc3c",
+        "spec_hash": "9bcac6111f0c6e079b20c6160386d4ad2f78c4c9755cbbad788992350903162b",
+        "workbook_sheets": []
+      },
+      "row_count": 8,
+      "source_run_id": "phase28_tcs_13dcd7f09159fc3c",
+      "workbook_sheets": []
+    }
+  ]
+}

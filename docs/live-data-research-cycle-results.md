@@ -2,7 +2,37 @@
 
 `LIVE_DATA_RESEARCH_STATUS = BLOCKED_BY_GOVERNANCE`
 
-This document records the accepted Phase 20 research-cycle result and the Phase 21 diagnostic update. It was missing before Phase 21 and is created now to close the documentation gap.
+This document records accepted live-data research-cycle and post-mortem results. It was missing before Phase 21 and is maintained as the standing research-status summary.
+
+## Phase 28 Trend Continuation Short Diagnostic
+
+Phase 28 status is `ACCEPTED_REJECTED_BY_SENSITIVITY`.
+
+The pre-registered `trend continuation short` diagnostic used spec hash `9bcac6111f0c6e079b20c6160386d4ad2f78c4c9755cbbad788992350903162b` and source ID `phase28_tcs_13dcd7f09159fc3c`. The primary cohort was side `SHORT`, all clean evidence DB symbols, intervals `1min`, `5min`, and `15min` evaluated separately, with no primary symbol, regime, time-bucket, score, or ambiguity exclusions.
+
+The diagnostic did not activate a model, approve a proposal, loosen validation/calibration/sensitivity gates, select filters from OOS outcomes, use future labels or outcomes, use realized same-bar ambiguity as a live filter, add broker/order execution, add production WebSocket ingestion, or make a profitability claim.
+
+Primary OOS replay showed positive baseline averages for `1min` and `5min`, but all intervals failed the required full-grid sensitivity standard:
+
+| Interval | Portfolio avg R | Portfolio robustness | Counterfactual avg R | Counterfactual robustness | Decision |
+|---|---:|---:|---:|---:|---|
+| `1min` | `0.161701` | `0.00` | `0.111022` | `0.00` | `REJECTED_BY_SENSITIVITY` |
+| `5min` | `0.168638` | `0.44` | `0.170699` | `0.00` | `REJECTED_BY_SENSITIVITY` |
+| `15min` | `-0.058462` | `0.00` | `-0.064282` | `0.00` | `REJECTED_BY_SENSITIVITY` |
+
+Phase 28 recorded 9 exports, 6 replay runs, 6 sensitivity runs, and 450 sensitivity scenario rows. Final post-test evidence audit remained `CLEAN`, fixture rows `0`, active models `0`, dirty windows `none`, total rows `212002`, exports `340`, replay runs `72`, sensitivity runs `68`, and sensitivity scenarios `4248`.
+
+The current `trend continuation short` pre-registered formulation is not activation-ready. Future work should either select another signal family or redesign trend-continuation-short under a new pre-registered spec without using Phase 28 OOS outcomes as live filters.
+
+## Phase 27 Ten-AM Discard And Signal-Family Post-Mortem
+
+Phase 27 status is `ACCEPTED_TEN_AM_DISCARDED_NEXT_FAMILY_SELECTED`.
+
+The current 15min `ten_am_reversal_zone` specialist hypothesis is formally discarded. Phase 27 did not activate a model, approve a proposal, loosen validation/calibration/sensitivity gates, select filters from OOS outcomes, use realized same-bar ambiguity as a live filter, use broker/order paths, add production WebSocket ingestion, or make a profitability claim.
+
+The failure attribution is explicit: evidence sparsity remained real but secondary, with 79 specialist exact cells, 7 cells with 5+ outcomes, 0 with 10+ outcomes, and 113 of 145 OOS candidates broad-parent-reliant. The primary kill evidence came from Phase 26: the broader all-actionable OOS cohort selected 145 candidates and still had portfolio avg R `-0.053513`, counterfactual avg R `-0.057926`, and `0.00` full-grid robustness for both portfolio and counterfactual. All Phase 26 policies A-H failed full-grid sensitivity.
+
+The next research lead is `trend continuation short`, selected only because Phase 22 setup attribution found it was the only setup family with positive source replay attribution: 715 observed trades, total `3.960479R`, avg `0.005539R`, PF `1.009968`, win rate `41.40%`, same-bar rate `5.73%`. It is not activation-ready; Phase 22 found no full-grid robust subset, and the edge is tiny. The exact next phase should be a pre-registered `trend continuation short` diagnostic, or engine redesign if that pre-registration cannot meet sample, calibration, and sensitivity requirements.
 
 ## Phase 26 Broader Ten-AM Evidence-Density Experiment
 
